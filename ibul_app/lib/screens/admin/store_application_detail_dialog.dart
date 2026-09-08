@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:ibul_app/screens/admin/store_application_identity.dart';
 import 'package:ibul_app/services/admin_service.dart';
 import 'package:ibul_app/utils/order_status_constants.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
@@ -576,12 +577,28 @@ class _StoreApplicationDetailDialogState
         const SizedBox(height: 16),
         _buildInfoRow(
           'Yasal Unvan',
-          widget.application['business_name'] ?? '-',
+          StoreApplicationIdentity.legalTitle(widget.application),
         ),
-        _buildInfoRow('Vergi Dairesi / No', '12121212121'),
-        _buildInfoRow('Mersis No', '-'),
-        _buildInfoRow('KEP Adresi', 'denemek@gmail.com'),
-        _buildInfoRow('Web Sitesi', '-'),
+        _buildInfoRow(
+          'Vergi Dairesi / No',
+          StoreApplicationIdentity.taxNumber(widget.application),
+        ),
+        _buildInfoRow(
+          'Mersis No',
+          StoreApplicationIdentity.mersisNumber(widget.application),
+        ),
+        _buildInfoRow(
+          'KEP Adresi',
+          StoreApplicationIdentity.kepAddress(widget.application),
+        ),
+        _buildInfoRow(
+          'E-posta',
+          StoreApplicationIdentity.email(widget.application),
+        ),
+        _buildInfoRow(
+          'Web Sitesi',
+          StoreApplicationIdentity.website(widget.application),
+        ),
         const SizedBox(height: 32),
 
         // Sistem Kontrolleri
@@ -719,10 +736,19 @@ class _StoreApplicationDetailDialogState
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
-        _buildInfoRow('Hesap Türü', 'Kurumsal Şirket Hesabı'),
-        _buildInfoRow('IBAN', 'sadadsd'),
-        _buildInfoRow('Banka Adı', '-'),
-        _buildInfoRow('Hesap Sahibi', '-'),
+        _buildInfoRow(
+          'Hesap Türü',
+          StoreApplicationIdentity.businessType(widget.application),
+        ),
+        _buildInfoRow('IBAN', StoreApplicationIdentity.iban(widget.application)),
+        _buildInfoRow(
+          'Banka Adı',
+          StoreApplicationIdentity.bankName(widget.application),
+        ),
+        _buildInfoRow(
+          'Hesap Sahibi',
+          StoreApplicationIdentity.accountHolder(widget.application),
+        ),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -766,12 +792,18 @@ class _StoreApplicationDetailDialogState
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
-        _buildInfoRow('Ad Soyad', widget.application['full_name'] ?? '-'),
+        _buildInfoRow(
+          'Ad Soyad',
+          StoreApplicationIdentity.contactName(widget.application),
+        ),
         _buildInfoRow(
           'E-posta',
-          widget.application['email'] ?? 'denemek@gmail.com',
+          StoreApplicationIdentity.email(widget.application),
         ),
-        _buildInfoRow('Telefon', '21323123123'),
+        _buildInfoRow(
+          'Telefon',
+          StoreApplicationIdentity.phone(widget.application),
+        ),
         const SizedBox(height: 24),
         _buildCheckRow('TC Doğrulama (NVİ)', 'Başarılı', true),
         _buildCheckRow('Telefon Onayı', 'SMS Doğrulandı', true),

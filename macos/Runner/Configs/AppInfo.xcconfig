@@ -12,3 +12,6 @@ PRODUCT_BUNDLE_IDENTIFIER = com.ibul.sellerdesktop
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 Ibul. All rights reserved.
+
+// Xcode 15+ fails if Automatic signing rewrites DebugProfile.entitlements mid-build.
+CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES

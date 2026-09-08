@@ -4676,6 +4676,110 @@ class AdminService {
     return deleted;
   }
 
+  Future<bool> _tryApproveSellerApplicationViaRpc(String applicationId) async {
+    try {
+      final raw = await _supabase.rpc(
+        'admin_approve_seller_application',
+        params: {'p_application_id': applicationId},
+      );
+      if (raw is Map && raw['ok'] == false) {
+        throw Exception(
+          (raw['error'] ?? 'Mağaza başvurusu onaylanamadı').toString(),
+        );
+      }
+      return true;
+    } on PostgrestException catch (error) {
+      final code = (error.code ?? '').toLowerCase();
+      final message = error.message.toLowerCase();
+      final missingFunction =
+          code == '42883' ||
+          code == 'pgrst202' ||
+          (message.contains('admin_approve_seller_application') &&
+              message.contains('could not find'));
+      if (missingFunction) {
+        return false;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _approveSellerApplicationClientSide(
+    Map<String, dynamic> application,
+  ) async {
+    final sellerId = application['user_id'];
+    if (sellerId == null || sellerId.toString().trim().isEmpty) {
+      throw Exception('Başvuruda satıcı kimliği yok');
+    }
+
+    final email = (application['email'] ?? application['user_email'])
+        ?.toString()
+        .trim();
+    final existingStore = await _supabase
+        .from('stores')
+        .select('seller_id')
+        .eq('seller_id', sellerId)
+        .maybeSingle();
+
+    final storePayload = <String, dynamic>{
+      'seller_id': sellerId,
+      'business_name': application['business_name'],
+      'category': application['category'],
+      'email': (email == null || email.isEmpty) ? null : email,
+      'phone': application['phone'],
+      'address': application['address'],
+      'city': application['city'],
+      'district': application['district'],
+      'postal_code': application['postal_code'],
+      'tax_number': application['tax_number'],
+      'contact_name': application['contact_name'],
+      'logo_url': application['logo_url'],
+      'store_lat': application['store_lat'],
+      'store_lng': application['store_lng'],
+      'is_store_open': true,
+      'accept_new_orders': true,
+      'is_verified': true,
+      'rating': 0.0,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+
+    if (existingStore == null) {
+      storePayload['created_at'] = DateTime.now().toIso8601String();
+      await _supabase.from('stores').insert(storePayload);
+    } else {
+      storePayload.remove('seller_id');
+      await _supabase
+          .from('stores')
+          .update(storePayload)
+          .eq('seller_id', sellerId);
+    }
+
+    try {
+      await _supabase.from('users').upsert({
+        'id': sellerId,
+        'email': (email == null || email.isEmpty) ? null : email,
+        'display_name':
+            application['contact_name'] ?? application['business_name'],
+        'phone': application['phone'],
+        'address': application['address'],
+        'role': 'seller',
+        'is_seller_approved': true,
+        'updated_at': DateTime.now().toIso8601String(),
+      }, onConflict: 'id');
+    } on PostgrestException catch (error) {
+      if ((error.code ?? '') == '42501') {
+        throw Exception(
+          'Satıcı rolü yazılamadı. SUPABASE_FIX_ADMIN_APPROVE_USERS.sql dosyasının tamamını SQL Editor’da çalıştırın.',
+        );
+      }
+      rethrow;
+    }
+
+    await _updateSellerApplicationRecord(application['id'].toString(), {
+      'status': AdminApprovalStatusConstants.approved,
+      'approved_at': DateTime.now().toIso8601String(),
+    });
+  }
+
   Future<void> updateSellerApplicationStatus(
     String id,
     String status, {
@@ -4695,6 +4799,25 @@ class AdminService {
         (application['status'] ?? AdminApprovalStatusConstants.pending)
             .toString();
 
+    if (status == AdminApprovalStatusConstants.approved) {
+      final usedRpc = await _tryApproveSellerApplicationViaRpc(id);
+      if (!usedRpc) {
+        await _approveSellerApplicationClientSide(application);
+      }
+      await _recordStoreApplicationHistory(
+        application: application,
+        action: _historyActionForStatus(status),
+        reason: _historyReasonForStatus(
+          status,
+          rejectionReason: rejectionReason,
+        ),
+        adminNote: adminNote,
+        previousStatus: previousStatus,
+        newStatus: status,
+      );
+      return;
+    }
+
     await _recordStoreApplicationHistory(
       application: application,
       action: _historyActionForStatus(status),
@@ -4710,84 +4833,7 @@ class AdminService {
     if (rejectionReason != null && rejectionReason.trim().isNotEmpty) {
       updates['rejection_reason'] = rejectionReason.trim();
     }
-    if (status == AdminApprovalStatusConstants.approved) {
-      updates['approved_at'] = DateTime.now().toIso8601String();
-
-      // Onaylandığında, satıcı için 'stores' tablosunda otomatik bir kayıt oluşturmalıyız
-      // Önce başvuru detaylarını çekelim
-      final applicationDetails = application;
-
-      // Eğer store zaten varsa tekrar oluşturma (seller_id kontrolü)
-      final existingStore = await _supabase
-          .from('stores')
-          .select()
-          .eq('seller_id', application['user_id'])
-          .maybeSingle();
-
-      if (existingStore == null) {
-        // Yeni mağaza kaydı oluştur
-        await _supabase.from('stores').insert({
-          'seller_id': applicationDetails['user_id'],
-          'business_name': applicationDetails['business_name'],
-          'category': applicationDetails['category'],
-          'email': applicationDetails['email'] ?? applicationDetails['user_email'],
-          'phone': applicationDetails['phone'],
-          'address': applicationDetails['address'],
-          'city': applicationDetails['city'],
-          'district': applicationDetails['district'],
-          'postal_code': applicationDetails['postal_code'],
-          'tax_number': applicationDetails['tax_number'],
-          'contact_name': applicationDetails['contact_name'],
-          'logo_url': applicationDetails['logo_url'],
-          'store_lat': applicationDetails['store_lat'],
-          'store_lng': applicationDetails['store_lng'],
-          'is_store_open': true,
-          'accept_new_orders': true,
-          'is_verified': true,
-          'rating': 0.0,
-          'created_at': DateTime.now().toIso8601String(),
-          // Diğer alanlar varsayılan veya boş olabilir
-        });
-      } else {
-        // Mağaza zaten varsa eksik alanları başvurudan tamamla
-        await _supabase
-            .from('stores')
-            .update({
-              'business_name': applicationDetails['business_name'],
-              'category': applicationDetails['category'],
-              'email':
-                  applicationDetails['email'] ?? applicationDetails['user_email'],
-              'phone': applicationDetails['phone'],
-              'address': applicationDetails['address'],
-              'city': applicationDetails['city'],
-              'district': applicationDetails['district'],
-              'postal_code': applicationDetails['postal_code'],
-              'tax_number': applicationDetails['tax_number'],
-              'contact_name': applicationDetails['contact_name'],
-              'logo_url': applicationDetails['logo_url'],
-              'store_lat': applicationDetails['store_lat'],
-              'store_lng': applicationDetails['store_lng'],
-              'accept_new_orders': true,
-              'is_verified': true,
-              'updated_at': DateTime.now().toIso8601String(),
-            })
-            .eq('seller_id', applicationDetails['user_id']);
-      }
-
-      // Satıcı girişinin çalışması için users tablosunda rol/onay durumunu güncelle
-      await _supabase.from('users').upsert({
-        'id': applicationDetails['user_id'],
-        'email': applicationDetails['email'] ?? applicationDetails['user_email'],
-        'display_name':
-            applicationDetails['contact_name'] ??
-            applicationDetails['business_name'],
-        'phone': applicationDetails['phone'],
-        'address': applicationDetails['address'],
-        'role': 'seller',
-        'is_seller_approved': true,
-        'updated_at': DateTime.now().toIso8601String(),
-      }, onConflict: 'id');
-    } else if (status == AdminApprovalStatusConstants.rejected) {
+    if (status == AdminApprovalStatusConstants.rejected) {
       final app = application;
       if (app['user_id'] != null) {
         await _supabase
