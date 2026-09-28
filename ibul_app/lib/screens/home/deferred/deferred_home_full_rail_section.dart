@@ -23,6 +23,7 @@ class DeferredHomeFullRailSection extends StatefulWidget {
     this.showViewAll = true,
     this.suppressSkeleton = false,
     this.maxSkeletonDuration = const Duration(seconds: 4),
+    this.grouped = false,
   });
 
   /// Overlap rail-chunk download with product fetch / first frame.
@@ -38,13 +39,15 @@ class DeferredHomeFullRailSection extends StatefulWidget {
   final bool showViewAll;
   final bool suppressSkeleton;
   final Duration maxSkeletonDuration;
+  final bool grouped;
 
   @override
   State<DeferredHomeFullRailSection> createState() =>
       _DeferredHomeFullRailSectionState();
 }
 
-class _DeferredHomeFullRailSectionState extends State<DeferredHomeFullRailSection> {
+class _DeferredHomeFullRailSectionState
+    extends State<DeferredHomeFullRailSection> {
   late Future<void> _loadFuture;
   bool _renderStartedLogged = false;
   bool _skeletonTimedOut = false;
@@ -111,14 +114,12 @@ class _DeferredHomeFullRailSectionState extends State<DeferredHomeFullRailSectio
     }
   }
 
-  static const _placeholder = Padding(
-    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    child: SkeletonLoading(
-      width: double.infinity,
-      height: 312,
-      borderRadius: 12,
-    ),
-  );
+  bool get _shouldShowSkeleton {
+    if (widget.suppressSkeleton || _skeletonTimedOut) return false;
+    return true;
+  }
+
+  static const _placeholder = HomeProductRailSkeleton();
 
   @override
   Widget build(BuildContext context) {
@@ -126,6 +127,12 @@ class _DeferredHomeFullRailSectionState extends State<DeferredHomeFullRailSectio
       future: _loadFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
+          if (!_shouldShowSkeleton) {
+            return HomeSectionError(
+              message: 'Ürün bölümü yüklenirken zaman aşımına uğradı.',
+              onRetry: _retry,
+            );
+          }
           HomeSkeletonDiagnostics.show(
             source: 'full_rail',
             reason: 'library_loading',
@@ -157,6 +164,7 @@ class _DeferredHomeFullRailSectionState extends State<DeferredHomeFullRailSectio
           errorMessage: widget.errorMessage,
           onRetry: widget.onRetry,
           showViewAll: widget.showViewAll,
+          grouped: widget.grouped,
         );
       },
     );

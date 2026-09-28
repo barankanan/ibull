@@ -114,7 +114,10 @@ class _DeferredHomeSponsoredSectionState extends State<DeferredHomeSponsoredSect
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           if (!_shouldShowSkeleton) {
-            return const SizedBox.shrink();
+            return HomeSectionError(
+              message: 'Sponsorlu bölüm yüklenirken zaman aşımına uğradı.',
+              onRetry: _retry,
+            );
           }
           HomeSkeletonDiagnostics.show(
             source: 'sponsored',
