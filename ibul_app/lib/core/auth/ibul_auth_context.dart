@@ -152,6 +152,9 @@ class AuthSessionGuard {
   }
 
   static String sellerLoginRejectionMessage(LoginResolvedRole role) {
+    if (role == LoginResolvedRole.admin) {
+      return 'Bu hesap admin hesabı. Admin girişi kullanın.';
+    }
     if (role == LoginResolvedRole.user) {
       return 'Bu hesap satıcı hesabı değil. Müşteri hesabıyla giriş yapın.';
     }

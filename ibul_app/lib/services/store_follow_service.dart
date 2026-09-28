@@ -3,7 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/store_follow_state.dart';
 import '../models/store_user_notification.dart';
-import 'push_notification_service.dart';
+import 'push_notification_binding.dart';
 
 class StoreFollowException implements Exception {
   StoreFollowException(this.message, {this.code});

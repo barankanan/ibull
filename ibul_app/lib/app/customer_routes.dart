@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../screens/login_page.dart' deferred as login_page;
 import '../screens/map_page.dart' deferred as map_page;
 import '../screens/register_page.dart' deferred as register_page;
+import '../screens/seller/seller_forgot_password_page.dart'
+    deferred as seller_forgot_password_page;
 import '../screens/seller_login_page.dart' deferred as seller_login_page;
 import '../widgets/deferred_module_screen.dart';
 import 'route_args.dart';
@@ -45,6 +47,16 @@ abstract final class CustomerRoutes {
     );
   }
 
+  static Widget buildSellerForgotPasswordPage({String initialEmail = ''}) {
+    return DeferredModuleScreen(
+      moduleName: 'seller_forgot_password_page',
+      loadLibrary: seller_forgot_password_page.loadLibrary,
+      builder: () => seller_forgot_password_page.SellerForgotPasswordPage(
+        initialEmail: initialEmail,
+      ),
+    );
+  }
+
   static Widget buildSellerPanel({
     required String source,
     Object? arguments,
@@ -77,4 +89,14 @@ bool parseSellerLoginAdminMode(Object? arguments) {
     if (raw?.toString().toLowerCase() == 'true') return true;
   }
   return false;
+}
+
+String parseSellerForgotPasswordEmail(Object? arguments) {
+  if (arguments is String) return arguments.trim();
+  if (arguments is Map) {
+    final raw = arguments['email'] ?? arguments['initialEmail'];
+    if (raw == null) return '';
+    return raw.toString().trim();
+  }
+  return '';
 }

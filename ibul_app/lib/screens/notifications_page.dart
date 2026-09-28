@@ -17,6 +17,9 @@ import 'cancel_appeal_detail_page.dart';
 import 'chat_page.dart';
 import 'courier_info_page.dart';
 import 'return_pickup_schedule_page.dart';
+import '../features/vehicle/screens/vehicle_customer_rentals_page.dart';
+import '../features/vehicle/screens/vehicle_rental_detail_page.dart';
+import '../features/vehicle/services/vehicle_service.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -405,6 +408,10 @@ class _NotificationsPageState extends State<NotificationsPage>
     Map<String, dynamic>? linkedAppealData,
   }) async {
     final data = _notificationData(notification);
+    if (_isVehicleRentalNotification(data)) {
+      await _openVehicleRentalFromNotification(notification);
+      return;
+    }
     if (_isCancelAppealAction(data)) {
       if (linkedAppealData != null) {
         await _openCancelAppealDetailFromData(
@@ -1022,7 +1029,8 @@ class _NotificationsPageState extends State<NotificationsPage>
               isCancelAppealAction ||
               isCancelAppealInfo ||
               showsTrackingAction ||
-              showsReviewAction;
+              showsReviewAction ||
+              _isVehicleRentalNotification(data);
           final actionColor = isReturnAction
               ? const Color(0xFFD93E53)
               : isAppealedCancel
@@ -1034,7 +1042,9 @@ class _NotificationsPageState extends State<NotificationsPage>
               : showsReviewAction
               ? const Color(0xFF2563EB)
               : AppColors.primary;
-          final actionLabel = isReturnAction
+          final actionLabel = _isVehicleRentalNotification(data)
+              ? 'Kiralama'
+              : isReturnAction
               ? 'İade Et'
               : isAppealedCancel
               ? 'İtiraz Edildi'
@@ -2250,6 +2260,48 @@ class _NotificationsPageState extends State<NotificationsPage>
     return filtered;
   }
 
+  bool _isVehicleRentalNotification(Map<String, dynamic> data) {
+    final type = data['type']?.toString().trim().toLowerCase() ?? '';
+    return type.startsWith('vehicle_rental');
+  }
+
+  Future<void> _openVehicleRentalFromNotification(
+    Map<String, dynamic> notification,
+  ) async {
+    final data = _notificationData(notification);
+    final reservationId = data['reservation_id']?.toString().trim() ?? '';
+    final notificationId = notification['id']?.toString().trim() ?? '';
+    if (notificationId.isNotEmpty) {
+      OrderService.instance.markNotificationRead(notificationId);
+    }
+    if (reservationId.isEmpty) {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const VehicleCustomerRentalsPage(),
+        ),
+      );
+      return;
+    }
+    final item = await VehicleService.instance.reservations.getMineById(
+      reservationId,
+    );
+    if (!mounted) return;
+    if (item == null) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const VehicleCustomerRentalsPage(),
+        ),
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => VehicleRentalDetailPage(reservation: item),
+      ),
+    );
+  }
+
   bool _isImportantNotification(Map<String, dynamic> notification) {
     final data = _notificationData(notification);
     final type = data['type']?.toString().trim().toLowerCase() ?? '';
@@ -2267,6 +2319,7 @@ class _NotificationsPageState extends State<NotificationsPage>
           status == 'returned' ||
           status == 'refunded';
     }
+    if (type.startsWith('vehicle_rental')) return true;
     if (_isReturnTrackingStatus(status) || _shouldShowReturnAction(data)) {
       return true;
     }

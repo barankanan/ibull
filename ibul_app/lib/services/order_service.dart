@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/config/runtime_config.dart';
 import '../core/runtime_diagnostic_logger.dart';
 import '../features/checkout/checkout_line_identity.dart';
+import '../features/coupon/data/coupon_repository.dart';
 import '../utils/dynamic_value_helpers.dart';
 import '../utils/order_status_constants.dart';
 import 'cart_validation_service.dart';
@@ -90,6 +91,7 @@ class OrderService {
     required String deliveryType,
     String? deliverySlot,
     String? idempotencyKey,
+    String? couponCode,
   }) async {
     final normalizedKey = idempotencyKey?.trim() ?? '';
     if (normalizedKey.isNotEmpty) {
@@ -106,6 +108,7 @@ class OrderService {
         deliveryType: deliveryType,
         deliverySlot: deliverySlot,
         idempotencyKey: normalizedKey,
+        couponCode: couponCode,
       );
       _inflightCheckouts[normalizedKey] = future;
       try {
@@ -124,6 +127,7 @@ class OrderService {
       deliveryType: deliveryType,
       deliverySlot: deliverySlot,
       idempotencyKey: normalizedKey,
+      couponCode: couponCode,
     );
   }
 
@@ -136,6 +140,7 @@ class OrderService {
     required String deliveryType,
     String? deliverySlot,
     String? idempotencyKey,
+    String? couponCode,
   }) async {
     if (selectedProducts.isEmpty) {
       throw Exception('Sipariş verilecek ürün bulunamadı.');
@@ -273,6 +278,7 @@ class OrderService {
         'product_code': productCode,
         'product_name': productName,
         'store_name': storeName ?? _fallbackStoreName(source),
+        'main_category': categoryName,
         'product_image_url': imageUrl,
         'attributes': attributes,
         'quantity': quantity,
@@ -364,6 +370,29 @@ class OrderService {
       orderId = orderRow['id']?.toString();
       if (orderId == null || orderId.isEmpty) {
         throw Exception('Sipariş ID oluşturulamadı.');
+      }
+
+      final normalizedCoupon = couponCode?.trim() ?? '';
+      if (normalizedCoupon.isNotEmpty) {
+        try {
+          await CouponRepository().applyToOrder(
+            orderId: orderId,
+            code: normalizedCoupon,
+            items: resolvedItems
+                .map(
+                  (item) => {
+                    'product_id': item['product_id']?.toString(),
+                    'seller_id': item['seller_id']?.toString(),
+                    'main_category': item['main_category']?.toString(),
+                    'line_total': item['total_price'],
+                  },
+                )
+                .toList(),
+            idempotencyKey: '$orderId:$normalizedCoupon',
+          );
+        } catch (error) {
+          debugPrint('OrderService coupon apply warn: $error');
+        }
       }
 
       final orderItems = resolvedItems

@@ -14,6 +14,31 @@ void main() {
     expect(sql.contains('admin_can_manage_users'), isTrue);
     expect(sql.contains("raise exception 'not authorized'"), isTrue);
     expect(sql.contains('grant execute'), isTrue);
+    expect(sql.contains('vehicle_galleries'), isTrue);
+    expect(sql.contains('store_is_gallery_category'), isTrue);
+    expect(sql.contains("then public.users.role"), isTrue);
+    expect(sql.contains("else 'seller'"), isTrue);
+  });
+
+  test('admin restore SQL targets auth user and public.users', () {
+    final sql = File(
+      '../SUPABASE_FIX_RESTORE_ADMIN_ROLE.sql',
+    ).readAsStringSync();
+    expect(sql.contains('baran.kan@gmail.com'), isTrue);
+    expect(sql.contains('on conflict (id) do update'), isTrue);
+    expect(sql.contains("role = 'admin'"), isTrue);
+    expect(sql.contains('raw_user_meta_data'), isTrue);
+    expect(sql.contains('restore_own_admin_role'), isTrue);
+  });
+
+  test('store vertical auth safety SQL is category-independent', () {
+    final sql = File(
+      'supabase/migrations/20260910_store_vertical_auth_safety.sql',
+    ).readAsStringSync();
+    expect(sql.contains('store_is_gallery_category'), isTrue);
+    expect(sql.contains('restore_own_admin_role'), isTrue);
+    expect(sql.contains('vehicle_galleries'), isTrue);
+    expect(sql, isNot(contains("role = 'restaurant'")));
   });
 
   test('store serial hotfix reaches pgcrypto via extensions search_path', () {

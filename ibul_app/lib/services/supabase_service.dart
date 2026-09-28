@@ -31,10 +31,8 @@ class SupabaseService {
   static const int homePageSize = 24;
   static const int defaultPageSize = 20;
 
-  /// First-paint page size for the mobile home grid. Kept smaller than
-  /// [homePageSize] so the initial Supabase round-trip is lighter/faster on
-  /// mobile; more products load as the user scrolls / on refresh.
-  static const int homeInitialPageSize = 10;
+  /// First-paint page size for categorized home rails.
+  static const int homeInitialPageSize = 24;
 
   /// Anonim alışveriş vitrininde gösterilen ürün durumları (admin onaylı).
   /// Supabase `products` SELECT RLS politikası bu liste ile uyumlu olmalıdır.
@@ -159,6 +157,7 @@ class SupabaseService {
     if (lastError != null) throw lastError;
     throw StateError('Cart validation select fallback ended unexpectedly.');
   }
+
   // Full field set — used for product detail, search, category pages
   static const String _productSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
@@ -168,6 +167,7 @@ class SupabaseService {
       'max_weight_grams, discount_price, stock, status, approval_status, '
       'admin_approval_status, description, specifications, attributes, '
       'video_url, variants, created_at, stores(business_name)';
+
   /// Home catalog projection aligned with [StoreService.getMenuProductsBySellerId]:
   /// omits approval columns so [ProductVisibilityHelper] trusts RLS (same as store detail).
   static const String _homeProductCatalogSelectFields =
@@ -180,6 +180,7 @@ class SupabaseService {
       'sub_category, price, pricing_type, pricing_mode, base_price, '
       'portion_price, price_per_kg, size_options, discount_price, status, '
       'stock, created_at, updated_at';
+
   /// Card-only projection for home first paint — omits heavy arrays/text blobs.
   static const String _homeProductCardSelectFields =
       'id, seller_id, name, brand, image_url, main_category, '
@@ -192,6 +193,7 @@ class SupabaseService {
       'sub_category, price, pricing_type, pricing_mode, base_price, '
       'portion_price, price_per_kg, size_options, discount_price, status, '
       'approval_status, admin_approval_status, stock, created_at, updated_at';
+
   /// Richer home select when quick-view / eye preview needs description fields.
   /// Same as below but without `stores(...)` embed.
   /// PostgREST can fail on embeds when FK hints are missing or store RLS differs;
@@ -297,16 +299,23 @@ class SupabaseService {
     return report.products;
   }
 
+  Future<HomeProductsFetchReport>? _initialHomeProductsFuture;
+
   /// Home grid fetch with filter/parse diagnostics for web production debugging.
-  Future<HomeProductsFetchReport> fetchInitialHomeProductsReport() async {
+  Future<HomeProductsFetchReport> fetchInitialHomeProductsReport() {
+    return _initialHomeProductsFuture ??= _fetchInitialHomeProductsReportBody().whenComplete(() {
+      _initialHomeProductsFuture = null;
+    });
+  }
+
+  Future<HomeProductsFetchReport> _fetchInitialHomeProductsReportBody() async {
     const table = 'products';
     HomeDataDiagnostics.requestStart(source: 'home_initial');
     if (!AppRuntimeConfig.hasSupabaseConfig) {
       return HomeProductsFetchReport.configMissing();
     }
 
-    final followedStoreIds =
-        StoreFollowService.instance.cachedFollowedStoreIds;
+    final followedStoreIds = StoreFollowService.instance.cachedFollowedStoreIds;
     unawaited(StoreFollowService.instance.fetchFollowedStoreIds());
     final fetchLimit = followedStoreIds.isEmpty
         ? homeInitialPageSize
@@ -317,9 +326,10 @@ class SupabaseService {
         '.order(created_at,desc).range(0,${fetchLimit - 1})';
 
     final selectCandidates = <String>[
+      _homeProductCardSelectFields,
+      _homeProductCardSelectFieldsSansStore,
       _homeProductCatalogSelectFields,
       _homeProductCatalogSelectFieldsSansStore,
-      _homeProductSelectFieldsSansStore,
     ];
 
     Object? lastError;
@@ -343,15 +353,16 @@ class SupabaseService {
 
         List<DBProduct> products = parseResult.products;
         if (followedStoreIds.isNotEmpty && products.isNotEmpty) {
-          final scored = products
-              .map(
-                (product) => MapEntry(
-                  product,
-                  _homeFeedScore(product, followedStoreIds),
-                ),
-              )
-              .toList(growable: false)
-            ..sort((a, b) => b.value.compareTo(a.value));
+          final scored =
+              products
+                  .map(
+                    (product) => MapEntry(
+                      product,
+                      _homeFeedScore(product, followedStoreIds),
+                    ),
+                  )
+                  .toList(growable: false)
+                ..sort((a, b) => b.value.compareTo(a.value));
           products = scored
               .map((entry) => entry.key)
               .take(homeInitialPageSize)
@@ -424,7 +435,8 @@ class SupabaseService {
           'Products',
           e,
           stackTrace,
-          context: 'home_fetch_report select=${select.length > 40 ? '${select.substring(0, 40)}...' : select}',
+          context:
+              'home_fetch_report select=${select.length > 40 ? '${select.substring(0, 40)}...' : select}',
         );
         final message = e.toString();
         if (!isOptionalProductColumnError(message)) {
@@ -478,7 +490,9 @@ class SupabaseService {
             .map((row) => Map<String, dynamic>.from(row as Map))
             .toList(growable: false);
         final audit = ProductFilterAudit.fromRows(rawRows);
-        final filtered = ProductVisibilityHelper.filterPublicProductMaps(rawRows);
+        final filtered = ProductVisibilityHelper.filterPublicProductMaps(
+          rawRows,
+        );
         HomeDataDiagnostics.rawRows(count: audit.rawCount, source: source);
         HomeDataDiagnostics.afterVisibilityFilter(
           count: audit.afterVisibilityFilterCount,
@@ -508,7 +522,12 @@ class SupabaseService {
     throw StateError('Home product row fetch fallback ended unexpectedly.');
   }
 
-  ({List<DBProduct> products, int successCount, int failCount, String? lastError})
+  ({
+    List<DBProduct> products,
+    int successCount,
+    int failCount,
+    String? lastError,
+  })
   _parseHomeProductRows(List<Map<String, dynamic>> rows) {
     final parsed = <DBProduct>[];
     var failCount = 0;
@@ -519,7 +538,9 @@ class SupabaseService {
       } catch (e) {
         failCount++;
         lastError = e.toString();
-        RuntimeDiagnosticLogger.products('parse failed id=${row['id']} error=$e');
+        RuntimeDiagnosticLogger.products(
+          'parse failed id=${row['id']} error=$e',
+        );
       }
     }
     return (
@@ -549,8 +570,10 @@ class SupabaseService {
       score += discountBoost;
     }
 
-    score += (product.reviewCount.clamp(0, 100) / 5.0)
-        .clamp(0, popularityBoostCap);
+    score += (product.reviewCount.clamp(0, 100) / 5.0).clamp(
+      0,
+      popularityBoostCap,
+    );
 
     score += product.rating.clamp(0, 5) * (ratingBoostCap / 5);
 
@@ -1067,7 +1090,9 @@ class SupabaseService {
     }
 
     if (lastRpcError != null) {
-      debugPrint('getAdLinkedProductsByIds rpc failed, falling back: $lastRpcError');
+      debugPrint(
+        'getAdLinkedProductsByIds rpc failed, falling back: $lastRpcError',
+      );
     }
     return _fetchAdLinkedProductsDirectSelect(
       normalized,
@@ -1084,11 +1109,13 @@ class SupabaseService {
   }
 
   Future<
-      ({
-        Map<String, String> rejections,
-        Map<String, String> missingIds,
-        String? primaryReason,
-      })> _enrichAdLinkedDiagnostics({
+    ({
+      Map<String, String> rejections,
+      Map<String, String> missingIds,
+      String? primaryReason,
+    })
+  >
+  _enrichAdLinkedDiagnostics({
     required List<String> productIds,
     String? campaignId,
     required Map<String, String> rejections,
@@ -1189,7 +1216,8 @@ class SupabaseService {
           rawDbCount: data.length,
           filteredCount: mapped.products.length,
           query: 'products.select(...).inFilter(id, ids)',
-          error: rpcError ??
+          error:
+              rpcError ??
               (data.isEmpty && ids.isNotEmpty ? 'rls_or_missing_rows' : null),
           rejections: mapped.rejections,
           missingIds: mapped.missingIds,
@@ -1238,7 +1266,8 @@ class SupabaseService {
     List<DBProduct> products,
     Map<String, String> rejections,
     Map<String, String> missingIds,
-  }) _mapAdLinkedProductRows({
+  })
+  _mapAdLinkedProductRows({
     required List<Map<String, dynamic>> rows,
     required List<String> requestedIds,
     required bool fromRpc,
@@ -1248,8 +1277,9 @@ class SupabaseService {
     for (final item in rows) {
       final id = item['id']?.toString();
       if (id == null || id.isEmpty) continue;
-      final rejectReason =
-          ProductVisibilityHelper.adLinkedDisplayRejectReason(item);
+      final rejectReason = ProductVisibilityHelper.adLinkedDisplayRejectReason(
+        item,
+      );
       if (rejectReason != null) {
         rejections[id] = rejectReason;
         continue;
@@ -1319,7 +1349,8 @@ class SupabaseService {
       return ProductVisibilityHelper.filterPublicProductMaps(rows)
           .where((row) {
             final name = row['name']?.toString().trim().toLowerCase() ?? '';
-            final rowBrand = row['brand']?.toString().trim().toLowerCase() ?? '';
+            final rowBrand =
+                row['brand']?.toString().trim().toLowerCase() ?? '';
             return !(name == currentName && rowBrand == currentBrand);
           })
           .take(limit)
@@ -1444,7 +1475,10 @@ class SupabaseService {
 
     try {
       Future<String?> runSelect(String fields) async {
-        var query = _supabase.from('products').select(fields).eq('name', trimmedName);
+        var query = _supabase
+            .from('products')
+            .select(fields)
+            .eq('name', trimmedName);
         final trimmedBrand = brand.trim();
         if (trimmedBrand.isNotEmpty) {
           query = query.eq('brand', trimmedBrand);
@@ -1534,9 +1568,9 @@ class SupabaseService {
         rows = await runSearchQuery(useNormalizedFields: false);
       }
 
-      final items = ProductVisibilityHelper.filterPublicProductMaps(rows)
-          .map(_mapToDBProduct)
-          .toList(growable: false);
+      final items = ProductVisibilityHelper.filterPublicProductMaps(
+        rows,
+      ).map(_mapToDBProduct).toList(growable: false);
       final nextCursor = items.length < limit
           ? null
           : '${offset + items.length}';
@@ -1620,10 +1654,11 @@ class SupabaseService {
           .eq('main_category', trimmedCategory);
 
       if (!CategoryProductFilter.isAllSubCategory(trimmedSubCategory)) {
-        final subCategoryOrClause = CategoryProductFilter.buildSubCategoryOrClause(
-          mainCategory: trimmedCategory,
-          subCategory: trimmedSubCategory,
-        );
+        final subCategoryOrClause =
+            CategoryProductFilter.buildSubCategoryOrClause(
+              mainCategory: trimmedCategory,
+              subCategory: trimmedSubCategory,
+            );
         if (subCategoryOrClause != null) {
           builder = builder.or(subCategoryOrClause);
         } else {
@@ -2219,14 +2254,16 @@ class SupabaseService {
       'price':
           double.tryParse(product.price.replaceAll(RegExp(r'[^0-9.]'), '')) ??
           0,
-        'pricing_mode': product.pricingMode,
-        'base_price': product.basePrice ?? product.portionPrice,
+      'pricing_mode': product.pricingMode,
+      'base_price': product.basePrice ?? product.portionPrice,
       'pricing_type': product.pricingType,
       'portion_price': product.portionPrice,
       'price_per_kg': product.pricePerKg,
-        'size_options': product.sizeOptions.map((option) => option.toJson()).toList(),
-        'selected_size_name': product.selectedSizeName,
-        'selected_size_price': product.selectedSizePrice,
+      'size_options': product.sizeOptions
+          .map((option) => option.toJson())
+          .toList(),
+      'selected_size_name': product.selectedSizeName,
+      'selected_size_price': product.selectedSizePrice,
       'service_control_type': product.serviceControlType,
       'min_portion': product.minPortion,
       'max_portion': product.maxPortion,

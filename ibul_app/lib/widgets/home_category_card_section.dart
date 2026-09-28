@@ -16,7 +16,7 @@ import '../ads/services/home_feature_event_service.dart';
 import '../models/ad_linked_products_fetch_report.dart';
 import '../models/db_product.dart';
 import '../models/product_model.dart';
-import '../services/store_service.dart';
+import '../services/store_service.dart' deferred as store_service;
 import '../services/supabase_service.dart';
 import 'home_sponsored_banner.dart';
 import 'optimized_image.dart';
@@ -102,7 +102,6 @@ class _HomeCardBlock extends StatefulWidget {
 
 class _HomeCardBlockState extends State<_HomeCardBlock> {
   final _eventService = HomeFeatureEventService();
-  final _storeService = StoreService();
   final Map<String, String?> _logoCache = {};
   final Map<String, List<DBProduct>> _hydratedProducts = {};
   final Set<String> _hydratingCampaignIds = {};
@@ -247,7 +246,10 @@ class _HomeCardBlockState extends State<_HomeCardBlock> {
     if (lookupIds.isEmpty) return;
 
     try {
-      final infoByLookupId = await _storeService.getStorePublicInfoByIds(
+      await store_service.loadLibrary();
+      if (!mounted) return;
+      final infoByLookupId = await store_service.StoreService()
+          .getStorePublicInfoByIds(
         lookupIds.toList(growable: false),
       );
       if (!mounted || infoByLookupId.isEmpty) return;

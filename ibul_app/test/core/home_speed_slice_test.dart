@@ -81,7 +81,8 @@ void main() {
     expect(body, contains('cart_page.loadLibrary'));
     expect(body, contains('product_detail_page.loadLibrary'));
     expect(body, isNot(contains('map_page.loadLibrary')));
-    expect(core, contains('HomeLazyRoutes.prefetchHotPaths()'));
+    expect(core, contains('HomeLazyRoutes.armPrefetchAfterInteraction()'));
+    expect(routes, contains('pointerRouter.addGlobalRoute'));
     expect(core, contains('Priority.idle'));
   });
 

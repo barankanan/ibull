@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
+import '../../app/marketplace_paths.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_image_cdn.dart';
@@ -17,7 +19,13 @@ import 'add_to_list_modal.dart';
 class ProductImageSlider extends StatefulWidget {
   final bool isMobile;
   final String? heroTag;
-  const ProductImageSlider({super.key, this.isMobile = false, this.heroTag});
+  final Widget? topLeftOverlay;
+  const ProductImageSlider({
+    super.key,
+    this.isMobile = false,
+    this.heroTag,
+    this.topLeftOverlay,
+  });
 
   @override
   State<ProductImageSlider> createState() => _ProductImageSliderState();
@@ -27,6 +35,21 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
   late PageController _pageController;
   bool _show360 = false; // final kaldırıldı
   bool _hasSettledHeroLayout = true;
+
+  Future<void> _shareProduct(ProductDetailViewModel viewModel) async {
+    final product = viewModel.initialProduct;
+    final id = product.productId?.trim() ?? '';
+    final path = id.isEmpty
+        ? MarketplacePaths.home
+        : MarketplacePaths.product(id, slug: product.name);
+    await Clipboard.setData(
+      ClipboardData(text: '${product.name} — ${MarketplacePaths.shareUrl(path)}'),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Ürün bağlantısı kopyalandı')),
+    );
+  }
 
   void _showLoginRequiredDialog(BuildContext context) {
     showDialog(
@@ -73,7 +96,10 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
   /// Precaches all product images at the bounded decode resolution so that
   /// swiping between slides is synchronous (no raster spike on first decode).
   void _precacheProductImages() {
-    final viewModel = Provider.of<ProductDetailViewModel>(context, listen: false);
+    final viewModel = Provider.of<ProductDetailViewModel>(
+      context,
+      listen: false,
+    );
     final images = viewModel.images;
     if (images.isEmpty) return;
 
@@ -144,235 +170,258 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
     }
 
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        // Main Image Area
-        Container(
-          decoration: widget.isMobile
-              ? const BoxDecoration(color: Colors.white) // Mobile: Flat
-              : BoxDecoration(
-                  // Web: Card style
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+        // Main Image Area. Outer Stack keeps Geri + Video pinned to the
+        // image card's top-left even when the parent column is stretched.
+        Stack(
+          alignment: Alignment.topLeft,
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              decoration: widget.isMobile
+                  ? const BoxDecoration(color: Colors.white) // Mobile: Flat
+                  : BoxDecoration(
+                      // Web: Card style
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.05),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+              clipBehavior: Clip.antiAlias,
+              child: Stack(
+                alignment: Alignment.topLeft,
+                children: [
+                  AspectRatio(
+                    aspectRatio: widget.isMobile
+                        ? 1.3
+                        : 1.0, // Reduced height for mobile (was 1.0)
+                    child:
+                        _show360 &&
+                            viewModel.initialProduct.threeSixtyImages != null
+                        ? Product360Viewer(
+                            imageUrls:
+                                viewModel.initialProduct.threeSixtyImages!,
+                            autoRotate: false,
+                          )
+                        : PageView.builder(
+                            controller: _pageController,
+                            onPageChanged: viewModel.updateImageIndex,
+                            itemCount: images.length,
+                            itemBuilder: (context, index) {
+                              final imageUrl = images[index];
+                              final isHeroImage = index == 0;
+                              final imageWidget = isHeroImage
+                                  ? _buildHeroImage(imageUrl, viewModel)
+                                  : _buildSettledImage(imageUrl);
+
+                              // Only wrap the first image with Hero to match ProductCard
+                              if (isHeroImage) {
+                                final fallbackTag =
+                                    'product-image-${viewModel.initialProduct.productId ?? viewModel.initialProduct.name}';
+                                return Hero(
+                                  tag: widget.heroTag ?? fallbackTag,
+                                  transitionOnUserGestures: true,
+                                  placeholderBuilder: (_, _, child) => child,
+                                  child: imageWidget,
+                                );
+                              }
+                              return imageWidget;
+                            },
+                          ),
+                  ),
+
+                  // Navigation Arrows (Web only or if multiple images)
+                  if (images.length > 1 && !widget.isMobile) ...[
+                    Positioned(
+                      left: 8,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: _buildNavArrow(
+                          Icons.chevron_left,
+                          onPressed: viewModel.prevImage,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 8,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: _buildNavArrow(
+                          Icons.chevron_right,
+                          onPressed: viewModel.nextImage,
+                        ),
+                      ),
                     ),
                   ],
-                ),
-          clipBehavior: Clip.antiAlias,
-          child: Stack(
-            children: [
-              AspectRatio(
-                aspectRatio: widget.isMobile
-                    ? 1.3
-                    : 1.0, // Reduced height for mobile (was 1.0)
-                child:
-                    _show360 &&
-                        viewModel.initialProduct.threeSixtyImages != null
-                    ? Product360Viewer(
-                        imageUrls: viewModel.initialProduct.threeSixtyImages!,
-                        autoRotate: false,
-                      )
-                    : PageView.builder(
-                        controller: _pageController,
-                        onPageChanged: viewModel.updateImageIndex,
-                        itemCount: images.length,
-                        itemBuilder: (context, index) {
-                          final imageUrl = images[index];
-                          final isHeroImage = index == 0;
-                          final imageWidget = isHeroImage
-                              ? _buildHeroImage(imageUrl, viewModel)
-                              : _buildSettledImage(imageUrl);
 
-                          // Only wrap the first image with Hero to match ProductCard
-                          if (isHeroImage) {
-                            final fallbackTag = 'product-image-${viewModel.initialProduct.productId ?? viewModel.initialProduct.name}';
-                            return Hero(
-                              tag: widget.heroTag ?? fallbackTag,
-                              transitionOnUserGestures: true,
-                              placeholderBuilder: (_, _, child) => child,
-                              child: imageWidget,
+                  // Action Icons (Top Right - Floating Vertical Stack)
+                  Positioned(
+                    top: widget.isMobile
+                        ? 12 + MediaQuery.of(context).padding.top
+                        : 12,
+                    right: 12,
+                    child: Column(
+                      children: [
+                        _buildFloatingActionButton(
+                          Icons.share_outlined,
+                          onPressed: () => _shareProduct(viewModel),
+                        ),
+                        const SizedBox(height: 12),
+                        _buildFloatingActionButton(
+                          Icons.bookmark_border,
+                          onPressed: () {
+                            final appState = Provider.of<AppState>(
+                              context,
+                              listen: false,
                             );
-                          }
-                          return imageWidget;
+                            if (!appState.isLoggedIn) {
+                              _showLoginRequiredDialog(context);
+                              return;
+                            }
+                            showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              backgroundColor: Colors.transparent,
+                              builder: (context) => AddToListModal(
+                                product: viewModel.initialProduct,
+                                userLists: appState.productLists,
+                                onAddToList: (listId) {
+                                  return appState.addToProductList(
+                                    listId,
+                                    viewModel.initialProduct,
+                                  );
+                                },
+                                onCreateNewList: (listName, visibility) {
+                                  final listId = appState.createProductList(
+                                    listName,
+                                    visibility: visibility,
+                                  );
+                                  return appState.addToProductList(
+                                    listId,
+                                    viewModel.initialProduct,
+                                  );
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        _buildFloatingActionButton(
+                          Icons.compare_arrows,
+                          onPressed: () {
+                            showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              backgroundColor: Colors.transparent,
+                              builder: (context) => ComparisonModal(
+                                currentProduct: viewModel.initialProduct,
+                                similarProducts: viewModel.similarProducts,
+                              ),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        _buildFloatingActionButton(
+                          viewModel.isFavorite
+                              ? Icons.favorite
+                              : Icons.favorite_border,
+                          iconColor: viewModel.isFavorite
+                              ? Colors.red
+                              : const Color(0xFF673AB7),
+                          onPressed: () {
+                            InteractionFeedback.forInteraction(
+                              InteractionFeedbackType.favorite,
+                            );
+                            viewModel.toggleFavorite();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  if (images.length > 1 && widget.isMobile && !_show360)
+                    Positioned(
+                      bottom: 12,
+                      left: 0,
+                      right: 0,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(images.length, (index) {
+                          final isSelected =
+                              viewModel.currentImageIndex == index;
+                          return Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                            width: isSelected ? 8 : 6,
+                            height: isSelected ? 8 : 6,
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? AppColors.primary
+                                  : Colors.white.withValues(alpha: 0.5),
+                              shape: BoxShape.circle,
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+
+                  if (_show360Button(viewModel))
+                    Positioned(
+                      bottom: 16,
+                      right: 16,
+                      child: _buildPillButton(
+                        text: _show360 ? 'Fotoğraflar' : '360° Görünüm',
+                        icon: _show360
+                            ? Icons.image_outlined
+                            : Icons.threesixty,
+                        isIconRight: !_show360,
+                        onPressed: () {
+                          setState(() {
+                            _show360 = !_show360;
+                          });
                         },
                       ),
+                    ),
+
+                  if (widget.isMobile)
+                    Positioned(
+                      left: 10,
+                      right: 10,
+                      bottom: 8,
+                      child: Row(
+                        children: [
+                          _buildVideoPill(context, viewModel, compact: true),
+                          const Spacer(),
+                          _buildFeaturesPill(context, viewModel),
+                        ],
+                      ),
+                    ),
+                ],
               ),
-
-              // Navigation Arrows (Web only or if multiple images)
-              if (images.length > 1 && !widget.isMobile) ...[
-                Positioned(
-                  left: 8,
-                  top: 0,
-                  bottom: 0,
-                  child: Center(
-                    child: _buildNavArrow(
-                      Icons.chevron_left,
-                      onPressed: viewModel.prevImage,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  right: 8,
-                  top: 0,
-                  bottom: 0,
-                  child: Center(
-                    child: _buildNavArrow(
-                      Icons.chevron_right,
-                      onPressed: viewModel.nextImage,
-                    ),
-                  ),
-                ),
-              ],
-
-              // Action Icons (Top Right - Floating Vertical Stack)
+            ),
+            if (!widget.isMobile)
               Positioned(
-                top: widget.isMobile
-                    ? 12 + MediaQuery.of(context).padding.top
-                    : 12,
-                right: 12,
-                child: Column(
+                left: 10,
+                top: 10,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    _buildFloatingActionButton(
-                      Icons.share_outlined,
-                      onPressed: () {},
-                    ),
-                    const SizedBox(height: 12),
-                    _buildFloatingActionButton(
-                      Icons.bookmark_border,
-                      onPressed: () {
-                        final appState = Provider.of<AppState>(
-                          context,
-                          listen: false,
-                        );
-                        if (!appState.isLoggedIn) {
-                          _showLoginRequiredDialog(context);
-                          return;
-                        }
-                        showModalBottomSheet(
-                          context: context,
-                          isScrollControlled: true,
-                          backgroundColor: Colors.transparent,
-                          builder: (context) => AddToListModal(
-                            product: viewModel.initialProduct,
-                            userLists: appState.productLists,
-                            onAddToList: (listId) {
-                              return appState.addToProductList(
-                                listId,
-                                viewModel.initialProduct,
-                              );
-                            },
-                            onCreateNewList: (listName, visibility) {
-                              final listId = appState.createProductList(
-                                listName,
-                                visibility: visibility,
-                              );
-                              return appState.addToProductList(
-                                listId,
-                                viewModel.initialProduct,
-                              );
-                            },
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    _buildFloatingActionButton(
-                      Icons.compare_arrows,
-                      onPressed: () {
-                        showModalBottomSheet(
-                          context: context,
-                          isScrollControlled: true,
-                          backgroundColor: Colors.transparent,
-                          builder: (context) => ComparisonModal(
-                            currentProduct: viewModel.initialProduct,
-                            similarProducts: viewModel.similarProducts,
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    _buildFloatingActionButton(
-                      viewModel.isFavorite
-                          ? Icons.favorite
-                          : Icons.favorite_border,
-                      iconColor: viewModel.isFavorite
-                          ? Colors.red
-                          : const Color(0xFF673AB7),
-                      onPressed: () {
-                        InteractionFeedback.forInteraction(
-                          InteractionFeedbackType.favorite,
-                        );
-                        viewModel.toggleFavorite();
-                      },
-                    ),
+                    if (widget.topLeftOverlay != null) ...[
+                      widget.topLeftOverlay!,
+                      const SizedBox(width: 8),
+                    ],
+                    _buildVideoPill(context, viewModel),
                   ],
                 ),
               ),
-
-              if (images.length > 1 && widget.isMobile && !_show360)
-                Positioned(
-                  bottom: 12,
-                  left: 0,
-                  right: 0,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(images.length, (index) {
-                      final isSelected = viewModel.currentImageIndex == index;
-                      return Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 4),
-                        width: isSelected ? 8 : 6,
-                        height: isSelected ? 8 : 6,
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? AppColors.primary
-                              : Colors.white.withValues(alpha: 0.5),
-                          shape: BoxShape.circle,
-                        ),
-                      );
-                    }),
-                  ),
-                ),
-
-              if (_show360Button(viewModel))
-                Positioned(
-                  bottom: 16,
-                  right: 16,
-                  child: _buildPillButton(
-                    text: _show360 ? 'Fotoğraflar' : '360° Görünüm',
-                    icon: _show360 ? Icons.image_outlined : Icons.threesixty,
-                    isIconRight: !_show360,
-                    onPressed: () {
-                      setState(() {
-                        _show360 = !_show360;
-                      });
-                    },
-                  ),
-                ),
-
-              if (!widget.isMobile)
-                Positioned(
-                  left: 16,
-                  top: 16,
-                  child: _buildVideoPill(context, viewModel),
-                ),
-              if (widget.isMobile)
-                Positioned(
-                  left: 10,
-                  right: 10,
-                  bottom: 8,
-                  child: Row(
-                    children: [
-                      _buildVideoPill(context, viewModel, compact: true),
-                      const Spacer(),
-                      _buildFeaturesPill(context, viewModel),
-                    ],
-                  ),
-                ),
-            ],
-          ),
+          ],
         ),
 
         // Thumbnails (Hidden on mobile)
@@ -412,7 +461,9 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
                         boxShadow: isSelected
                             ? [
                                 BoxShadow(
-                                  color: AppColors.primary.withValues(alpha: 0.2),
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.2,
+                                  ),
                                   blurRadius: 4,
                                 ),
                               ]
@@ -466,10 +517,7 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
         viewModel.initialProduct.threeSixtyImages!.isNotEmpty;
   }
 
-  Widget _buildHeroImage(
-    String imageUrl,
-    ProductDetailViewModel viewModel,
-  ) {
+  Widget _buildHeroImage(String imageUrl, ProductDetailViewModel viewModel) {
     final hasSettledLayout =
         _hasSettledHeroLayout && viewModel.currentImageIndex == 0;
 

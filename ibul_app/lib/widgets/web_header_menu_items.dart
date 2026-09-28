@@ -4,9 +4,9 @@ import 'package:provider/provider.dart';
 import '../core/app_state.dart';
 import '../core/app_motion.dart';
 import '../core/constants.dart';
-import '../screens/account_page.dart';
-import '../screens/cart_page.dart';
-import '../screens/favorites_page.dart';
+import '../screens/cart_page.dart' deferred as cart_page;
+import '../screens/home_lazy_routes.dart';
+import '../app/ibul_router.dart';
 
 class WebHeaderMenuItems extends StatelessWidget {
   final String? activeMenu;
@@ -23,14 +23,14 @@ class WebHeaderMenuItems extends StatelessWidget {
           icon: Icons.person_outline,
           label: 'Hesabım',
           isActive: activeMenu == 'account',
-          onTap: () => _pushReplacement(context, const AccountPage()),
+          onTap: () => HomeLazyRoutes.openAccount(context),
         ),
         const SizedBox(width: 24),
         _WebHeaderMenuItem(
           icon: Icons.favorite_border,
           label: 'Favorilerim',
           isActive: activeMenu == 'favorites',
-          onTap: () => _pushReplacement(context, const FavoritesPage()),
+          onTap: () => HomeLazyRoutes.openFavorites(context),
         ),
         const SizedBox(width: 24),
         ValueListenableBuilder<int>(
@@ -41,7 +41,7 @@ class WebHeaderMenuItems extends StatelessWidget {
               label: 'Sepetim',
               isActive: activeMenu == 'cart',
               badgeCount: count > 0 ? count : null,
-              onTap: () => _pushReplacement(context, const CartPage()),
+              onTap: () => _openCart(context),
             );
           },
         ),
@@ -49,11 +49,8 @@ class WebHeaderMenuItems extends StatelessWidget {
     );
   }
 
-  void _pushReplacement(BuildContext context, Widget page) {
-    Navigator.pushReplacement(
-      context,
-      buildAppPageRoute<void>(builder: (context) => page),
-    );
+  Future<void> _openCart(BuildContext context) async {
+    IbulRouter.go(context, '/sepet');
   }
 }
 

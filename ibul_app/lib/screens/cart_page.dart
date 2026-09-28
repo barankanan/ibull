@@ -7,6 +7,8 @@ import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../core/cart_state.dart';
 import '../core/store_logo_helper.dart';
+import '../features/coupon/data/coupon_repository.dart';
+import '../features/coupon/domain/coupon_enums.dart';
 import '../models/product_model.dart';
 import '../models/product_pricing.dart';
 import '../services/store_service.dart';
@@ -974,7 +976,36 @@ class _CartPageState extends State<CartPage>
     _tabController.addListener(_onCartTabInteraction);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_revalidateCartOnOpen());
+      unawaited(_loadAvailableCoupons());
     });
+  }
+
+  Future<void> _loadAvailableCoupons() async {
+    try {
+      final mine = await CouponRepository().listMine();
+      if (!mounted) return;
+      setState(() {
+        _availableCoupons
+          ..clear()
+          ..addAll(
+            mine.where((item) => item.isUsable).map((item) {
+              final campaign = item.campaign;
+              return {
+                'id': item.id,
+                'code': campaign?.code ?? '',
+                'title': campaign?.name ?? 'Kupon',
+                'description': campaign?.discountLabel ?? '',
+                'discountAmount': campaign?.discountValue ?? 0,
+                'isPercentage':
+                    campaign?.discountType == CouponDiscountType.percent,
+                'minPrice': campaign?.minOrderAmount ?? 0,
+                'color': AppColors.softPurple,
+                'iconColor': AppColors.primary,
+              };
+            }),
+          );
+      });
+    } catch (_) {}
   }
 
   Future<void> _revalidateCartOnOpen() async {

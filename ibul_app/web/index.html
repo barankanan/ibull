@@ -83,15 +83,22 @@
       display: flex; flex-direction: column; align-items: stretch;
       background: #F9FAFB;
     }
-    #ibul-web-chrome { display: none; background: #fff; }
+    #ibul-web-chrome { display: block; background: #fff; }
+    @media (max-width: 1099px) {
+      .ibul-top { padding: 10px 12px; gap: 10px; }
+      .ibul-brand span { font-size: 22px; }
+      .ibul-search { height: 42px; font-size: 13px; }
+      .ibul-cats { padding: 8px 12px 0; font-size: 12px; line-height: 36px; }
+      .ibul-skel { padding: 0 12px; margin-top: 12px; }
+    }
     @media (min-width: 1100px) {
-      #ibul-web-chrome { display: block; }
+      .ibul-top { padding: 12px 24px; gap: 32px; }
     }
     .ibul-top {
       max-width: 1400px; margin: 0 auto; padding: 12px 24px;
       display: flex; align-items: center; gap: 32px;
     }
-    .ibul-brand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    a.ibul-brand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; text-decoration: none; color: inherit; }
     .ibul-brand img { width: 32px; height: 32px; border-radius: 12px; }
     .ibul-brand span {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -101,6 +108,21 @@
       flex: 1; height: 48px; border: 1px solid rgba(122,47,244,0.35);
       border-radius: 12px; display: flex; align-items: center; padding: 0 16px;
       color: #9e9e9e; font: 14px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #fff; margin: 0;
+    }
+    .ibul-search input {
+      flex: 1; border: 0; outline: 0; background: transparent; color: #111;
+      font: inherit; min-width: 0;
+    }
+    .ibul-search input::placeholder { color: #9e9e9e; }
+    .ibul-search button {
+      border: 0; background: transparent; color: #7A2FF4; font: 700 13px/1 inherit;
+      cursor: pointer; padding: 0 0 0 8px;
+    }
+    .ibul-account { display: flex; gap: 16px; flex-shrink: 0; }
+    .ibul-account a {
+      color: #7A2FF4; text-decoration: none; font: 600 13px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      white-space: nowrap;
     }
     .ibul-cats {
       border-top: 1px solid #eee; border-bottom: 1px solid #eee;
@@ -108,7 +130,7 @@
       font: 600 13px/40px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       color: #333;
     }
-    .ibul-cats span { margin-right: 22px; }
+    .ibul-cats a { margin-right: 22px; color: #333; text-decoration: none; }
     .ibul-skel { max-width: 1400px; margin: 16px auto; padding: 0 24px; }
     .ibul-skel i {
       display: block; background: #eee; border-radius: 12px; margin-bottom: 12px;
@@ -136,21 +158,25 @@
   </style>
 </head>
 <body>
-  <!-- Metin bilerek BOŞ: hızlı açılışta (ilk frame < 300ms) kullanıcı hiçbir
-       yazı görmez, yalnız beyaz ekran görür. "Yükleniyor…" sadece 300ms'i
-       aşan yavaş açılışlarda aşağıdaki tek setTimeout ile yazılır. -->
-  <div id="ibul-loader" aria-live="polite" aria-busy="true">
+  <div id="ibul-loader" aria-busy="false">
     <div id="ibul-web-chrome">
       <div class="ibul-top">
-        <div class="ibul-brand">
+        <a class="ibul-brand" href="/">
           <img src="assets/icons/ibul_logo_2.png" alt="" width="32" height="32">
           <span>iBul</span>
-        </div>
-        <div class="ibul-search">Ürün, kategori veya marka ara...</div>
+        </a>
+        <form class="ibul-search" action="/" method="get">
+          <input name="q" type="search" minlength="3" placeholder="Ürün, kategori veya marka ara..." aria-label="Ara">
+          <button type="submit">Ara</button>
+        </form>
+        <nav class="ibul-account" aria-label="Hesap">
+          <a href="/login">Giriş</a>
+          <a href="/hesabim">Hesabım</a>
+        </nav>
       </div>
-      <div class="ibul-cats">
-        <span>Yakın Lokasyon</span><span>Erkek</span><span>Kadın</span><span>Elektronik</span><span>Ayakkabı &amp; Çanta</span><span>Saat &amp; Aksesuar</span><span>Ev &amp; Yaşam</span>
-      </div>
+      <nav class="ibul-cats" aria-label="Kategoriler">
+        <a href="/map">Yakın Lokasyon</a><a href="/?category=Erkek">Erkek</a><a href="/?category=Kad%C4%B1n">Kadın</a><a href="/?category=Elektronik">Elektronik</a><a href="/?category=Ayakkab%C4%B1%20%26%20%C3%87anta">Ayakkabı &amp; Çanta</a><a href="/?category=Saat%20%26%20Aksesuar">Saat &amp; Aksesuar</a><a href="/?category=Ev%20%26%20Ya%C5%9Fam">Ev &amp; Yaşam</a>
+      </nav>
       <div class="ibul-skel">
         <i style="height:72px"></i>
         <i style="height:160px"></i>
@@ -176,22 +202,10 @@
           timestamp: new Date().toISOString()
         }));
       } catch (_) {}
-      var loaderText = document.getElementById('ibul-loader-text');
-
-      function setLoaderMessage(message) {
-        if (loaderText) loaderText.textContent = message;
+      if (window.performance && performance.mark) {
+        performance.mark('ibul_html_shell_visible');
+        performance.mark('ibul_flutter_boot_start');
       }
-
-      // ── Geç-görünen "Yükleniyor…" ─────────────────────────────────────────
-      // Tek amaç: iyi bağlantıda kullanıcının HİÇBİR yükleme metni görmemesi.
-      // İlk frame 300ms'ten önce gelirse loader DOM'dan silinmiş olur ve bu
-      // callback hiçbir şey yazmaz. Yalnız gerçekten yavaş açılışta ortada
-      // sade bir yazı belirir — ikon/spinner/animasyon yok.
-      window.setTimeout(function () {
-        if (!document.getElementById('ibul-loader')) return;
-        if (window.matchMedia && window.matchMedia('(min-width: 1100px)').matches) return;
-        setLoaderMessage('Yükleniyor…');
-      }, 300);
 
       window.__ibulShowBootError = function (message) {
         var loader = document.getElementById('ibul-loader');
@@ -328,26 +342,55 @@
 
       window.setTimeout(startBootWatchdog, 2000);
 
-      window.addEventListener('error', function (event) {
-        if (!event || !event.message) return;
-        var file = event.filename || '';
-        if (
+      // ── Hata ekranı YALNIZ boot penceresinde gösterilir ─────────────────
+      // Flutter bir kez çizdikten sonra herhangi bir geç hata (flaky ağ
+      // üzerinden düşen deferred part, tek bir bölümün başarısız fetch'i, geç
+      // gelen bir promise rejection) tüm ÇALIŞAN uygulamayı tam ekran
+      // "başlatılamadı" paneliyle değiştiriyordu. Hata artık her durumda
+      // kaydediliyor (maskelenmiyor), ama takeover yalnız runtime henüz
+      // ayakta değilken yapılıyor.
+      function isFlutterRuntimeUp() {
+        if (window.__ibulHomeBootTrace && window.__ibulHomeBootTrace.bootComplete) {
+          return true;
+        }
+        if (document.querySelector('flt-glass-pane')) return true;
+        // Dart ilk usable frame'den sonra #ibul-loader'ı DOM'dan siliyor.
+        return document.getElementById('ibul-loader') === null;
+      }
+
+      function recordBootError(module, message) {
+        try {
+          localStorage.setItem('ibul_web_boot_error_v1', JSON.stringify({
+            module: module,
+            message: message,
+            at: new Date().toISOString()
+          }));
+        } catch (_) {}
+      }
+
+      // Entry bundle deploy'da `app.<hash>.js` olarak parmak izlenir; eski
+      // filtre yalnız `main.dart.js` arıyordu, yani GERÇEK boot hataları hiç
+      // raporlanmıyor, buna karşılık zararsız geç hatalar raporlanıyordu.
+      function isAppScript(file) {
+        if (!file) return false;
+        return (
           file.indexOf('main.dart.js') >= 0 ||
           file.indexOf('canvaskit') >= 0 ||
           file.indexOf('flutter_bootstrap') >= 0 ||
-          file.indexOf('.part.js') >= 0
-        ) {
-          try {
-            localStorage.setItem('ibul_web_boot_error_v1', JSON.stringify({
-              module: file || 'window.onerror',
-              message: event.message,
-              at: new Date().toISOString()
-            }));
-          } catch (_) {}
-          window.__ibulShowBootError(
-            'Uygulama kodu yüklenemedi: ' + event.message
-          );
-        }
+          file.indexOf('.part.js') >= 0 ||
+          /(^|\/)app\.[0-9a-f]{8,}\.js(\?|$)/.test(file)
+        );
+      }
+
+      window.addEventListener('error', function (event) {
+        if (!event || !event.message) return;
+        var file = event.filename || '';
+        if (!isAppScript(file)) return;
+        recordBootError(file || 'window.onerror', event.message);
+        if (isFlutterRuntimeUp()) return;
+        window.__ibulShowBootError(
+          'Uygulama kodu yüklenemedi: ' + event.message
+        );
       });
 
       window.addEventListener('unhandledrejection', function (event) {
@@ -360,13 +403,8 @@
           if (event.preventDefault) event.preventDefault();
           return;
         }
-        try {
-          localStorage.setItem('ibul_web_boot_error_v1', JSON.stringify({
-            module: 'unhandledrejection',
-            message: text,
-            at: new Date().toISOString()
-          }));
-        } catch (_) {}
+        recordBootError('unhandledrejection', text);
+        if (isFlutterRuntimeUp()) return;
         window.__ibulShowBootError(
           'Uygulama başlatılamadı: ' + text
         );
@@ -383,12 +421,7 @@
         });
       }
 
-      // NOT: "Uygulama dosyaları indiriliyor…" / "Uygulama motoru
-      // başlatılıyor…" / "Hâlâ yükleniyor…" sahte ilerleme mesajlarını basan
-      // 1 sn'lik progressTimer tamamen kaldırıldı. Splash artık tek bir metin
-      // durumu biliyor: 300ms'i aşan açılışlarda sade "Yükleniyor…".
-      // Aşağıdaki 60 sn'lik ağ gerçek bir başarısız-boot güvenliği; splash
-      // gecikmesi değil, dokunulmadı.
+      // Aşağıdaki 60 sn'lik zaman aşımı gerçek bir başarısız-boot güvenliği.
       window.setTimeout(function () {
         if (document.getElementById('ibul-loader') &&
             !document.querySelector('flt-glass-pane') &&

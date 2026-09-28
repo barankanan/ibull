@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/mobile_category_catalog.dart';
+import '../features/seller/domain/store_vertical.dart';
 import '../models/admin_permissions.dart';
 import '../models/db_category.dart';
 import 'admin/admin_access_service.dart';
@@ -4754,6 +4755,19 @@ class AdminService {
     }
 
     try {
+      String roleToWrite = 'seller';
+      try {
+        final existingUser = await _supabase
+            .from('users')
+            .select('role')
+            .eq('id', sellerId)
+            .maybeSingle();
+        final existingRole = existingUser?['role']?.toString();
+        if (AuthService.isAdminRole(existingRole) && existingRole != null) {
+          roleToWrite = existingRole;
+        }
+      } catch (_) {}
+
       await _supabase.from('users').upsert({
         'id': sellerId,
         'email': (email == null || email.isEmpty) ? null : email,
@@ -4761,7 +4775,7 @@ class AdminService {
             application['contact_name'] ?? application['business_name'],
         'phone': application['phone'],
         'address': application['address'],
-        'role': 'seller',
+        'role': roleToWrite,
         'is_seller_approved': true,
         'updated_at': DateTime.now().toIso8601String(),
       }, onConflict: 'id');
@@ -4778,6 +4792,19 @@ class AdminService {
       'status': AdminApprovalStatusConstants.approved,
       'approved_at': DateTime.now().toIso8601String(),
     });
+
+    if (resolveStoreVertical(application['category']?.toString()) ==
+        StoreVertical.gallery) {
+      try {
+        await _supabase.from('vehicle_galleries').upsert({
+          'seller_id': sellerId,
+        }, onConflict: 'seller_id');
+      } catch (error) {
+        debugPrint(
+          '[AdminApprove] vehicle_galleries upsert skipped: $error',
+        );
+      }
+    }
   }
 
   Future<void> updateSellerApplicationStatus(

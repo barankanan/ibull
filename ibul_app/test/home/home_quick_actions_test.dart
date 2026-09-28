@@ -68,6 +68,12 @@ void main() {
       final action = HomeQuickActionRegistry.fromHomeShortcutTitle('Moda');
       expect(action!.categorySlug, 'Giyim & Aksesuar');
     });
+
+    test('Araç vehicle aksiyonudur', () {
+      final action = HomeQuickActionRegistry.fromHomeShortcutTitle('Araç');
+      expect(action, isNotNull);
+      expect(action!.type, HomeQuickActionType.vehicle);
+    });
   });
 
   group('HomeQuickActionFilter', () {

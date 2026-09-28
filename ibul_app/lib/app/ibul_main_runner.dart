@@ -12,6 +12,8 @@ import '../core/web_boot.dart';
 import '../core/web_boot_step_profiler.dart';
 import '../core/web_perf_logger.dart';
 import 'app_navigator.dart';
+import 'web_path_url_strategy_stub.dart'
+    if (dart.library.html) 'web_path_url_strategy_web.dart';
 import 'app_providers.dart';
 import 'customer_app.dart';
 import 'firebase_native_boot_stub.dart'
@@ -37,6 +39,7 @@ Future<void> runIbulMain(IbulAppMode mode) async {
 Future<void> _mainImpl(IbulAppMode mode) async {
   IbulAppModeRegistry.current = mode;
   WidgetsFlutterBinding.ensureInitialized();
+  enableIbulPathUrlStrategy();
   WebPerfLogger.logAppStart();
   WebBootLogger.log('main', detail: 'entered mode=${mode.name}');
   RuntimeDiagnosticLogger.startup(

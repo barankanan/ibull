@@ -15,8 +15,18 @@ class SecureLocalStore {
 
   static final SecureLocalStore instance = SecureLocalStore._();
 
+  /// v10 migrates Jetpack EncryptedSharedPreferences into the custom cipher
+  /// on first access. [encryptedSharedPreferences] is ignored by the plugin
+  /// and kept so this call site records the v9 storage backend.
+  /// [resetOnError] stays false so a failed read does not wipe existing keys.
   static const FlutterSecureStorage _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    aOptions: AndroidOptions(
+      // ignore: deprecated_member_use
+      encryptedSharedPreferences: true,
+      resetOnError: false,
+      migrateOnAlgorithmChange: true,
+      migrateWithBackup: true,
+    ),
   );
 
   Future<String?> readString(String key) async {

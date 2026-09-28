@@ -10,6 +10,10 @@ import '../widgets/account_sidebar.dart';
 import '../widgets/ibul_page_state.dart';
 import '../features/orders/screens/order_history_page.dart';
 import '../features/orders/widgets/order_history_web_cta.dart';
+import '../features/vehicle/domain/vehicle_rental_account.dart';
+import '../features/vehicle/models/vehicle_commerce.dart';
+import '../features/vehicle/screens/vehicle_rental_detail_page.dart';
+import '../features/vehicle/services/vehicle_service.dart';
 import '../services/order_service.dart';
 import 'order_detail_page.dart';
 
@@ -122,10 +126,33 @@ class _OrdersPageState extends State<OrdersPage> {
     setState(() => _isLoading = true);
     try {
       final orders = await OrderService.instance.getUserOrders(userId);
+      var rentals = const <VehicleReservation>[];
+      try {
+        rentals = await VehicleService.instance.reservations.listMine(
+          asSeller: false,
+        );
+      } catch (_) {
+        rentals = const [];
+      }
       if (!mounted) return;
+      final mapped = [
+        ...orders.map(_mapRealOrderForUi),
+        ...rentals.where((row) => row.status.isAccountVisible).map((row) {
+          return {
+            ...VehicleRentalAccountFeed.toOrderCard(row),
+            'statusIcon': Icons.directions_car_outlined,
+            'statusColor': AppColors.primary,
+          };
+        }),
+      ]..sort((a, b) {
+          final da = a['sortAt'];
+          final db = b['sortAt'];
+          if (da is DateTime && db is DateTime) return db.compareTo(da);
+          return 0;
+        });
       setState(() {
         _lastLoadedUserId = userId;
-        _realOrders = orders.map(_mapRealOrderForUi).toList();
+        _realOrders = mapped;
       });
     } finally {
       if (mounted) {
@@ -564,6 +591,7 @@ class _OrdersPageState extends State<OrdersPage> {
       'totalPrice':
           '${(order['total_amount'] as num? ?? 0).toStringAsFixed(2)} TL',
       'dateGroup': _dateGroup(createdAt),
+      'sortAt': createdAt,
       'sellerName': firstItem['store_name']?.toString() ?? '-',
       'productImage': firstItem['product_image_url']?.toString(),
       'multipleImages': items.length > 1 ? items.length - 1 : null,
@@ -764,7 +792,9 @@ class _OrdersPageState extends State<OrdersPage> {
           ),
           const SizedBox(height: 6),
           Text(
-            '$itemCount ürün siparişi alındı',
+            orderData['recordType'] == 'vehicle_rental'
+                ? 'Araç Kiralama'
+                : '$itemCount ürün siparişi alındı',
             style: TextStyle(
               fontSize: isWeb ? 14 : 12,
               color: AppColors.primary,
@@ -863,6 +893,23 @@ class _OrdersPageState extends State<OrdersPage> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
+                    if (orderData['recordType'] == 'vehicle_rental')
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          [
+                            if (orderData['rentalCode'] != null)
+                              orderData['rentalCode'].toString(),
+                            '$itemCount gün',
+                            if ((orderData['paymentHint'] ?? '').toString().isNotEmpty)
+                              orderData['paymentHint'].toString(),
+                          ].join('  ·  '),
+                          style: TextStyle(
+                            fontSize: isWeb ? 12 : 11,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -1036,6 +1083,18 @@ class _OrdersPageState extends State<OrdersPage> {
   }
 
   Future<void> _openOrderDetail(Map<String, dynamic> orderData) async {
+    if (orderData['recordType'] == 'vehicle_rental') {
+      final reservation = orderData['reservation'];
+      if (reservation is! VehicleReservation) return;
+      final changed = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VehicleRentalDetailPage(reservation: reservation),
+        ),
+      );
+      if (changed == true) await _loadOrders();
+      return;
+    }
     final result = await Navigator.push<dynamic>(
       context,
       MaterialPageRoute(

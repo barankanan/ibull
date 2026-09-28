@@ -16,7 +16,7 @@ import 'review_state.dart';
 import 'secure_local_store.dart';
 import '../services/auth_service.dart';
 import '../services/product_list_service.dart';
-import '../services/push_notification_service.dart';
+import '../services/push_notification_binding.dart';
 import '../services/store_follow_service.dart';
 import '../services/supabase_service.dart';
 import '../services/cart_validation_service.dart';

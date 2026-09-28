@@ -108,7 +108,7 @@ class ProductCardSkeleton extends StatelessWidget {
     );
     final imageRatio = tight ? 0.70 : 0.72;
     final minHeight = tight ? 72.0 : 100.0;
-    final maxHeight = 132.0;
+    final maxHeight = 168.0;
 
     final naturalImageHeight = (contentWidth * imageRatio)
         .clamp(minHeight, maxHeight)
@@ -151,6 +151,7 @@ class ProductCardSkeleton extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(borderRadius),
+            border: Border.all(color: const Color(0xFFEEEEEE)),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.03),
@@ -230,10 +231,165 @@ class ProductCardSkeleton extends StatelessWidget {
     double? imageHeight,
     bool fillAvailable = false,
   }) {
-    return SkeletonLoading(
-      width: double.infinity,
-      height: fillAvailable ? double.infinity : imageHeight!,
-      borderRadius: tight ? 14 : 14,
+    return Stack(
+      children: [
+        SkeletonLoading(
+          width: double.infinity,
+          height: fillAvailable ? double.infinity : imageHeight!,
+          borderRadius: 14,
+        ),
+        Positioned(
+          top: tight ? 6 : 8,
+          right: 6,
+          child: Row(
+            children: [
+              SkeletonLoading(
+                width: tight ? 18 : 22,
+                height: tight ? 18 : 22,
+                borderRadius: 11,
+              ),
+              const SizedBox(width: 4),
+              SkeletonLoading(
+                width: tight ? 18 : 22,
+                height: tight ? 18 : 22,
+                borderRadius: 11,
+              ),
+              const SizedBox(width: 4),
+              SkeletonLoading(
+                width: tight ? 18 : 22,
+                height: tight ? 18 : 22,
+                borderRadius: 11,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Horizontal product-card placeholders matching the live home rails.
+class HomeProductRailSkeleton extends StatelessWidget {
+  const HomeProductRailSkeleton({
+    super.key,
+    this.itemCount = 5,
+    this.showTitle = true,
+  });
+
+  final int itemCount;
+  final bool showTitle;
+
+  static const double cardWidth = 220;
+  static const double cardHeight = 348;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showTitle) ...[
+            const Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                SkeletonLoading(width: 160, height: 22, borderRadius: 8),
+                SkeletonLoading(width: 72, height: 16, borderRadius: 6),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+          SizedBox(
+            height: cardHeight,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: itemCount,
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              itemBuilder: (_, _) => const SizedBox(
+                width: cardWidth,
+                height: cardHeight,
+                child: ProductCardSkeleton(margin: EdgeInsets.zero),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// First-paint home skeleton: shortcuts, hero row, then product cards.
+class HomeStorefrontSkeleton extends StatelessWidget {
+  const HomeStorefrontSkeleton({super.key, this.showHero = true});
+
+  final bool showHero;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 92,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: 8,
+            separatorBuilder: (context, index) => const SizedBox(width: 12),
+            itemBuilder: (context, index) => const Column(
+              children: [
+                SkeletonLoading(width: 56, height: 56, borderRadius: 16),
+                SizedBox(height: 8),
+                SkeletonLoading(width: 56, height: 10, borderRadius: 4),
+              ],
+            ),
+          ),
+        ),
+        if (showHero) ...[
+          const SizedBox(height: 12),
+          const SizedBox(
+            height: 220,
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: SkeletonLoading(
+                    width: double.infinity,
+                    height: double.infinity,
+                    borderRadius: 16,
+                  ),
+                ),
+                SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: SkeletonLoading(
+                          width: double.infinity,
+                          height: double.infinity,
+                          borderRadius: 16,
+                        ),
+                      ),
+                      SizedBox(height: 12),
+                      Expanded(
+                        child: SkeletonLoading(
+                          width: double.infinity,
+                          height: double.infinity,
+                          borderRadius: 16,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 8),
+        const HomeProductRailSkeleton(),
+      ],
     );
   }
 }

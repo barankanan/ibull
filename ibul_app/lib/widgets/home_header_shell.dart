@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../core/home_navigation.dart';
 import '../core/ibul_chrome.dart';
 import '../screens/home_lazy_routes.dart';
 
@@ -116,57 +117,73 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
     );
   }
 
+  void _openMarketplaceHome() {
+    if (widget.onCategorySelected != null) {
+      widget.onCategorySelected!('Ana Sayfa');
+      return;
+    }
+    HomeNavigation.openHome(context);
+  }
+
   Widget _buildLogo({bool compact = false}) {
-    return Semantics(
-      button: true,
-      label: 'iBul ana sayfa',
-      child: ExcludeSemantics(
-      child: InkWell(
-      onTap: () => widget.onCategorySelected?.call('Ana Sayfa'),
-      hoverColor: Colors.transparent,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Image.asset(
-              AppAssets.ibulLogo,
-              width: compact ? 28 : 36,
-              height: compact ? 28 : 36,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => Container(
-                width: compact ? 28 : 36,
-                height: compact ? 28 : 36,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  'İ',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: compact ? 14 : 18,
-                    fontWeight: FontWeight.w500,
-                    height: 1,
+    return Tooltip(
+      message: 'Ana sayfaya git',
+      excludeFromSemantics: true,
+      child: Semantics(
+        button: true,
+        container: true,
+        label: 'Ana sayfaya git',
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _openMarketplaceHome,
+            child: ExcludeSemantics(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.asset(
+                      AppAssets.ibulLogo,
+                      width: compact ? 28 : 36,
+                      height: compact ? 28 : 36,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => Container(
+                        width: compact ? 28 : 36,
+                        height: compact ? 28 : 36,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          'İ',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: compact ? 14 : 18,
+                            fontWeight: FontWeight.w500,
+                            height: 1,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'iBul',
+                    style: TextStyle(
+                      fontSize: compact ? 20 : 24,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.primary,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          Text(
-            'iBul',
-            style: TextStyle(
-              fontSize: compact ? 20 : 24,
-              fontWeight: FontWeight.w500,
-              color: AppColors.primary,
-              letterSpacing: 0.2,
-            ),
-          ),
-        ],
-      ),
-      ),
+        ),
       ),
     );
   }
@@ -226,27 +243,27 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
             button: true,
             label: 'Ara',
             child: ExcludeSemantics(
-            child: InkWell(
-              onTap: () => _submitSearch(),
-              child: Container(
-                margin: const EdgeInsets.all(4),
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Center(
-                  child: Text(
-                    'ARA',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
+              child: InkWell(
+                onTap: () => _submitSearch(),
+                child: Container(
+                  margin: const EdgeInsets.all(4),
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      'ARA',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
             ),
           ),
         ],
@@ -349,7 +366,8 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.only(left: 24, right: 60),
                     itemCount: HomeHeaderShell._webCategories.length,
-                    separatorBuilder: (context, index) => const SizedBox(width: 32),
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(width: 32),
                     itemBuilder: (context, index) {
                       final category = HomeHeaderShell._webCategories[index];
                       final isSelected = widget.selectedCategory == category;
@@ -381,8 +399,9 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w500,
-                              color:
-                                  isSelected ? AppColors.primary : Colors.grey[800],
+                              color: isSelected
+                                  ? AppColors.primary
+                                  : Colors.grey[800],
                             ),
                           ),
                         ),
@@ -418,49 +437,49 @@ class _HeaderMenuItem extends StatelessWidget {
       button: true,
       label: badgeCount == null ? label : '$label, $badgeCount ürün',
       child: InkWell(
-      onTap: onTap,
-      hoverColor: Colors.transparent,
-      child: ExcludeSemantics(
-      child: Row(
-        children: [
-          Stack(
-            clipBehavior: Clip.none,
+        onTap: onTap,
+        hoverColor: Colors.transparent,
+        child: ExcludeSemantics(
+          child: Row(
             children: [
-              Icon(icon, color: Colors.black87, size: 20),
-              if (badgeCount != null)
-                Positioned(
-                  right: -6,
-                  top: -6,
-                  child: Container(
-                    padding: const EdgeInsets.all(3),
-                    decoration: const BoxDecoration(
-                      color: AppColors.primary,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Text(
-                      badgeCount.toString(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(icon, color: Colors.black87, size: 20),
+                  if (badgeCount != null)
+                    Positioned(
+                      right: -6,
+                      top: -6,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: AppColors.primary,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          badgeCount.toString(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                ],
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Colors.black87,
+                  fontWeight: FontWeight.w500,
                 ),
+              ),
             ],
           ),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 13,
-              color: Colors.black87,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-      ),
+        ),
       ),
     );
   }

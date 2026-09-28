@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../app/account_sections.dart';
 import '../app/ibul_router.dart';
-import '../core/app_motion.dart';
+import '../app/marketplace_paths.dart';
 import '../core/constants.dart';
 import '../screens/orders_page.dart';
+import '../features/vehicle/screens/vehicle_customer_rentals_page.dart';
 import '../screens/favorites_page.dart';
 import '../screens/coupons_page.dart';
 import '../screens/reviews_page.dart';
@@ -23,11 +25,27 @@ class AccountSidebar extends StatelessWidget {
 
   const AccountSidebar({super.key, required this.activePage});
 
-  void _pushReplacementPage(BuildContext context, Widget page) {
-    Navigator.pushReplacement(
+  void _openSection(
+    BuildContext context,
+    AccountSection section,
+    Widget page,
+  ) {
+    AccountSections.open(
       context,
-      buildAppPageRoute<void>(builder: (_) => page),
+      section,
+      nativePage: page,
+      replaceNative: true,
     );
+  }
+
+  bool _isSectionActive(BuildContext context, AccountSection section) {
+    if (MarketplacePaths.syncsBrowserUrl()) {
+      final path = IbulRouter.currentPath(context);
+      if (path != null && MarketplacePaths.isAccountPath(path)) {
+        return AccountSections.fromPath(path) == section;
+      }
+    }
+    return activePage == AccountSections.labelOf(section);
   }
 
   Future<void> _logout(BuildContext context) async {
@@ -187,10 +205,10 @@ class AccountSidebar extends StatelessWidget {
         context,
         Icons.dashboard_outlined,
         'Hesap Özeti',
-        isActive: activePage == 'Hesap Özeti',
+        isActive: _isSectionActive(context, AccountSection.overview),
         onTap: () {
-          if (activePage != 'Hesap Özeti') {
-            _pushReplacementPage(context, const AccountPage());
+          if (!_isSectionActive(context, AccountSection.overview)) {
+            _openSection(context, AccountSection.overview, const AccountPage());
           }
         },
       ),
@@ -198,11 +216,12 @@ class AccountSidebar extends StatelessWidget {
         context,
         Icons.lightbulb_outline,
         'Yapay Zekaya Danış',
-        isActive: activePage == 'Yapay Zekaya Danış',
+        isActive: _isSectionActive(context, AccountSection.ai),
         onTap: () {
-          if (activePage != 'Yapay Zekaya Danış') {
-            _pushReplacementPage(
+          if (!_isSectionActive(context, AccountSection.ai)) {
+            _openSection(
               context,
+              AccountSection.ai,
               const AIChatPage(showAccountSidebar: true),
             );
           }
@@ -212,10 +231,25 @@ class AccountSidebar extends StatelessWidget {
         context,
         Icons.shopping_bag_outlined,
         'Siparişlerim',
-        isActive: activePage == 'Siparişlerim',
+        isActive: _isSectionActive(context, AccountSection.orders),
         onTap: () {
-          if (activePage != 'Siparişlerim') {
-            _pushReplacementPage(context, const OrdersPage());
+          if (!_isSectionActive(context, AccountSection.orders)) {
+            _openSection(context, AccountSection.orders, const OrdersPage());
+          }
+        },
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.directions_car_outlined,
+        'Kiralamalarım',
+        isActive: _isSectionActive(context, AccountSection.rentals),
+        onTap: () {
+          if (!_isSectionActive(context, AccountSection.rentals)) {
+            _openSection(
+              context,
+              AccountSection.rentals,
+              const VehicleCustomerRentalsPage(),
+            );
           }
         },
       ),
@@ -223,10 +257,14 @@ class AccountSidebar extends StatelessWidget {
         context,
         Icons.favorite_border,
         'Favorilerim',
-        isActive: activePage == 'Favorilerim',
+        isActive: _isSectionActive(context, AccountSection.favorites),
         onTap: () {
-          if (activePage != 'Favorilerim') {
-            _pushReplacementPage(context, const FavoritesPage());
+          if (!_isSectionActive(context, AccountSection.favorites)) {
+            _openSection(
+              context,
+              AccountSection.favorites,
+              const FavoritesPage(),
+            );
           }
         },
       ),
@@ -234,10 +272,10 @@ class AccountSidebar extends StatelessWidget {
         context,
         Icons.local_offer_outlined,
         'Kuponlarım',
-        isActive: activePage == 'Kuponlarım',
+        isActive: _isSectionActive(context, AccountSection.coupons),
         onTap: () {
-          if (activePage != 'Kuponlarım') {
-            _pushReplacementPage(context, const CouponsPage());
+          if (!_isSectionActive(context, AccountSection.coupons)) {
+            _openSection(context, AccountSection.coupons, const CouponsPage());
           }
         },
       ),
@@ -245,10 +283,14 @@ class AccountSidebar extends StatelessWidget {
         context,
         Icons.store_outlined,
         'Takip Ettiklerim',
-        isActive: activePage == 'Takip Ettiklerim',
+        isActive: _isSectionActive(context, AccountSection.following),
         onTap: () {
-          if (activePage != 'Takip Ettiklerim') {
-            _pushReplacementPage(context, const FollowedStoresPage());
+          if (!_isSectionActive(context, AccountSection.following)) {
+            _openSection(
+              context,
+              AccountSection.following,
+              const FollowedStoresPage(),
+            );
           }
         },
       ),
@@ -256,10 +298,14 @@ class AccountSidebar extends StatelessWidget {
         context,
         Icons.location_on_outlined,
         'Adreslerim',
-        isActive: activePage == 'Adreslerim',
+        isActive: _isSectionActive(context, AccountSection.addresses),
         onTap: () {
-          if (activePage != 'Adreslerim') {
-            _pushReplacementPage(context, const AddressesPage());
+          if (!_isSectionActive(context, AccountSection.addresses)) {
+            _openSection(
+              context,
+              AccountSection.addresses,
+              const AddressesPage(),
+            );
           }
         },
       ),
@@ -267,10 +313,14 @@ class AccountSidebar extends StatelessWidget {
         context,
         Icons.credit_card_outlined,
         'Kayıtlı Kartlarım',
-        isActive: activePage == 'Kayıtlı Kartlarım',
+        isActive: _isSectionActive(context, AccountSection.cards),
         onTap: () {
-          if (activePage != 'Kayıtlı Kartlarım') {
-            _pushReplacementPage(context, const SavedPaymentCardsPage());
+          if (!_isSectionActive(context, AccountSection.cards)) {
+            _openSection(
+              context,
+              AccountSection.cards,
+              const SavedPaymentCardsPage(),
+            );
           }
         },
       ),
@@ -278,10 +328,10 @@ class AccountSidebar extends StatelessWidget {
         context,
         Icons.reviews_outlined,
         'Değerlendirmelerim',
-        isActive: activePage == 'Değerlendirmelerim',
+        isActive: _isSectionActive(context, AccountSection.reviews),
         onTap: () {
-          if (activePage != 'Değerlendirmelerim') {
-            _pushReplacementPage(context, const ReviewsPage());
+          if (!_isSectionActive(context, AccountSection.reviews)) {
+            _openSection(context, AccountSection.reviews, const ReviewsPage());
           }
         },
       ),
@@ -290,10 +340,14 @@ class AccountSidebar extends StatelessWidget {
         Icons.support_agent_outlined,
         'Müşteri Hizmetleri',
         subtitle: 'Destek ve talepler',
-        isActive: activePage == 'Müşteri Hizmetleri',
+        isActive: _isSectionActive(context, AccountSection.support),
         onTap: () {
-          if (activePage != 'Müşteri Hizmetleri') {
-            _pushReplacementPage(context, const CustomerSupportPage());
+          if (!_isSectionActive(context, AccountSection.support)) {
+            _openSection(
+              context,
+              AccountSection.support,
+              const CustomerSupportPage(),
+            );
           }
         },
       ),
@@ -301,10 +355,10 @@ class AccountSidebar extends StatelessWidget {
         context,
         Icons.settings_outlined,
         'Ayarlar',
-        isActive: activePage == 'Ayarlar',
+        isActive: _isSectionActive(context, AccountSection.settings),
         onTap: () {
-          if (activePage != 'Ayarlar') {
-            _pushReplacementPage(context, const SettingsPage());
+          if (!_isSectionActive(context, AccountSection.settings)) {
+            _openSection(context, AccountSection.settings, const SettingsPage());
           }
         },
       ),

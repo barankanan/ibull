@@ -54,7 +54,7 @@ class AppSpacing {
 }
 
 abstract final class AppAssets {
-  static const String ibulLogo = 'assets/icons/ibul logo app.png';
+  static const String ibulLogo = 'assets/icons/ibul_logo_header.png';
 }
 
 /// Opt-in token access via Theme.of(context).extension. Does not retint ColorScheme.

@@ -9,6 +9,7 @@ class MapStoreMarker {
     required this.name,
     required this.location,
     this.category = 'other',
+    this.storeCategory = '',
     this.city = '',
     this.district = '',
     this.logoUrl,
@@ -21,6 +22,7 @@ class MapStoreMarker {
   final String name;
   final LatLng location;
   final String category;
+  final String storeCategory;
   final String city;
   final String district;
   final String? logoUrl;
@@ -60,6 +62,7 @@ class MapStoreMarker {
       name: name,
       location: LatLng(resolved.lat, resolved.lng),
       category: category,
+      storeCategory: categoryRaw ?? '',
       city: row['city']?.toString() ?? '',
       district: row['district']?.toString() ?? '',
       logoUrl: row['logo_url']?.toString(),
@@ -92,6 +95,9 @@ class MapStoreMarker {
       'distance_km': null,
       'location': location,
       'category': category,
+      'store_category': storeCategory.isNotEmpty
+          ? storeCategory
+          : (raw['category']?.toString() ?? ''),
       'description': description,
       'address': addressLine,
       'address_line': addressLine,

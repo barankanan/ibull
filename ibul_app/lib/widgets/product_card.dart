@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_image_cdn.dart';
 import '../models/product_model.dart';
-import '../screens/product_detail_page.dart';
+import '../screens/home_lazy_routes.dart';
 import '../core/home_navigation.dart';
 import '../core/app_state.dart';
 import '../core/cart_state.dart';
@@ -14,8 +14,6 @@ import '../core/app_motion.dart';
 import '../core/interaction_feedback.dart';
 import '../core/build_profile.dart';
 import '../core/constants.dart';
-import '../screens/login_page.dart';
-import '../screens/business_detail_page.dart';
 import '../services/supabase_service.dart';
 import 'optimized_image.dart';
 import 'premium_interactions.dart';
@@ -147,12 +145,7 @@ class _ProductCardState extends State<ProductCard> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              Navigator.push(
-                context,
-                buildAppPageRoute<void>(
-                  builder: (context) => const LoginPage(),
-                ),
-              );
+              HomeLazyRoutes.openLogin(context);
             },
             child: const Text('Giriş Yap'),
           ),
@@ -200,13 +193,10 @@ class _ProductCardState extends State<ProductCard> {
     // Wrap navigation in Future.delayed to avoid MouseTracker crash on Web
     Future.delayed(Duration.zero, () {
       if (!mounted) return;
-      Navigator.push(
+      HomeLazyRoutes.openProductDetail(
         context,
-        buildAppPageRoute<void>(
-          builder: (context) =>
-              ProductDetailPage(product: widget.product, heroTag: _heroTag),
-          transitionStyle: AppRouteTransitionStyle.hero,
-        ),
+        widget.product,
+        heroTag: _heroTag,
       );
     });
   }
@@ -251,8 +241,7 @@ class _ProductCardState extends State<ProductCard> {
     final logicalWidth =
         widget.width ??
         (widget.compact ? 160.0 : (widget.tight ? 188.0 : 198.0));
-    final logicalHeight =
-        height != null && height.isFinite
+    final logicalHeight = height != null && height.isFinite
         ? height
         : (logicalWidth / (aspectRatio ?? 1.0));
     final cacheWidth = (logicalWidth * devicePixelRatio).round().clamp(
@@ -265,7 +254,7 @@ class _ProductCardState extends State<ProductCard> {
     );
 
     final imageContent = Container(
-      color: Colors.grey[100],
+      color: const Color(0xFFF7F7F8),
       width: double.infinity,
       alignment: Alignment.center,
       child: Hero(
@@ -276,7 +265,7 @@ class _ProductCardState extends State<ProductCard> {
                 imageUrlOrPath: imagePath,
                 width: double.infinity,
                 height: double.infinity,
-                fit: BoxFit.cover,
+                fit: BoxFit.contain,
                 cacheWidth: cacheWidth,
                 cacheHeight: cacheHeight,
                 priority: widget.imagePriority,
@@ -332,14 +321,17 @@ class _ProductCardState extends State<ProductCard> {
         constraints.maxWidth.isFinite && constraints.maxWidth > 0
         ? constraints.maxWidth
         : fallbackWidth;
-    final horizontalPadding = widget.compact ? 16.0 : (widget.tight ? 8.0 : 16.0);
+    final horizontalPadding = widget.compact
+        ? 16.0
+        : (widget.tight ? 8.0 : 16.0);
     final contentWidth = math.max(0.0, availableWidth - horizontalPadding);
     final imageRatio = widget.compact ? 0.72 : (widget.tight ? 0.70 : 0.72);
     final minHeight = widget.compact ? 92.0 : (widget.tight ? 72.0 : 100.0);
-    final maxHeight = widget.compact ? 145.0 : 132.0;
+    final maxHeight = widget.compact ? 145.0 : 168.0;
 
-    final naturalImageHeight =
-        (contentWidth * imageRatio).clamp(minHeight, maxHeight).toDouble();
+    final naturalImageHeight = (contentWidth * imageRatio)
+        .clamp(minHeight, maxHeight)
+        .toDouble();
 
     if (!constraints.maxHeight.isFinite) {
       return naturalImageHeight;
@@ -368,8 +360,9 @@ class _ProductCardState extends State<ProductCard> {
       builder: (context, constraints) {
         final isTight = widget.tight;
         final fillCellHeight = constraints.maxHeight.isFinite;
-        final imageHeight =
-            fillCellHeight ? null : _resolveImageHeight(constraints);
+        final imageHeight = fillCellHeight
+            ? null
+            : _resolveImageHeight(constraints);
         final padding = isTight ? 4.0 : 8.0;
 
         return SizedBox(
@@ -384,7 +377,9 @@ class _ProductCardState extends State<ProductCard> {
               height: fillCellHeight ? double.infinity : null,
               margin: widget.margin ?? const EdgeInsets.only(right: 12),
               decoration: BoxDecoration(
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFFEEEEEE)),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.05),
@@ -457,8 +452,9 @@ class _ProductCardState extends State<ProductCard> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final imageHeight = _resolveImageHeight(constraints);
-        final boundedHeight =
-            constraints.maxHeight.isFinite ? constraints.maxHeight : null;
+        final boundedHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : null;
 
         return SizedBox(
           height: boundedHeight,
@@ -1404,15 +1400,11 @@ class _ProductCardState extends State<ProductCard> {
       'seller_id': widget.product.sellerId ?? '',
     };
 
-    Navigator.push(
+    HomeLazyRoutes.openBusinessDetail(
       context,
-      MaterialPageRoute(
-        builder: (ctx) => BusinessDetailPage(
-          business: business,
-          storeProducts: [widget.product],
-          forceTableSelection: true,
-        ),
-      ),
+      business: business,
+      forceTableSelection: true,
+      storeProducts: [widget.product],
     );
   }
 

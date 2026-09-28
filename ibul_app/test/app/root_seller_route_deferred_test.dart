@@ -31,7 +31,7 @@ void main() {
   test('root MyApp uses the shared route table', () {
     final source = File('../lib/main.dart').readAsStringSync();
     expect(source, contains('IbulMaterialApp'));
-    expect(source, contains('includeAuthRoutes: false'));
+    expect(source, contains('includeAuthRoutes: true'));
     final shell = File('lib/app/ibul_material_app.dart').readAsStringSync();
     expect(shell, contains('MaterialApp.router'));
     expect(shell, contains('createIbulGoRouter'));

@@ -1,6 +1,21 @@
 -- Admin mağaza başvurusu onayı: stores INSERT RLS 42501 ve users upsert RLS.
 -- Supabase SQL Editor'da da güvenle tekrar çalıştırılabilir.
 
+create or replace function public.store_is_gallery_category(p_category text)
+returns boolean
+language sql
+immutable
+as $$
+  select (
+    lower(translate(coalesce(p_category, ''), 'İIıĞğÜüŞşÖöÇç', 'iiigguusssoocc'))
+      like '%galeri%'
+    or lower(coalesce(p_category, '')) like '%kiralama%'
+    or lower(coalesce(p_category, '')) like '%rent%car%'
+    or lower(coalesce(p_category, '')) like '%dealer%'
+    or lower(coalesce(p_category, '')) like '%dealership%'
+  );
+$$;
+
 alter table public.stores enable row level security;
 
 drop policy if exists "Admins can insert stores" on public.stores;
@@ -166,7 +181,12 @@ begin
         display_name = coalesce(excluded.display_name, public.users.display_name),
         phone = coalesce(excluded.phone, public.users.phone),
         address = coalesce(excluded.address, public.users.address),
-        role = 'seller',
+        role = case
+          when lower(coalesce(public.users.role, '')) in ('admin', 'super_admin')
+               or lower(coalesce(public.users.role, '')) like 'admin_%'
+          then public.users.role
+          else 'seller'
+        end,
         is_seller_approved = true,
         updated_at = timezone('utc', now());
 
@@ -304,6 +324,14 @@ begin
   set status = 'approved',
       approved_at = coalesce(approved_at, timezone('utc', now()))
   where id = p_application_id;
+
+  if to_regclass('public.vehicle_galleries') is not null then
+    if public.store_is_gallery_category(v_app->>'category') then
+      insert into public.vehicle_galleries (seller_id)
+      values (v_seller_id)
+      on conflict (seller_id) do nothing;
+    end if;
+  end if;
 
   return jsonb_build_object(
     'ok', true,

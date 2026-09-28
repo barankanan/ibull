@@ -495,6 +495,24 @@ class StoreTableService {
     final resolved = sellerId.trim();
     if (resolved.isEmpty) return const <int>{};
     try {
+      try {
+        final rpcRows = await _supabase
+            .rpc(
+              'list_occupied_table_numbers',
+              params: {'p_seller_id': resolved},
+            )
+            .timeout(tableOrderTimeout);
+        if (rpcRows is List) {
+          return rpcRows
+              .map((value) => _parseTableNumberValue(value))
+              .where((value) => value > 0)
+              .toSet();
+        }
+      } catch (error) {
+        debugPrint(
+          '[StoreTableService] list_occupied_table_numbers fallback: $error',
+        );
+      }
       final rows = await _supabase
           .from('table_orders')
           .select('table_number, status')

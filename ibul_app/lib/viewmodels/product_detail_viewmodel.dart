@@ -14,6 +14,7 @@ import '../utils/product_visibility_helper.dart';
 class ProductDetailViewModel extends ChangeNotifier {
   Product initialProduct;
   final AppState appState;
+  final bool catalogMode;
   late ReviewSummary _reviewSummary;
   String? _storeLogoUrl;
 
@@ -75,6 +76,7 @@ class ProductDetailViewModel extends ChangeNotifier {
   ProductDetailViewModel({
     required this.initialProduct,
     required this.appState,
+    this.catalogMode = false,
   }) {
     final localReviews = List<Map<String, dynamic>>.unmodifiable(
       appState.getProductReviewsFor(
@@ -93,18 +95,22 @@ class ProductDetailViewModel extends ChangeNotifier {
   }
 
   void _init() {
-    appState.addRecentlyViewedProduct(initialProduct);
-    _parseVariantOptions();
-    _syncSelectedVariantsFromStructuredVariants();
+    if (!catalogMode) {
+      appState.addRecentlyViewedProduct(initialProduct);
+      _parseVariantOptions();
+      _syncSelectedVariantsFromStructuredVariants();
+    }
     isFavorite = appState.isFavorite(initialProduct);
-    isAddedToCart = appState.isInCart(initialProduct);
+    if (!catalogMode) {
+      isAddedToCart = appState.isInCart(initialProduct);
+    }
 
     // Initialize fast delivery state from app state logic or default
-    if (appState.hasFastDelivery(initialProduct)) {
+    if (!catalogMode && appState.hasFastDelivery(initialProduct)) {
       isFastDeliverySelected = true;
     }
 
-    if (isAddedToCart) {
+    if (!catalogMode && isAddedToCart) {
       try {
         final cartProduct = appState.cart.firstWhere(
           (p) =>
@@ -124,10 +130,12 @@ class ProductDetailViewModel extends ChangeNotifier {
     }
 
     final generation = ++_detailLoadGeneration;
-    unawaited(_refreshProductExtrasFromSupabase(generation));
     unawaited(refreshReviewSummary());
     unawaited(loadStoreLogo());
-    unawaited(_loadDeferredSections(generation));
+    if (!catalogMode) {
+      unawaited(_refreshProductExtrasFromSupabase(generation));
+      unawaited(_loadDeferredSections(generation));
+    }
   }
 
   Future<void> _loadDeferredSections(int generation) async {

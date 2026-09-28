@@ -87,11 +87,12 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
         return;
       }
 
-      final roleFuture = _authService.getUserDataField('role');
-      final profileFuture = _authService.getUserProfile();
-      final role = await roleFuture;
-      final profile = await profileFuture;
-      final accessBundle = AuthService.isAdminRole(role?.toString())
+      final resolution = await _authService.resolveLoginRoute(
+        diagnosticContext: 'admin_panel',
+        includeStoreProfile: false,
+      );
+      final profile = resolution.profile;
+      final accessBundle = resolution.resolvedRole == LoginResolvedRole.admin
           ? await _adminService.getCurrentAdminAccessBundle()
           : const AdminAccessBundle(
               roleKey: 'user',
@@ -110,7 +111,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       );
 
       setState(() {
-        _hasAdminAccess = AuthService.isAdminRole(role?.toString());
+        _hasAdminAccess = resolution.resolvedRole == LoginResolvedRole.admin;
         _allowedModules = accessBundle.allowedModules.toSet();
         _adminRoleLabel = accessBundle.roleTitle;
         _selectedMenu = nextSelectedMenu;

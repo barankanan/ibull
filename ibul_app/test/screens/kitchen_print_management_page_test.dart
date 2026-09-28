@@ -10,6 +10,7 @@ import 'package:ibul_app/services/desktop_print_orchestrator.dart';
 import 'package:ibul_app/services/order_print_job_service.dart';
 import 'package:ibul_app/services/print_job_repository.dart';
 import 'package:ibul_app/services/print_station_service.dart';
+import 'package:ibul_app/services/printer_print_size_settings.dart';
 import 'package:ibul_app/services/printer_receipt_length_settings.dart';
 import 'package:ibul_app/services/printer_repository.dart';
 import 'package:ibul_app/services/station_repository.dart';
@@ -547,6 +548,7 @@ class _FakeKitchenPrinterRepository extends PrinterRepository {
     List<PrinterRole> assignedRoles = const [],
     String? printerProfileId,
     PrinterReceiptLengthSettings? receiptLengthSettings,
+    PrinterPrintSizeSettings? printSizeSettings,
   }) async {
     final id = printerId?.trim().isNotEmpty == true
         ? printerId!.trim()

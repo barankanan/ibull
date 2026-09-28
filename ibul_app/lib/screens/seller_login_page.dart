@@ -7,9 +7,11 @@ import '../core/app_state.dart';
 import '../core/auth/auth_flow_logger.dart';
 import '../core/auth/auth_session_guard.dart';
 import '../core/constants.dart';
+import '../features/seller/domain/store_vertical.dart';
 import 'become_seller_page.dart';
 import '../features/seller/panel/helpers/seller_login_back_navigation.dart';
 import '../services/auth_service.dart';
+import 'seller/seller_forgot_password_page.dart';
 import 'seller_panel_page.dart';
 
 class SellerLoginPage extends StatefulWidget {
@@ -105,7 +107,10 @@ class _SellerLoginPageState extends State<SellerLoginPage>
               sellerId: resolution.userId,
             );
             AuthFlowLogger.redirect(target: '/admin');
-            IbulRouter.go(context, '/admin');
+            IbulRouter.go(
+              context,
+              SellerDashboardResolver.routeFor(resolvedRoleName: 'admin'),
+            );
             return;
           }
 
@@ -131,8 +136,14 @@ class _SellerLoginPageState extends State<SellerLoginPage>
             );
             appState.clearCustomerSessionView();
             if (!mounted) return;
-            AuthFlowLogger.redirect(target: '/seller');
-            IbulRouter.go(context, '/seller');
+            final sellerRoute = SellerDashboardResolver.routeFor(
+              resolvedRoleName: LoginResolvedRole.seller.name,
+              vertical: resolveStoreVertical(
+                resolution.storeProfile?['category']?.toString(),
+              ),
+            );
+            AuthFlowLogger.redirect(target: sellerRoute);
+            IbulRouter.go(context, sellerRoute);
             return;
           } else {
             // Not approved yet
@@ -445,7 +456,32 @@ class _SellerLoginPageState extends State<SellerLoginPage>
                                 },
                               ),
 
-                              SizedBox(height: isCompactMobile ? 20 : 24),
+                              if (!widget.adminMode)
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: TextButton(
+                                    onPressed: _isLoading
+                                        ? null
+                                        : () => SellerForgotPasswordPage.open(
+                                            context,
+                                            initialEmail: _emailController.text
+                                                .trim(),
+                                          ),
+                                    child: const Text(
+                                      'Şifremi unuttum',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: primary,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              else
+                                SizedBox(height: isCompactMobile ? 20 : 24),
+
+                              if (widget.adminMode)
+                                const SizedBox(height: 8),
 
                               // ── PRIMARY ACTIONS ────────────────────────────
                               if (widget.adminMode)

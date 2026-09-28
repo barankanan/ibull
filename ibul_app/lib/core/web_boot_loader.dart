@@ -3,3 +3,5 @@ import 'web_boot_loader_stub.dart'
 
 /// Hides the static HTML boot loader after Flutter paints its first frame.
 void dismissWebBootLoader() => impl.dismissWebBootLoader();
+
+void markFlutterFirstFrame() => impl.markFlutterFirstFrame();

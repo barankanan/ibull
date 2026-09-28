@@ -6,6 +6,7 @@ import '../../ads/presentation/pages/admin_ads_manager_page.dart';
 import '../../features/admin/panel/helpers/admin_panel_density.dart';
 import '../../services/admin_service.dart';
 import 'store_application_detail_dialog.dart';
+import 'store_recovery_codes_dialog.dart';
 
 class StoreManagementPage extends StatefulWidget {
   const StoreManagementPage({super.key});
@@ -1505,6 +1506,29 @@ class _StoreManagementPageState extends State<StoreManagementPage>
                     ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () {
+                    final sellerId = (store['seller_id'] ?? '').toString();
+                    if (sellerId.isEmpty) return;
+                    showDialog<void>(
+                      context: context,
+                      builder: (_) => StoreRecoveryCodesDialog(
+                        storeId: sellerId,
+                        storeName: (store['business_name'] ?? 'Mağaza')
+                            .toString(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.vpn_key_outlined, size: 18),
+                  label: const Text('Kurtarma kodları'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF6D28D9),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
                     ),
                   ),
                 ),
@@ -3047,6 +3071,24 @@ class _StoreDetailDialogState extends State<StoreDetailDialog> {
             labelText: 'Kategori',
             border: OutlineInputBorder(),
           ),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () {
+            final sellerId = (widget.store['seller_id'] ?? '').toString();
+            if (sellerId.isEmpty) return;
+            showDialog<void>(
+              context: context,
+              builder: (_) => StoreRecoveryCodesDialog(
+                storeId: sellerId,
+                storeName: _nameController.text.trim().isEmpty
+                    ? 'Mağaza'
+                    : _nameController.text.trim(),
+              ),
+            );
+          },
+          icon: const Icon(Icons.vpn_key_outlined),
+          label: const Text('5 kurtarma kodu üret'),
         ),
         const SizedBox(height: 20),
         Row(

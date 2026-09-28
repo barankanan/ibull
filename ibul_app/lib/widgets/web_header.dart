@@ -1,15 +1,15 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../app/ibul_router.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../core/home_navigation.dart';
 import '../core/ibul_chrome.dart';
-import '../screens/notifications_page.dart';
+import '../screens/notifications_page.dart' deferred as notifications_page;
 import '../core/route_observer.dart';
 import 'web_header_menu_items.dart';
-import 'search_overlay.dart';
-import '../screens/product_detail_page.dart';
+import 'search_overlay.dart' deferred as search_overlay;
 import '../screens/home_lazy_routes.dart';
 
 class WebHeader extends StatefulWidget {
@@ -87,7 +87,19 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
 
   final GlobalKey _searchKey = GlobalKey();
 
-  void _showOverlay({bool showFilters = false}) {
+  Future<void> _openNotifications() async {
+    await notifications_page.loadLibrary();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => notifications_page.NotificationsPage(),
+      ),
+    );
+  }
+
+  Future<void> _showOverlay({bool showFilters = false}) async {
+    await search_overlay.loadLibrary();
+    if (!mounted) return;
     if (_overlayEntry != null) {
       _hideOverlay();
     }
@@ -108,7 +120,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
             child: Material(
               elevation: 8,
               borderRadius: BorderRadius.circular(12),
-              child: SearchOverlay(
+              child: search_overlay.SearchOverlay(
                 queryListenable: _queryNotifier,
                 onClose: _hideOverlay,
                 onSearch: (query) => _submitSearch(query),
@@ -116,11 +128,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                   context.read<AppState>().addRecentlyViewedProduct(product);
                   _searchFocusNode.unfocus();
                   _hideOverlay();
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ProductDetailPage(product: product),
-                    ),
-                  );
+                  HomeLazyRoutes.openProductDetail(context, product);
                 },
                 showFilters: showFilters,
               ),
@@ -251,17 +259,21 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
     );
   }
 
+  void _openMarketplaceHome() {
+    if (widget.onCategorySelected != null) {
+      widget.onCategorySelected!('Ana Sayfa');
+      return;
+    }
+    HomeNavigation.openHome(context);
+  }
+
   void _onHeaderBack() {
     final nav = Navigator.of(context);
     if (nav.canPop()) {
       nav.pop();
       return;
     }
-    if (widget.onCategorySelected != null) {
-      widget.onCategorySelected!('Ana Sayfa');
-      return;
-    }
-    IbulRouter.go(context, '/');
+    _openMarketplaceHome();
   }
 
   Widget _buildBackButton() {
@@ -279,61 +291,65 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
   }
 
   Widget _buildLogo() {
-    return Semantics(
-      button: true,
-      label: 'iBul ana sayfa',
-      child: InkWell(
-      onTap: () {
-        if (widget.onCategorySelected != null) {
-          widget.onCategorySelected!('Ana Sayfa');
-        } else {
-          IbulRouter.go(context, '/');
-        }
-      },
-      hoverColor: Colors.transparent,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Image.asset(
-              AppAssets.ibulLogo,
-              width: 36,
-              height: 36,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => Container(
-                width: 36,
-                height: 36,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Text(
-                  'İ',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w500,
-                    height: 1,
+    return Tooltip(
+      message: 'Ana sayfaya git',
+      excludeFromSemantics: true,
+      child: Semantics(
+        button: true,
+        container: true,
+        label: 'Ana sayfaya git',
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _openMarketplaceHome,
+            child: ExcludeSemantics(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.asset(
+                      AppAssets.ibulLogo,
+                      width: 36,
+                      height: 36,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => Container(
+                        width: 36,
+                        height: 36,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text(
+                          'İ',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w500,
+                            height: 1,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'iBul',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.primary,
+                      letterSpacing: 0.2,
+                      fontFamily: 'Montserrat',
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          Text(
-            'iBul',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w500,
-              color: AppColors.primary,
-              letterSpacing: 0.2,
-              fontFamily: 'Montserrat',
-            ),
-          ),
-        ],
-      ),
+        ),
       ),
     );
   }
@@ -344,33 +360,31 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
         Tooltip(
           message: 'Bildirimler',
           child: InkWell(
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const NotificationsPage()),
-            );
-          },
-          borderRadius: BorderRadius.circular(24),
-          child: Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.grey.shade200),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.notifications_outlined,
-              color: AppColors.primary,
-              size: 20,
+            onTap: () {
+              unawaited(_openNotifications());
+            },
+            borderRadius: BorderRadius.circular(24),
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.grey.shade200),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.notifications_outlined,
+                color: AppColors.primary,
+                size: 20,
+              ),
             ),
           ),
-        ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -417,23 +431,26 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                     button: true,
                     label: 'Kamera',
                     child: InkWell(
-                    onTap: () {
-                      _searchFocusNode.unfocus();
-                      _hideOverlay();
-                      // HomeLazyRoutes: deferred chunk'tan açılır (bkz.
-                      // custom_header.dart'taki aynı desen). Push aynı.
-                      HomeLazyRoutes.openCamera(context);
-                    },
-                    borderRadius: BorderRadius.circular(8),
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                      child: Icon(
-                        Icons.photo_camera_outlined,
-                        color: AppColors.primary,
-                        size: 20,
+                      onTap: () {
+                        _searchFocusNode.unfocus();
+                        _hideOverlay();
+                        // HomeLazyRoutes: deferred chunk'tan açılır (bkz.
+                        // custom_header.dart'taki aynı desen). Push aynı.
+                        HomeLazyRoutes.openCamera(context);
+                      },
+                      borderRadius: BorderRadius.circular(8),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 8,
+                        ),
+                        child: Icon(
+                          Icons.photo_camera_outlined,
+                          color: AppColors.primary,
+                          size: 20,
+                        ),
                       ),
                     ),
-                  ),
                   ),
 
                   const SizedBox(width: 8),
@@ -442,26 +459,26 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                     button: true,
                     label: 'Ara',
                     child: InkWell(
-                    onTap: () => _submitSearch(),
-                    child: Container(
-                      margin: const EdgeInsets.all(4),
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Center(
-                        child: Text(
-                          'ARA',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
+                      onTap: () => _submitSearch(),
+                      child: Container(
+                        margin: const EdgeInsets.all(4),
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Center(
+                          child: Text(
+                            'ARA',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
                   ),
                 ],
               ),
@@ -606,7 +623,10 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                       gradient: LinearGradient(
                         begin: Alignment.centerRight,
                         end: Alignment.centerLeft,
-                        colors: [Colors.white, Colors.white.withValues(alpha: 0.0)],
+                        colors: [
+                          Colors.white,
+                          Colors.white.withValues(alpha: 0.0),
+                        ],
                         stops: const [0.5, 1.0],
                       ),
                     ),

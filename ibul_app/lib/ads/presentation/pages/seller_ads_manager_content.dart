@@ -17,6 +17,7 @@ import '../../models/ads_dashboard_snapshot.dart';
 import '../../services/ad_metrics_service.dart';
 import '../../services/ad_revenue_service.dart';
 import '../../services/campaign_service.dart';
+import '../../../features/coupon/screens/seller/seller_coupon_ad_hub_page.dart';
 import '../../../services/store_service.dart';
 import 'campaign_detail_dialog.dart';
 import 'campaign_wizard_page.dart';
@@ -1231,6 +1232,16 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
                 label: const Text('Ana Sayfada One Cikar'),
               ),
               OutlinedButton.icon(
+                onPressed: _isOpeningCreateWizard ? null : _openCouponAdForm,
+                icon: const Icon(Icons.confirmation_number_outlined),
+                label: const Text('Kupon Reklamı'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _isOpeningCreateWizard ? null : _openWheelAdForm,
+                icon: const Icon(Icons.casino_outlined),
+                label: const Text('Hediye Çarkında Yer Al'),
+              ),
+              OutlinedButton.icon(
                 onPressed: () => _loadCampaigns(refresh: true),
                 icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Yenile'),
@@ -2276,6 +2287,18 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
                     label: const Text('Ana Sayfa Reklami Olustur'),
                   ),
                   OutlinedButton.icon(
+                    onPressed:
+                        _isOpeningCreateWizard ? null : _openCouponAdForm,
+                    icon: const Icon(Icons.confirmation_number_outlined),
+                    label: const Text('Kupon Reklamı'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed:
+                        _isOpeningCreateWizard ? null : _openWheelAdForm,
+                    icon: const Icon(Icons.casino_outlined),
+                    label: const Text('Hediye Çarkında Yer Al'),
+                  ),
+                  OutlinedButton.icon(
                     onPressed: () => _loadCampaigns(refresh: true),
                     icon: const Icon(Icons.refresh_rounded),
                     label: const Text('Yenile'),
@@ -2661,6 +2684,47 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
       CampaignObjective.orders => 'Siparis',
       CampaignObjective.driveNearbyTraffic => 'Yakin trafik',
     };
+  }
+
+  Future<void> _openCouponAdForm() async {
+    final sellerId = _effectiveSellerId;
+    if (sellerId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Satici kimligi bulunamadi.')),
+      );
+      return;
+    }
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) => SellerCouponAdHubPage(sellerId: sellerId),
+        fullscreenDialog: true,
+      ),
+    );
+    if (result == true) {
+      unawaited(_loadCampaigns(refresh: true));
+    }
+  }
+
+  Future<void> _openWheelAdForm() async {
+    final sellerId = _effectiveSellerId;
+    if (sellerId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Satici kimligi bulunamadi.')),
+      );
+      return;
+    }
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) => SellerCouponAdHubPage(
+          sellerId: sellerId,
+          forWheel: true,
+        ),
+        fullscreenDialog: true,
+      ),
+    );
+    if (result == true) {
+      unawaited(_loadCampaigns(refresh: true));
+    }
   }
 
   Future<void> _openHomeFeatureForm() async {

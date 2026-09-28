@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import '../core/constants.dart';
+import '../features/seller/auth/seller_application_auth.dart';
 import '../services/auth_service.dart';
 import '../services/store_service.dart';
 import '../widgets/image_cropper_widget.dart';
@@ -378,6 +379,7 @@ class _BecomeSellerPageState extends State<BecomeSellerPage> {
                 'Süpermarket',
                 'Petshop',
                 'Otomotiv & Motosiklet',
+                'Galerici',
                 'Yapı Market & Bahçe',
               ],
               onChanged: (value) {
@@ -1544,22 +1546,13 @@ class _BecomeSellerPageState extends State<BecomeSellerPage> {
       final storeService = StoreService();
 
       // 1. Check/Register User First (Required for Upload)
-      if (authService.currentUser == null) {
-        if (_passwordController.text.isEmpty) {
-          throw Exception('Şifre alanı zorunludur');
-        }
-        // Sign up and login
-        await authService.signUpWithEmailPassword(
-          _emailController.text.trim(),
-          _passwordController.text,
-          _fullNameController.text, // displayName
-          phone: _phoneController.text,
-        );
-
-        if (authService.currentUser == null) {
-          throw Exception('Kullanıcı oluşturuldu fakat giriş yapılamadı.');
-        }
-      }
+      await SellerApplicationAuth.ensureAccount(
+        auth: authService,
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+        displayName: _fullNameController.text,
+        phone: _phoneController.text,
+      );
 
       // 2. Upload Documents to Supabase Storage
       final Map<String, dynamic> documentsData = {};

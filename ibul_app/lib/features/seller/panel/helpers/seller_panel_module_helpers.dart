@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../../models/seller_product.dart';
+import '../../domain/store_vertical.dart';
 import '../models/seller_panel_types.dart';
+
+export '../../domain/store_vertical.dart' show isSellerFoodStoreCategory;
 
 enum SellerPanelNavigationSource {
   userTap,
@@ -281,6 +284,8 @@ String resolveSellerPanelRenderTarget({
     case SellerModule.reviews:
     case SellerModule.support:
     case SellerModule.downloadApp:
+    case SellerModule.vehicles:
+    case SellerModule.contracts:
       return selectedModule.name;
   }
 }
@@ -858,52 +863,6 @@ bool shouldClearGarsonCatalogAsNonFood({
   return !isFoodCategory;
 }
 
-/// This is the single source of truth for the food-business check.
-/// Dashboard behaviour (metrics, cards, charts) branches on this flag.
-bool isSellerFoodStoreCategory(String? category) {
-  final normalized = (category ?? '').trim().toLowerCase();
-  if (normalized.isEmpty) return false;
-  const keywords = <String>[
-    'yemek',
-    'restoran',
-    'restaurant',
-    'food',
-    'kafe',
-    'cafe',
-    'kafeterya',
-    'lokanta',
-    'kebap',
-    'kebab',
-    'döner',
-    'doner',
-    'pide',
-    'lahmacun',
-    'pastane',
-    'pastahane',
-    'fast food',
-    'fastfood',
-    'yiyecek',
-    'içecek',
-    'mutfak',
-    'büfe',
-    'bufe',
-    'pizza',
-    'burger',
-    'sushi',
-    'steakhouse',
-    'et lokantası',
-    'balık',
-    'balik',
-    'tatlı',
-    'tatli',
-    'kahve',
-    'coffee',
-    'çay',
-    'cay',
-  ];
-  return keywords.any((kw) => normalized.contains(kw));
-}
-
 List<SellerModule> visibleSellerModules(
   String? storeCategory, {
   bool garsonOnly = false,
@@ -911,14 +870,20 @@ List<SellerModule> visibleSellerModules(
   if (garsonOnly) {
     return <SellerModule>[SellerModule.garson];
   }
+  final vertical = resolveStoreVertical(storeCategory);
   return <SellerModule>[
     SellerModule.dashboard,
+    if (SellerDashboardResolver.usesGalleryModules(vertical))
+      SellerModule.vehicles,
     SellerModule.products,
     SellerModule.collections,
     SellerModule.orders,
-    if (isSellerFoodStoreCategory(storeCategory)) SellerModule.garson,
-    if (isSellerFoodStoreCategory(storeCategory)) SellerModule.system,
+    if (SellerDashboardResolver.usesRestaurantModules(vertical))
+      SellerModule.garson,
+    if (SellerDashboardResolver.usesRestaurantModules(vertical))
+      SellerModule.system,
     SellerModule.store,
+    SellerModule.contracts,
     SellerModule.team,
     SellerModule.campaigns,
     SellerModule.finance,
@@ -959,6 +924,10 @@ String sellerModuleLabel(SellerModule module) {
       return 'Destek';
     case SellerModule.downloadApp:
       return 'İndir';
+    case SellerModule.vehicles:
+      return 'Araçlar';
+    case SellerModule.contracts:
+      return 'Sözleşmeler';
   }
 }
 
@@ -1003,5 +972,9 @@ IconData sellerModuleIcon(SellerModule module) {
       return Icons.support_agent_outlined;
     case SellerModule.downloadApp:
       return Icons.download_for_offline_outlined;
+    case SellerModule.vehicles:
+      return Icons.directions_car_outlined;
+    case SellerModule.contracts:
+      return Icons.description_outlined;
   }
 }

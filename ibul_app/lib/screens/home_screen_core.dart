@@ -19,11 +19,16 @@ import '../core/home_for_you_helper.dart';
 import '../core/home_mobile_shortcut.dart';
 import '../core/home_snapshot_cache.dart';
 import '../core/home_ui_diagnostics.dart';
+import '../features/vehicle/domain/vehicle_category.dart';
+import '../features/vehicle/models/vehicle_listing.dart';
+import '../features/vehicle/navigation/vehicle_routes.dart'
+    deferred as vehicle_routes;
 import '../core/perf_debug_config.dart';
 import '../core/product_load_trace.dart';
 import '../core/qr_initial_params.dart';
 import '../core/review_state.dart';
 import '../core/single_flight_guard.dart';
+import '../core/web_boot_loader.dart';
 import '../core/web_boot_step_profiler.dart';
 import '../core/web_perf_logger.dart';
 import '../core/web_perf_trace.dart';
@@ -43,20 +48,31 @@ import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/home_category_card_section.dart';
 import 'home_deferred_tab.dart';
 import 'home_lazy_routes.dart';
+import 'home/home_discovery_loader.dart';
+import 'home/home_discovery_resolver.dart';
 import 'home/deferred/deferred_home_full_rail_section.dart';
 import 'home/deferred/deferred_home_sponsored_section.dart';
+import 'home/sections/home_nearby_discovery_section.dart';
+import 'home/sections/home_vehicle_rail_section.dart';
 import 'home/sections/ibul_delivery_address_section.dart';
 import 'home/sections/ibul_hero_campaign_row.dart';
 import 'home/sections/ibul_mobile_home_chrome.dart';
 import 'home/sections/ibul_opportunity_shortcuts_section.dart';
 import 'home/sections/ibul_trust_bar_section.dart';
+import 'home/deferred/deferred_reward_wheel_overlay.dart';
 
 /// Lean home entry — gerçek İBUL tasarımı, ağır modüller deferred.
 class HomeScreenCore extends StatefulWidget {
-  const HomeScreenCore({super.key, this.initialIndex = 0, this.initialCategory});
+  const HomeScreenCore({
+    super.key,
+    this.initialIndex = 0,
+    this.initialCategory,
+    this.initialSearchQuery,
+  });
 
   final int initialIndex;
   final String? initialCategory;
+  final String? initialSearchQuery;
 
   @override
   State<HomeScreenCore> createState() => _HomeScreenCoreState();
@@ -66,6 +82,7 @@ enum _HomeBootTimeoutPhase { none, slowWarning, fallbackApplied }
 
 class _HomeScreenCoreState extends State<HomeScreenCore> {
   static const int kPreviewBatchSize = 8;
+  static const int kHomeCatalogBatchSize = 24;
   static const Duration kCategoryRevealDelay = Duration.zero;
   static const Duration kProductsRevealDelay = Duration.zero;
   static const Duration kHeroDelay = Duration.zero;
@@ -85,6 +102,13 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
   final HomeFeatureAdService _homeFeatureAdService = HomeFeatureAdService();
 
   List<DBProduct> _products = [];
+  List<HomeDiscoveryItem> _nearbyItems = [];
+  List<VehicleListing> _homeVehicles = [];
+  Map<String, double> _distanceBySeller = {};
+  bool _isLoadingNearby = true;
+  bool _isLoadingVehicles = true;
+  bool _locationResolved = false;
+  String? _vehicleRailError;
   List<String> _heroBannerUrls = [];
   List<HomeCategoryCardGroup> _homeFeatureAdGroups = [];
   bool _isLoadingProducts = true;
@@ -118,6 +142,12 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         _loggedFirstFrame = true;
         WebPerfLogger.logFirstFrame();
         WebBootStepProfiler.done('home_first_frame');
+        markFlutterFirstFrame();
+        dismissWebBootLoader();
+        final query = widget.initialSearchQuery?.trim() ?? '';
+        if (mounted && query.length >= 3) {
+          unawaited(HomeLazyRoutes.openSearch(context, query));
+        }
       }
       _scheduleStagedReveal();
       _startWatchdog();
@@ -130,22 +160,28 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         unawaited(_fetchHomeProducts());
         unawaited(_fetchHeroBanners());
         unawaited(_fetchHomeFeatureAds());
+        if (kIsWeb) {
+          SchedulerBinding.instance.scheduleTask<void>(() {
+            unawaited(_loadHomeVehicles());
+            unawaited(_resolveHomeLocation());
+          }, Priority.idle);
+        } else {
+          unawaited(_loadHomeVehicles());
+          unawaited(_resolveHomeLocation());
+        }
       }
       if (QrInitialParams.isQrPath) {
         unawaited(_openQrDeferred());
       } else if (!AppRuntimeConfig.safeBootMode) {
-        SchedulerBinding.instance.scheduleTask<void>(
-          () {
-            unawaited(HomeLazyRoutes.prefetchHotPaths());
-          },
-          Priority.idle,
-        );
+        HomeLazyRoutes.armPrefetchAfterInteraction();
       }
 
       // Show mobile app download prompt if applicable (delay slightly to let home load)
       final screenWidth = MediaQuery.sizeOf(context).width;
       if (kDebugMode) {
-        debugPrint('[MobileAppPrompt] schedule source=HomeScreenCore width=$screenWidth');
+        debugPrint(
+          '[MobileAppPrompt] schedule source=HomeScreenCore width=$screenWidth',
+        );
       }
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) {
@@ -165,7 +201,9 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
 
     final cachedProducts = HomeSnapshotCache.instance.readPopularProducts();
     if (cachedProducts != null && cachedProducts.isNotEmpty) {
-      _products = cachedProducts.take(kPreviewBatchSize).toList(growable: false);
+      _products = cachedProducts
+          .take(kHomeCatalogBatchSize)
+          .toList(growable: false);
       _isLoadingProducts = false;
       _sectionsRevealed = true;
       HomeUiDiagnostics.cacheProducts(count: _products.length);
@@ -208,7 +246,9 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
     // Critical sections render immediately; delays only mark perf stages.
     _ensureSectionsVisible(reason: 'immediate');
     HomeBootDiagnostics.logStageCompleted(
-      kCategoryRevealDelay == Duration.zero ? 'categories' : 'categories_delayed',
+      kCategoryRevealDelay == Duration.zero
+          ? 'categories'
+          : 'categories_delayed',
     );
     HomeBootDiagnostics.logStageCompleted(
       kProductsRevealDelay == Duration.zero ? 'products' : 'products_delayed',
@@ -227,8 +267,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         HomeBootDiagnostics.logStageCompleted('boot');
         return;
       }
-      final elapsedMs =
-          DateTime.now().millisecondsSinceEpoch - _bootStartedMs;
+      final elapsedMs = DateTime.now().millisecondsSinceEpoch - _bootStartedMs;
       if (elapsedMs >= kFallbackLoadDelay.inMilliseconds &&
           _timeoutPhase != _HomeBootTimeoutPhase.fallbackApplied) {
         HomeBootDiagnostics.logBlockedStage('products');
@@ -257,8 +296,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
   Future<void> _fetchHeroBanners() async {
     if (!_heroFetchGuard.tryBegin()) return;
     try {
-      final preferMobile =
-          mounted && !IbulChrome.isWebOf(context);
+      final preferMobile = mounted && !IbulChrome.isWebOf(context);
       final result = await HomeHeroBannersFetch.fetch(
         preferMobile: preferMobile,
       );
@@ -313,7 +351,10 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         HomeAdsDiagnostics.activeCount(count: adCount);
         HomeAdsDiagnostics.rendered(count: adCount, placement: 'web_home');
         HomeAdsDiagnostics.featureRendered(count: adCount);
-        HomeSectionDiagnostics.render(section: 'home_feature_ads', itemCount: adCount);
+        HomeSectionDiagnostics.render(
+          section: 'home_feature_ads',
+          itemCount: adCount,
+        );
       }
     } catch (error) {
       if (!mounted) return;
@@ -343,7 +384,9 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
           .timeout(const Duration(seconds: 5));
       final fetchMs = DateTime.now().millisecondsSinceEpoch - fetchStarted;
       debugPrint('[WebPerf] home_data_done ms=$fetchMs');
-      final products = report.products.take(kPreviewBatchSize).toList(growable: false);
+      final products = report.products
+          .take(kHomeCatalogBatchSize)
+          .toList(growable: false);
       HomeBootDiagnostics.logProductsRequestDone(
         count: products.length,
         ms: fetchMs,
@@ -361,10 +404,10 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         _isLoadingProducts = false;
         _productError = products.isEmpty
             ? (report.error != null
-                ? 'Ürünler yüklenemedi'
-                : report.outcome == HomeProductsFetchOutcome.filterEmpty
-                    ? 'Görünür ürün bulunamadı'
-                    : null)
+                  ? 'Ürünler yüklenemedi'
+                  : report.outcome == HomeProductsFetchOutcome.filterEmpty
+                  ? 'Görünür ürün bulunamadı'
+                  : null)
             : null;
         _productErrorDetail = report.error?.toString();
         _timeoutPhase = _HomeBootTimeoutPhase.none;
@@ -384,19 +427,24 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
           section: 'below_fold_skeleton',
           reason: 'products_loaded',
         );
-        HomeUiDiagnostics.realProducts(count: products.length, source: 'network');
+        HomeUiDiagnostics.realProducts(
+          count: products.length,
+          source: 'network',
+        );
         unawaited(
           HomeSnapshotCache.instance.writePopularProductsPersisted(products),
         );
         _warmVisibleProductRatings(products);
+        unawaited(_composeHomeNearby());
       } else {
         HomeUiDiagnostics.noProductsEmptyState();
+        unawaited(_composeHomeNearby());
       }
       _productLoadTrace.update(
         stage: products.isEmpty
             ? (report.error != null
-                ? ProductLoadTraceStage.fetchError
-                : ProductLoadTraceStage.fetchEmpty)
+                  ? ProductLoadTraceStage.fetchError
+                  : ProductLoadTraceStage.fetchEmpty)
             : ProductLoadTraceStage.renderStarted,
         rawCount: report.rawCount,
         filteredCount: report.filteredCount,
@@ -404,7 +452,10 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         detail: report.lastParseError ?? report.error?.toString(),
         query: report.querySummary,
       );
-      WebPerfLogger.logCriticalProductsLoaded(count: products.length, ms: fetchMs);
+      WebPerfLogger.logCriticalProductsLoaded(
+        count: products.length,
+        ms: fetchMs,
+      );
       HomeBootDiagnostics.logStageCompleted('products');
     } catch (error, stack) {
       HomeBootDiagnostics.logSetState('products_error');
@@ -417,6 +468,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       });
       HomeUiDiagnostics.noProductsEmptyState();
       _ensureSectionsVisible(reason: 'fetch_error');
+      unawaited(_composeHomeNearby());
       _productLoadTrace.update(
         stage: ProductLoadTraceStage.fetchError,
         table: 'products',
@@ -425,6 +477,98 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       );
     } finally {
       _productFetchGuard.finish();
+    }
+  }
+
+  Future<void> _loadHomeVehicles() async {
+    final started = DateTime.now();
+    try {
+      final vehicles = await HomeDiscoveryLoader.loadVehicles();
+      if (!mounted) return;
+      setState(() {
+        _homeVehicles = vehicles;
+        _isLoadingVehicles = false;
+        _vehicleRailError = null;
+      });
+      HomePerfLog.vehicles(
+        'first_render',
+        DateTime.now().difference(started).inMilliseconds,
+      );
+      unawaited(_composeHomeNearby());
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingVehicles = false;
+        _vehicleRailError = 'Araçlar yüklenemedi';
+      });
+      HomePerfLog.vehicles(
+        'first_render',
+        DateTime.now().difference(started).inMilliseconds,
+      );
+    }
+  }
+
+  Future<void> _resolveHomeLocation() async {
+    try {
+      await HomeDiscoveryLoader.resolvePosition();
+      if (!mounted) return;
+      setState(() => _locationResolved = true);
+      await _composeHomeNearby();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _locationResolved = true);
+      await _composeHomeNearby();
+    }
+  }
+
+  Future<void> _composeHomeNearby() async {
+    if (!_locationResolved) return;
+    final started = DateTime.now();
+    try {
+      final position = await HomeDiscoveryLoader.resolvePosition();
+      var distances = _distanceBySeller;
+      if (position != null) {
+        final sellerIds = <String>{
+          for (final product in _products)
+            if (product.sellerId != null && product.sellerId!.isNotEmpty)
+              product.sellerId!,
+          for (final vehicle in _homeVehicles)
+            if (vehicle.sellerId.isNotEmpty) vehicle.sellerId,
+        };
+        distances = await HomeDiscoveryLoader.distancesFor(
+          sellerIds: sellerIds,
+          position: position,
+        );
+      }
+      if (!mounted) return;
+      final items = HomeDiscoveryLoader.nearbyItems(
+        products: _products,
+        vehicles: _homeVehicles,
+        distanceBySeller: distances,
+      );
+      setState(() {
+        _distanceBySeller = distances;
+        _nearbyItems = items;
+        _isLoadingNearby = false;
+      });
+      HomePerfLog.nearby(
+        'first_render',
+        DateTime.now().difference(started).inMilliseconds,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _nearbyItems = HomeDiscoveryLoader.nearbyItems(
+          products: _products,
+          vehicles: _homeVehicles,
+          distanceBySeller: _distanceBySeller,
+        );
+        _isLoadingNearby = false;
+      });
+      HomePerfLog.nearby(
+        'first_render',
+        DateTime.now().difference(started).inMilliseconds,
+      );
     }
   }
 
@@ -441,7 +585,9 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
     if (snap != null && snap.products.isNotEmpty) {
       HomeBootDiagnostics.logSetState('watchdog_cache_fallback');
       setState(() {
-        _products = snap.products.take(kPreviewBatchSize).toList(growable: false);
+        _products = snap.products
+            .take(kHomeCatalogBatchSize)
+            .toList(growable: false);
         _isLoadingProducts = false;
         _timeoutPhase = _HomeBootTimeoutPhase.fallbackApplied;
         _productError = null;
@@ -477,13 +623,31 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
   }
 
   void _onItemTapped(int index) {
+    if (kIsWeb && index == 4) {
+      unawaited(HomeLazyRoutes.openAccount(context));
+      return;
+    }
     if (_selectedIndexNotifier.value == index) return;
     _selectedIndexNotifier.value = index;
   }
 
   void _setSelectedCategory(String category) {
+    if (isVehicleHubShortcutTitle(category)) {
+      unawaited(_openVehicleHub());
+      return;
+    }
     if (_selectedCategory == category) return;
     setState(() => _selectedCategory = category);
+  }
+
+  Future<void> _openVehicleHub() async {
+    try {
+      await vehicle_routes.loadLibrary();
+      if (!mounted) return;
+      await vehicle_routes.VehicleRoutes.openHub(context);
+    } catch (error) {
+      debugPrint('[Home] vehicle hub open failed: $error');
+    }
   }
 
   void _handleMobileShortcutTap(String shortcutKey, String label) {
@@ -556,7 +720,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
     final l10n = AppLocalizations.of(context);
     final isWeb = IbulChrome.isWebOf(context);
     final visibleCards = _sectionsRevealed
-        ? _products.length.clamp(0, kPreviewBatchSize)
+        ? _products.length.clamp(0, kHomeCatalogBatchSize)
         : 0;
     HomeBootDiagnostics.logBuild(
       productCardCount: visibleCards,
@@ -567,6 +731,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       backgroundColor: AppColors.background,
       body: Stack(
         fit: StackFit.expand,
+        clipBehavior: Clip.none,
         children: [
           _buildBody(isWeb),
           ListenableBuilder(
@@ -576,16 +741,9 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
               visible: perfDebugPanelEnabled,
             ),
           ),
+          DeferredRewardWheelHomeOverlay(hasBottomNav: !isWeb),
         ],
       ),
-      floatingActionButton: isWeb
-          ? FloatingActionButton(
-              onPressed: () => unawaited(HomeLazyRoutes.openAiChat(context)),
-              backgroundColor: AppColors.primary,
-              tooltip: 'Yapay Zekaya Danış',
-              child: const Icon(Icons.psychology, color: Colors.white),
-            )
-          : null,
       bottomNavigationBar: isWeb
           ? null
           : Theme(
@@ -678,22 +836,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
     if (!_sectionsRevealed) {
       return [
         const IbulDeliveryAddressSection(),
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 8),
-          child: SkeletonLoading(
-            width: double.infinity,
-            height: 120,
-            borderRadius: 12,
-          ),
-        ),
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 8),
-          child: SkeletonLoading(
-            width: double.infinity,
-            height: 260,
-            borderRadius: 12,
-          ),
-        ),
+        HomeStorefrontSkeleton(showHero: isWeb),
         const IbulTrustBarSection(),
       ];
     }
@@ -722,12 +865,23 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         title: 'Popüler Ürünler',
         products: _products,
         isLoading: _isLoadingProducts,
-        maxItems: kPreviewBatchSize,
+        maxItems: 12,
         errorMessage: _productError,
         onRetry: _fetchHomeProducts,
         delay: _productsReady ? Duration.zero : Duration.zero,
         suppressSkeleton: _productsReady,
         maxSkeletonDuration: kDeferredSkeletonMax,
+        grouped: true,
+      ),
+      HomeNearbyDiscoverySection(
+        items: _nearbyItems,
+        isLoading: _isLoadingNearby,
+      ),
+      HomeVehicleRailSection(
+        listings: _homeVehicles,
+        isLoading: _isLoadingVehicles,
+        errorMessage: _vehicleRailError,
+        onRetry: _loadHomeVehicles,
       ),
       if (_homeFeatureAdGroups.isNotEmpty)
         HomeCategoryCardSections(
@@ -794,8 +948,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
               _isLoadingProducts &&
               _products.isEmpty)
             HomeBootTimeoutBanner(
-              message:
-                  'Ürünler yükleniyor, bağlantı yavaş olabilir.',
+              message: 'Ürünler yükleniyor, bağlantı yavaş olabilir.',
               onRetry: _fetchHomeProducts,
             ),
           isWeb

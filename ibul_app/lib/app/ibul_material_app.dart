@@ -34,6 +34,9 @@ class _IbulMaterialAppState extends State<IbulMaterialApp> {
 
   @override
   void dispose() {
+    if (IbulGoRouterBinding.instance == _router) {
+      IbulGoRouterBinding.instance = null;
+    }
     _router.dispose();
     super.dispose();
   }

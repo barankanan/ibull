@@ -60,8 +60,34 @@ class LocationAccessService {
     try {
       return await Geolocator.getCurrentPosition(locationSettings: settings);
     } catch (_) {
-      return Geolocator.getLastKnownPosition();
+      return getLastKnownPosition();
     }
+  }
+
+  Future<Position?> getLastKnownPosition() {
+    return Geolocator.getLastKnownPosition();
+  }
+
+  /// Prefer a cached fix so home nearby does not wait on a 12–20s GPS lock.
+  Future<Position?> getBestAvailablePosition({
+    bool requestPermissionIfNeeded = true,
+  }) async {
+    if (!await isLocationServiceEnabled()) {
+      return null;
+    }
+
+    var permission = await checkPermission();
+    if (permission == LocationPermission.denied && requestPermissionIfNeeded) {
+      permission = await ensurePermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return null;
+    }
+
+    final last = await getLastKnownPosition();
+    if (last != null) return last;
+    return getCurrentPosition(requestPermissionIfNeeded: false);
   }
 
   LocationSettings _defaultLocationSettings() {

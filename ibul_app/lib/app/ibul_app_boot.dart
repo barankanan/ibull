@@ -13,8 +13,6 @@ import '../core/review_state.dart';
 import '../core/web_boot.dart';
 import '../core/web_boot_loader.dart';
 import '../core/web_boot_step_profiler.dart';
-import '../screens/home_screen_gate.dart';
-
 typedef IbulAppRunner = void Function();
 
 /// Shared web-safe boot sequence with fatal error fallback UI.
@@ -64,7 +62,6 @@ Future<void> runIbulAppBootstrap({
       WebBootStepProfiler.done('supabase_config_read');
       Intl.defaultLocale = 'tr_TR';
 
-      HomeScreenGate.prefetch();
       runAppWidget();
       WebBootLogger.log('app_ready', detail: 'web_deferred_init');
       WebBootStepProfiler.done('first_frame_scheduled');
@@ -73,7 +70,8 @@ Future<void> runIbulAppBootstrap({
           '[WebPerf] first_frame_ms=${bootWatch.elapsedMilliseconds}',
         );
       });
-      _scheduleWebBootLoaderDismiss();
+      // HTML shell stays until HomeScreenCore's first frame. The engine's
+      // first frame is still WebHomeShell, which is not clickable.
 
       unawaited(
         _completeWebBootInit(

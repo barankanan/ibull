@@ -3,9 +3,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/web_boot_error_store.dart';
+import '../core/web_boot_loader.dart';
 import '../core/web_boot_trace.dart';
 import '../core/web_perf_trace.dart';
 import '../core/web_page_reload.dart';
+
+void _revealHtmlShell() {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    dismissWebBootLoader();
+  });
+}
 
 /// Loads a deferred library with timeout, visible errors, retry, and boot tracing.
 class DeferredModuleScreen extends StatefulWidget {
@@ -190,6 +197,7 @@ class _DeferredModuleScreenState extends State<DeferredModuleScreen> {
         message: error.toString(),
         detail: stack.toString(),
       );
+      _revealHtmlShell();
       return DeferredModuleErrorView(
         moduleName: widget.moduleName,
         message: error.toString(),
@@ -203,6 +211,7 @@ class _DeferredModuleScreenState extends State<DeferredModuleScreen> {
   @override
   Widget build(BuildContext context) {
     if (_forcedError != null) {
+      _revealHtmlShell();
       return DeferredModuleErrorView(
         moduleName: widget.moduleName,
         message: _forcedError.toString(),
@@ -217,7 +226,8 @@ class _DeferredModuleScreenState extends State<DeferredModuleScreen> {
         future: _loadFuture,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
-            return DeferredModuleErrorView(
+            _revealHtmlShell();
+      return DeferredModuleErrorView(
               moduleName: widget.moduleName,
               message: snapshot.error.toString(),
               onRetry: _retry,

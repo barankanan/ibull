@@ -1,14 +1,16 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
 import '../core/route_observer.dart';
 import '../screens/home_lazy_routes.dart';
-import '../screens/notifications_page.dart';
-import '../screens/product_detail_page.dart';
+import '../screens/notifications_page.dart' deferred as notifications_page;
 import '../services/auth_service.dart';
-import '../services/order_service.dart';
-import 'search_overlay.dart';
+import '../services/order_service.dart' deferred as order_service;
+import 'search_overlay.dart' deferred as search_overlay;
 
 class CustomHeader extends StatefulWidget {
   /// Mobile marketplace chrome. Paired with [WebHeader] when
@@ -37,7 +39,16 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
     super.initState();
     _searchFocusNode.addListener(_onFocusChange);
     _searchController.addListener(_onSearchTextChanged);
-    _loadUnreadNotificationCount();
+    if (kIsWeb) {
+      // Badge is not part of first paint. Loading order_service here used to
+      // compile that library during the home startup window.
+      Future<void>.delayed(const Duration(seconds: 12), () {
+        if (!mounted) return;
+        unawaited(_loadUnreadNotificationCount());
+      });
+    } else {
+      unawaited(_loadUnreadNotificationCount());
+    }
   }
 
   void _onSearchTextChanged() {
@@ -107,8 +118,9 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
     }
   }
 
-  void _showOverlay() {
-    if (_overlayEntry != null) return;
+  Future<void> _showOverlay() async {
+    await search_overlay.loadLibrary();
+    if (!mounted || _overlayEntry != null) return;
     if (_searchKey.currentContext == null) return;
 
     final renderBox =
@@ -136,7 +148,7 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
             child: Material(
               elevation: 8,
               borderRadius: BorderRadius.circular(12),
-              child: SearchOverlay(
+              child: search_overlay.SearchOverlay(
                 queryListenable: _queryNotifier,
                 onClose: _hideOverlay,
                 onSearch: (query) {
@@ -160,11 +172,7 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
                   context.read<AppState>().addRecentlyViewedProduct(product);
                   _searchFocusNode.unfocus();
                   _hideOverlay();
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ProductDetailPage(product: product),
-                    ),
-                  );
+                  HomeLazyRoutes.openProductDetail(context, product);
                 },
               ),
             ),
@@ -229,7 +237,10 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
     }
 
     try {
-      final notifications = await OrderService.instance.getUserNotifications(
+      await order_service.loadLibrary();
+      if (!mounted) return;
+      final notifications =
+          await order_service.OrderService.instance.getUserNotifications(
         currentUserId,
       );
       if (!mounted) return;
@@ -257,8 +268,12 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
             _buildActionButton(
               icon: Icons.notifications_none_rounded,
               onPressed: () async {
+                await notifications_page.loadLibrary();
+                if (!context.mounted) return;
                 await Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const NotificationsPage()),
+                  MaterialPageRoute<void>(
+                    builder: (_) => notifications_page.NotificationsPage(),
+                  ),
                 );
                 if (!mounted) return;
                 await _loadUnreadNotificationCount();

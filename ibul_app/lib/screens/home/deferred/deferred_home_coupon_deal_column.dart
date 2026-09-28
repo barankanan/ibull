@@ -57,11 +57,15 @@ class _DeferredHomeCouponDealColumnState
       await Future<void>.delayed(widget.delay);
     }
     if (!mounted) return;
-    setState(() => _loadFuture = coupon_deal_section.loadLibrary());
+    setState(() {
+      _loadFuture = coupon_deal_section.loadLibrary();
+    });
   }
 
   void _retry() {
-    setState(() => _loadFuture = coupon_deal_section.loadLibrary());
+    setState(() {
+      _loadFuture = coupon_deal_section.loadLibrary();
+    });
   }
 
   bool get _shouldShowSkeleton {

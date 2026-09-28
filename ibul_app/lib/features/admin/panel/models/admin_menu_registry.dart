@@ -39,6 +39,20 @@ const List<AdminPanelMenuDefinition> ibulAdminMenuDefinitions = [
     groupIcon: Icons.store_mall_directory_outlined,
     moduleKey: AdminModules.productApproval,
   ),
+    AdminPanelMenuDefinition(
+      icon: Icons.directions_car_outlined,
+      title: 'Araç İlanları',
+      groupLabel: 'Ticaret Operasyonları',
+      groupIcon: Icons.store_mall_directory_outlined,
+      moduleKey: AdminModules.productApproval,
+    ),
+    AdminPanelMenuDefinition(
+      icon: Icons.car_rental,
+      title: 'Araç Kiralama',
+      groupLabel: 'Ticaret Operasyonları',
+      groupIcon: Icons.store_mall_directory_outlined,
+      moduleKey: AdminModules.ordersReturns,
+    ),
   AdminPanelMenuDefinition(
     icon: Icons.shopping_cart_outlined,
     title: 'Sipariş & İade',

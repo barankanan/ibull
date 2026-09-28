@@ -1,7 +1,15 @@
 import 'dart:math';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
+
 import '../../core/constants.dart';
+import '../../features/coupon/data/coupon_repository.dart';
+import '../../features/coupon/domain/coupon_models.dart';
+import '../../features/coupon/widgets/reward_wheel_visuals.dart';
 import '../../services/coupon_service.dart';
+
+part 'fortune_wheel_customer_chrome.dart';
 
 class FortuneWheelDialog extends StatefulWidget {
   final VoidCallback? onSpinComplete;
@@ -12,22 +20,28 @@ class FortuneWheelDialog extends StatefulWidget {
   State<FortuneWheelDialog> createState() => _FortuneWheelDialogState();
 }
 
-class _FortuneWheelDialogState extends State<FortuneWheelDialog> with SingleTickerProviderStateMixin {
+class _FortuneWheelDialogState extends State<FortuneWheelDialog>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _animation;
   double _currentAngle = 0;
   bool _isSpinning = false;
-  
-  // Canlı Renk Paleti (Casino Tarzı)
-  final List<Map<String, dynamic>> _items = [
-    {'label': '%50\nİNDİRİM', 'color': const Color(0xFFFFD700), 'type': 'discount', 'val': 50.0, 'isPerc': true, 'textColor': Colors.black}, // Altın
-    {'label': 'iPhone 15', 'color': const Color(0xFF000000), 'type': 'grand_prize', 'val': 0.0, 'textColor': Colors.white}, // Siyah (Premium)
-    {'label': '100 TL\nKUPON', 'color': const Color(0xFFFF0000), 'type': 'discount', 'val': 100.0, 'isPerc': false, 'textColor': Colors.white}, // Kırmızı
-    {'label': 'KARGO\nBEDAVA', 'color': const Color(0xFF1E90FF), 'type': 'free_shipping', 'val': 0.0, 'textColor': Colors.white}, // Canlı Mavi
-    {'label': '%25\nİNDİRİM', 'color': const Color(0xFF32CD32), 'type': 'discount', 'val': 25.0, 'isPerc': true, 'textColor': Colors.white}, // Lime Yeşili
-    {'label': 'SÜRPRİZ\nHEDİYE', 'color': const Color(0xFFFF69B4), 'type': 'surprise', 'val': 75.0, 'textColor': Colors.white}, // Hot Pink
-    {'label': '50 TL\nKUPON', 'color': const Color(0xFFFF8C00), 'type': 'discount', 'val': 50.0, 'isPerc': false, 'textColor': Colors.white}, // Koyu Turuncu
-    {'label': '%10\nİNDİRİM', 'color': const Color(0xFF9370DB), 'type': 'discount', 'val': 10.0, 'isPerc': true, 'textColor': Colors.white}, // Mor
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _items = const [];
+  RewardWheelSpinResult? _pendingResult;
+  RewardWheelSpinResult? _revealed;
+  final _repo = CouponRepository();
+
+  /// Equal visual weights hide probability. Server still picks the winner.
+  List<RewardWheelSlice> get _slices => [
+    for (var i = 0; i < _items.length; i++)
+      RewardWheelSlice(
+        label: _items[i]['label']?.toString() ?? 'Ödül',
+        percent: 1,
+        color: RewardWheelVisuals.mysterySliceColor(i),
+        isNoPrize: _items[i]['type'] == 'none',
+      ),
   ];
 
   @override
@@ -35,17 +49,54 @@ class _FortuneWheelDialogState extends State<FortuneWheelDialog> with SingleTick
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 5), // Biraz daha uzun dönüş süresi
+      duration: const Duration(milliseconds: 5400),
     );
-    
-    _animation = CurvedAnimation(parent: _controller, curve: Curves.decelerate);
-    
+    _animation = CurvedAnimation(
+      parent: _controller,
+      curve: const RewardWheelSpinCurve(),
+    );
     _controller.addStatusListener((status) {
       if (status == AnimationStatus.completed) {
         setState(() => _isSpinning = false);
-        _handlePrize();
       }
     });
+    _loadConfig();
+  }
+
+  Future<void> _loadConfig() async {
+    try {
+      final config = await _repo.loadWheelForUser();
+      if (!mounted) return;
+      if (config == null || !config.isActive || config.items.isEmpty) {
+        setState(() {
+          _loading = false;
+          _error = 'Hediye çarkı şu anda kapalı.';
+        });
+        return;
+      }
+      setState(() {
+        _items = [
+          for (var i = 0; i < config.items.length; i++)
+            {
+              'id': config.items[i].id,
+              'label': config.items[i].label,
+              'bps': config.items[i].probabilityBps,
+              'color': RewardWheelVisuals.mysterySliceColor(i),
+              'textColor': Colors.white,
+              'type': config.items[i].isNoPrize ? 'none' : 'discount',
+              'campaignId': config.items[i].campaignId,
+            },
+        ];
+        _loading = false;
+      });
+    } catch (error, stack) {
+      debugPrint('FortuneWheelDialog.load failed: $error\n$stack');
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = '$error';
+      });
+    }
   }
 
   @override
@@ -54,381 +105,163 @@ class _FortuneWheelDialogState extends State<FortuneWheelDialog> with SingleTick
     super.dispose();
   }
 
-  void _spinWheel() {
-    if (_isSpinning) return;
-
+  Future<void> _spinWheel() async {
+    if (_isSpinning || _items.isEmpty || _revealed != null) return;
     setState(() => _isSpinning = true);
-    
-    final random = Random();
-    // Daha fazla tur (10-15 arası)
-    final spinCount = 10 + random.nextInt(5); 
-    final randomAngle = random.nextDouble() * 2 * pi;
-    final targetAngle = _currentAngle + (spinCount * 2 * pi) + randomAngle;
-
-    _animation = Tween<double>(
-      begin: _currentAngle,
-      end: targetAngle,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic)); // Daha yumuşak duruş
-
-    _controller.forward(from: 0).then((_) {
+    try {
+      final result = await _repo.spinWheel(
+        'spin-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      if (!result.ok) {
+        if (!mounted) return;
+        setState(() => _isSpinning = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.error ?? 'Çark çevrilemedi.')),
+        );
+        return;
+      }
+      _pendingResult = result;
+      var winnerIndex = _items.indexWhere(
+        (item) => item['id']?.toString() == result.itemId,
+      );
+      if (winnerIndex < 0) {
+        winnerIndex = result.sortOrder.clamp(0, _items.length - 1);
+      }
+      final weights = [for (final _ in _items) 1];
+      const pointerAngle = RewardWheelVisuals.startAngle;
+      final winnerCenter = RewardWheelVisuals.winnerCenter(
+        weights: weights,
+        index: winnerIndex,
+      );
+      final spinCount = 9 + Random().nextInt(4);
+      final targetAngle =
+          _currentAngle +
+          (spinCount * 2 * pi) +
+          ((pointerAngle - winnerCenter - (_currentAngle % (2 * pi))) %
+              (2 * pi));
+      _animation = Tween<double>(begin: _currentAngle, end: targetAngle).animate(
+        CurvedAnimation(
+          parent: _controller,
+          curve: const RewardWheelSpinCurve(),
+        ),
+      );
+      await _controller.forward(from: 0);
       _currentAngle = targetAngle;
-    });
+      _handlePrize();
+    } catch (error, stack) {
+      debugPrint('FortuneWheelDialog.spin failed: $error\n$stack');
+      if (!mounted) return;
+      setState(() => _isSpinning = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
+    }
   }
 
   void _handlePrize() {
-    double normalizedAngle = _currentAngle % (2 * pi);
-    double segmentAngle = 2 * pi / _items.length;
-    double arrowAngle = 3 * pi / 2; // 270 derece (tepe)
-    
-    double effectiveAngle = (arrowAngle - normalizedAngle) % (2 * pi);
-    if (effectiveAngle < 0) effectiveAngle += 2 * pi;
-    
-    int winnerIndex = (effectiveAngle / segmentAngle).floor();
-    if (winnerIndex >= _items.length) winnerIndex = 0;
-    
-    final wonItem = _items[winnerIndex];
-    
-    if (wonItem['type'] != 'none') {
-      _saveCoupon(wonItem);
-      _showResultDialog(wonItem, true);
-    } else {
-      _showResultDialog(wonItem, false);
-    }
-
+    final result = _pendingResult;
+    _pendingResult = null;
+    if (result == null || _items.isEmpty) return;
+    CouponService().notifyListenersSafe();
+    if (!mounted) return;
+    setState(() => _revealed = result);
     widget.onSpinComplete?.call();
   }
 
-  void _saveCoupon(Map<String, dynamic> item) {
-    final randomCode = 'SANSLI${Random().nextInt(900) + 100}';
-    final coupon = CouponModel(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      title: 'Çark Hediyesi: ${item['label']}',
-      description: item['type'] == 'free_shipping' ? 'Kargo Bedava' : '${item['label']} Fırsatı',
-      code: randomCode,
-      discountAmount: (item['val'] as num).toDouble(),
-      isPercentage: item['isPerc'] ?? false,
-      minPrice: 0,
-      expiryDate: '24 Saat Geçerli',
-      color: (item['color'] as Color).withValues(alpha: 0.1),
-      iconColor: item['color'],
-    );
-    
-    CouponService().addCoupon(coupon);
-  }
-
-  void _showResultDialog(Map<String, dynamic> item, bool isWin) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: (item['color'] as Color).withValues(alpha: 0.5),
-                blurRadius: 30,
-                spreadRadius: 5,
-              ),
-            ],
-            border: Border.all(color: Colors.white, width: 2),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Işıltı efekti için stack
-              Stack(
-                alignment: Alignment.center,
-                children: [
-                  Container(
-                    width: 100,
-                    height: 100,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: (item['color'] as Color).withValues(alpha: 0.2),
-                    ),
-                  ),
-                  Icon(
-                    isWin ? Icons.stars : Icons.sentiment_dissatisfied,
-                    size: 80,
-                    color: item['color'],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Text(
-                isWin ? 'TEBRİKLER!' : 'ÜZGÜNÜZ',
-                style: const TextStyle(
-                  fontSize: 28, 
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                isWin ? '${item['label']} kazandınız!' : 'Bu seferlik şanssızdın.',
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              if (isWin)
-                Text(
-                  'Kupon hesabına tanımlandı.',
-                  style: TextStyle(color: Colors.grey[600]),
-                ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context); // Dialog kapat
-                  Navigator.pop(context); // Çark ekranını kapat
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: item['color'],
-                  foregroundColor: item['textColor'] ?? Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                  elevation: 8,
-                ),
-                child: const Text('HARİKA', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  void _retry() {
+    setState(() => _revealed = null);
   }
 
   @override
   Widget build(BuildContext context) {
-    // Ekran boyutunu al
-    final screenWidth = MediaQuery.of(context).size.width;
-    
-    // Çark boyutunu ekran genişliğine göre ayarla (maksimum 320, minimum 280)
-    final wheelSize = (screenWidth * 0.85).clamp(280.0, 340.0);
-    
+    if (_loading || _error != null || _items.isEmpty) {
+      return Dialog(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_loading) const CircularProgressIndicator(),
+              if (_error != null) Text(_error!),
+              if (!_loading && _error == null && _items.isEmpty)
+                const Text('Hediye çarkı şu anda kapalı.'),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Kapat'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final media = MediaQuery.sizeOf(context);
+    final wheelSize = min(media.shortestSide * 0.68, 320.0).clamp(220.0, 320.0);
+    final maxCard = min(media.width - 32, 420.0);
+
     return Dialog(
       backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.all(0),
-      child: SizedBox(
-        width: wheelSize + 20, 
-        height: wheelSize + 80, // Çark + buton alanı
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            // Dış Işık Halkası
-            Container(
-              width: wheelSize,
-              height: wheelSize,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxCard,
+          maxHeight: media.height * 0.92,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: DecoratedBox(
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF222222),
-                border: Border.all(color: const Color(0xFFFFD700), width: 8),
+                borderRadius: BorderRadius.circular(28),
+                gradient: const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xFFF8F4FF), Color(0xFFFFFFFF)],
+                ),
+                border: Border.all(color: const Color(0xFFE9D5FF), width: 1.4),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFFFD700).withValues(alpha: 0.6),
-                    blurRadius: 30,
-                    spreadRadius: 2,
+                    color: AppColors.primary.withValues(alpha: 0.22),
+                    blurRadius: 28,
+                    offset: const Offset(0, 12),
                   ),
                 ],
               ),
-            ),
-            
-            // Çark Gövdesi
-            SizedBox(
-              width: wheelSize - 30,
-              height: wheelSize - 30,
-              child: AnimatedBuilder(
-                animation: _animation,
-                builder: (context, child) {
-                  return Transform.rotate(
-                    angle: _animation.value,
-                    child: CustomPaint(
-                      painter: WheelPainter(items: _items),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _Header(onClose: () => Navigator.pop(context)),
+                    const SizedBox(height: 6),
+                    _WheelStage(
+                      size: wheelSize,
+                      slices: _slices,
+                      animation: _animation,
+                      progress: _controller,
+                      spinning: _isSpinning,
+                      landed: _revealed != null,
+                      won: _revealed?.isWin == true,
+                      onHubTap: _spinWheel,
                     ),
-                  );
-                },
-              ),
-            ),
-            
-            // Ampuller
-            ...List.generate(12, (index) {
-              final angle = (2 * pi / 12) * index;
-              final radius = wheelSize / 2 - 8; // Çerçeveye göre ayarla
-              return Positioned(
-                // Stack'in ortasına göre hesaplama yapıyoruz
-                // Stack width/2 = (wheelSize+20)/2
-                left: (wheelSize + 20) / 2 + radius * cos(angle) - 6 - 10, // -10 offset düzeltmesi
-                top: (wheelSize + 80) / 2 + radius * sin(angle) - 6 - 40, // -40 dikey offset
-                child: Container(
-                  width: 12,
-                  height: 12,
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                    boxShadow: [BoxShadow(color: Colors.white, blurRadius: 5)],
-                  ),
-                ),
-              );
-            }),
-
-            // Gösterge
-            Positioned(
-              top: 0,
-              child: Container(
-                decoration: const BoxDecoration(
-                  boxShadow: [
-                    BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 5))
-                  ]
-                ),
-                child: Image.asset(
-                  'assets/icons/pointer.png',
-                  width: 50,
-                  height: 60,
-                  errorBuilder: (c, o, s) => const Icon(
-                    Icons.location_on, 
-                    size: 60, 
-                    color: Color(0xFFE74C3C),
-                  ),
-                ),
-              ),
-            ),
-            
-            // Orta Göbek ve Çevir Butonu
-            GestureDetector(
-              onTap: _spinWheel,
-              child: Container(
-                width: wheelSize * 0.25, // Orantılı boyut
-                height: wheelSize * 0.25,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: const RadialGradient(
-                    colors: [Colors.white, Color(0xFFE0E0E0)],
-                  ),
-                  border: Border.all(color: const Color(0xFFFFD700), width: 4),
-                  boxShadow: const [
-                    BoxShadow(color: Colors.black38, blurRadius: 10, offset: Offset(0, 4)),
+                    const SizedBox(height: 18),
+                    if (_revealed == null)
+                      _SpinCta(busy: _isSpinning, onTap: _spinWheel)
+                    else
+                      _ResultCard(
+                        result: _revealed!,
+                        onClose: () => Navigator.pop(context),
+                        onRetry: _revealed!.isWin ? null : _retry,
+                      ),
                   ],
                 ),
-                child: Center(
-                  child: _isSpinning 
-                    ? const CircularProgressIndicator(strokeWidth: 3, color: AppColors.primary)
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Text('ÇEVİR', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
-                          Icon(Icons.touch_app, size: 16),
-                        ],
-                      ),
-                ),
               ),
             ),
-            
-            // Kapatma Butonu
-            Positioned(
-              right: 0,
-              top: 0,
-              child: GestureDetector(
-                onTap: () => Navigator.pop(context),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                    boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 5)],
-                  ),
-                  child: const Icon(Icons.close, size: 20),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
-}
-
-class WheelPainter extends CustomPainter {
-  final List<Map<String, dynamic>> items;
-
-  WheelPainter({required this.items});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = min(size.width, size.height) / 2;
-    final rect = Rect.fromCircle(center: center, radius: radius);
-    
-    final paint = Paint()..style = PaintingStyle.fill;
-    
-    // Metin ressamı
-    final textPainter = TextPainter(
-      textDirection: TextDirection.ltr,
-      textAlign: TextAlign.center,
-    );
-
-    // Çizime -pi/2 (saat 12) yönünden değil, 0'dan başlıyoruz. Dönüşü transform hallediyor.
-    double startAngle = 0;
-    final sweepAngle = 2 * pi / items.length;
-
-    for (var i = 0; i < items.length; i++) {
-      final item = items[i];
-      paint.color = item['color'];
-      
-      // 1. Dilimi çiz
-      canvas.drawArc(rect, startAngle, sweepAngle, true, paint);
-      
-      // 2. Kenar çizgileri
-      final borderPaint = Paint()
-        ..color = const Color(0xFFFFD700).withValues(alpha: 0.5) 
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5;
-      canvas.drawArc(rect, startAngle, sweepAngle, true, borderPaint);
-
-      // 3. Metin Çizimi - Sadece SORU İŞARETİ
-      canvas.save();
-      
-      // Metni dilimin ortasına hizalamak için döndür
-      final angle = startAngle + sweepAngle / 2;
-      canvas.translate(center.dx, center.dy);
-      canvas.rotate(angle);
-      
-      // Metin stili (Büyük Soru İşareti)
-      textPainter.text = TextSpan(
-        text: '?',
-        style: TextStyle(
-          color: item['textColor'] ?? Colors.white,
-          fontSize: 32, // Büyük font
-          fontWeight: FontWeight.w900,
-          shadows: [
-            Shadow(
-              color: Colors.black.withValues(alpha: 0.5),
-              offset: const Offset(1, 1),
-              blurRadius: 2,
-            ),
-          ],
-        ),
-      );
-      textPainter.layout();
-      
-      // Metni yerleştir (yarıçapın %70'i kadar dışarıda)
-      canvas.translate(radius * 0.70, -textPainter.height / 2);
-      
-      // Metni 90 derece döndür
-      textPainter.paint(canvas, Offset.zero);
-      
-      canvas.restore();
-      
-      startAngle += sweepAngle;
-    }
-    
-    // Merkezdeki vida delikleri (Süs)
-    final circlePaint = Paint()..color = Colors.white.withValues(alpha: 0.3);
-    canvas.drawCircle(center, radius * 0.15, circlePaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

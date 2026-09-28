@@ -45,7 +45,7 @@ void main() {
 
     final root = File('../lib/main.dart').readAsStringSync();
     expect(root, contains('IbulMaterialApp('));
-    expect(root, contains('includeAuthRoutes: false'));
+    expect(root, contains('includeAuthRoutes: true'));
     expect(root, isNot(contains('buildLaunchHome()')));
     expect(root, isNot(contains('home_screen.dart')));
   });
@@ -53,11 +53,15 @@ void main() {
   test('go_router factory keeps pageForAppRoute as the page table', () {
     final router = File('lib/app/ibul_go_router.dart').readAsStringSync();
     expect(router, contains('createIbulGoRouter'));
+    expect(router, contains('optionURLReflectsImperativeAPIs'));
     expect(router, contains('pageForAppRoute'));
     expect(router, contains("path: '/ihiz/track/:code'"));
     expect(router, contains('SiteInfoRoutes.paths'));
     expect(router, contains('ibulGoRouterRedirect'));
-    expect(router, contains("source: 'go_router:unknown'"));
+    expect(router, contains('IbulNotFoundPage'));
+    expect(router, contains("path: '/urun/:id'"));
+    expect(router, contains("path: '/magaza/:id'"));
+    expect(router, contains('MarketplacePaths.account'));
 
     final table = File('lib/app/app_route_table.dart').readAsStringSync();
     expect(table, contains('pageForAppRoute'));
@@ -70,7 +74,7 @@ void main() {
     expect(helper, contains('GoRouter.maybeOf'));
     expect(helper, contains('pushNamedAndRemoveUntil'));
     final homeNav = File('lib/core/home_navigation.dart').readAsStringSync();
-    expect(homeNav, contains('IbulRouter.go'));
+    expect(homeNav, contains('IbulRouter.goMarketplaceHome'));
     expect(homeNav, contains('IbulRouter.push'));
   });
 
@@ -88,17 +92,73 @@ void main() {
       '/',
     );
     expect(
+      ibulGoRouterRedirect(
+        path: '/seller-forgot-password',
+        includeAuthRoutes: false,
+      ),
+      isNull,
+    );
+    expect(
       ibulGoRouterRedirect(path: '/login', includeAuthRoutes: true),
       isNull,
     );
+    expect(
+      ibulGoRouterRedirect(
+        path: '/hesabim/kiralamalar',
+        includeAuthRoutes: true,
+      ),
+      '/login?next=${Uri.encodeComponent('/hesabim/kiralamalar')}',
+    );
+    expect(
+      ibulGoRouterRedirect(
+        path: '/hesabim',
+        includeAuthRoutes: true,
+        authenticated: true,
+      ),
+      isNull,
+    );
+    expect(
+      ibulGoRouterRedirect(
+        path: '/hesabim/favoriler',
+        includeAuthRoutes: true,
+      ),
+      '/login?next=${Uri.encodeComponent('/hesabim/favoriler')}',
+    );
+    expect(
+      ibulGoRouterRedirect(
+        path: '/hesabim/favoriler',
+        includeAuthRoutes: true,
+        authenticated: true,
+      ),
+      isNull,
+    );
+    expect(
+      ibulGoRouterRedirect(
+        path: '/hesabim/ozet',
+        includeAuthRoutes: true,
+        authenticated: true,
+      ),
+      '/hesabim',
+    );
   });
 
-  test('QR exit redirect leaves /qr for /home', () {
+  test('legacy /home redirects to canonical /', () {
+    expect(
+      ibulGoRouterRedirect(path: '/home', includeAuthRoutes: true),
+      '/',
+    );
+    expect(
+      ibulGoRouterRedirect(path: '/home', includeAuthRoutes: false),
+      '/',
+    );
+  });
+
+  test('QR exit redirect leaves /qr for /', () {
     final previous = QrInitialParams.wasResetAfterQrExit;
     QrInitialParams.wasResetAfterQrExit = true;
     expect(
       ibulGoRouterRedirect(path: '/qr', includeAuthRoutes: true),
-      '/home',
+      '/',
     );
     QrInitialParams.wasResetAfterQrExit = false;
     expect(

@@ -1,1 +1,3 @@
 void dismissWebBootLoader() {}
+
+void markFlutterFirstFrame() {}

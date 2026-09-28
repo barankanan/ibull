@@ -12,7 +12,7 @@ import '../models/product_list_price_change.dart';
 import '../models/product_model.dart';
 import '../screens/map_page.dart';
 import '../screens/photo_review_detail_page.dart';
-import '../screens/product_detail_page.dart';
+import '../screens/home_lazy_routes.dart';
 import '../ads/presentation/pages/campaign_wizard_page.dart';
 import '../ads/enums/ad_enums.dart';
 import '../services/store_service.dart';
@@ -761,12 +761,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
         final product = _videoProducts[index];
         return InkWell(
           onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => ProductDetailPage(product: product),
-              ),
-            );
+            HomeLazyRoutes.openProductDetail(context, product);
           },
           borderRadius: BorderRadius.circular(18),
           child: Container(

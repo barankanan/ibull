@@ -14,6 +14,8 @@ import '../../../../screens/admin/permission_system_page.dart';
 import '../../../../screens/admin/product_approval/product_approval_page.dart';
 import '../../../../screens/admin/brand_verification_admin_page.dart';
 import '../../../../screens/admin/store_management_page.dart';
+import '../../../../screens/admin/vehicle_listing_approval_page.dart';
+import '../../../../screens/admin/vehicle_rental_ops_page.dart';
 import '../../../../screens/admin/support_complaints_page.dart';
 import '../../../../screens/admin/support_tickets_admin_page.dart';
 import '../../../../screens/admin/team_tasks_page.dart';
@@ -41,6 +43,10 @@ Widget buildAdminPanelContent({
       return const BrandVerificationAdminPage();
     case 'Ürün Onay':
       return const ProductApprovalPage();
+    case 'Araç İlanları':
+      return const VehicleListingApprovalPage();
+    case 'Araç Kiralama':
+      return const VehicleRentalOpsPage();
     case 'Sipariş & İade':
       return const AdminSupportComplaintsPage();
     case 'Kampanya & İçerik':

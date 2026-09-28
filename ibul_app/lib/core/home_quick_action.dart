@@ -2,9 +2,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../features/products/models/product_filter_models.dart';
+import '../features/vehicle/domain/vehicle_category.dart';
+import '../features/vehicle/navigation/vehicle_routes.dart'
+    deferred as vehicle_routes;
 import '../models/db_product.dart';
 import '../models/product_model.dart';
-import '../screens/category_products_page.dart';
+import '../screens/category_products_page.dart'
+    deferred as category_products_page;
 import '../services/database_helper.dart';
 import '../utils/text_normalizer.dart';
 import 'constants.dart';
@@ -18,6 +22,7 @@ enum HomeQuickActionType {
   featured,
   gift,
   category,
+  vehicle,
 }
 
 /// Ana sayfa üst kısayol butonu modeli.
@@ -112,6 +117,11 @@ abstract final class HomeQuickActionRegistry {
       categorySlug: 'Kitap & Hobi',
       subCategoryName: 'Kitap',
     ),
+    'Araç': HomeQuickAction(
+      id: 'arac',
+      title: 'Araç',
+      type: HomeQuickActionType.vehicle,
+    ),
   };
 
   static HomeQuickAction? fromHomeShortcutTitle(String title) {
@@ -142,15 +152,14 @@ abstract final class HomeQuickActionFilter {
             .take(24)
             .toList(growable: false);
       case HomeQuickActionType.newest:
-        return (List<DBProduct>.from(active)
-              ..sort((a, b) {
-                final aDate = a.catalogUpdatedAt;
-                final bDate = b.catalogUpdatedAt;
-                if (aDate == null && bDate == null) return 0;
-                if (aDate == null) return 1;
-                if (bDate == null) return -1;
-                return bDate.compareTo(aDate);
-              }))
+        return (List<DBProduct>.from(active)..sort((a, b) {
+              final aDate = a.catalogUpdatedAt;
+              final bDate = b.catalogUpdatedAt;
+              if (aDate == null && bDate == null) return 0;
+              if (aDate == null) return 1;
+              if (bDate == null) return -1;
+              return bDate.compareTo(aDate);
+            }))
             .take(24)
             .toList(growable: false);
       case HomeQuickActionType.featured:
@@ -158,9 +167,14 @@ abstract final class HomeQuickActionFilter {
       case HomeQuickActionType.gift:
         return active.where(_isGiftProduct).toList(growable: false);
       case HomeQuickActionType.category:
+      case HomeQuickActionType.vehicle:
         return active;
     }
   }
+
+  static bool isDiscounted(DBProduct product) => _isDiscounted(product);
+
+  static bool isDealProduct(DBProduct product) => _isDealProduct(product);
 
   static bool _isDiscounted(DBProduct product) {
     final oldPrice = _parsePrice(product.oldPrice);
@@ -227,16 +241,21 @@ abstract final class HomeQuickActionNavigator {
 
     if (!context.mounted) return;
 
+    if (action.type == HomeQuickActionType.vehicle ||
+        isVehicleHubShortcutTitle(action.title)) {
+      logTap(action, target: 'vehicle_hub');
+      await vehicle_routes.loadLibrary();
+      if (!context.mounted) return;
+      await vehicle_routes.VehicleRoutes.openHub(context);
+      return;
+    }
+
     if (action.type == HomeQuickActionType.category) {
       await _openCategory(context, action);
       return;
     }
 
-    await _openFilteredListing(
-      context,
-      action,
-      seedProducts: seedProducts,
-    );
+    await _openFilteredListing(context, action, seedProducts: seedProducts);
   }
 
   static Future<void> _openCategory(
@@ -290,7 +309,8 @@ abstract final class HomeQuickActionNavigator {
     List<DBProduct> source = seedProducts ?? const [];
     if (source.isEmpty) {
       try {
-        if (action.searchQuery != null && action.searchQuery!.trim().isNotEmpty) {
+        if (action.searchQuery != null &&
+            action.searchQuery!.trim().isNotEmpty) {
           source = await DatabaseHelper.instance.searchProducts(
             action.searchQuery!.trim(),
           );
@@ -333,9 +353,11 @@ abstract final class HomeQuickActionNavigator {
       meta[id] = ProductFilterMeta(stock: item.stock);
     }
 
+    await category_products_page.loadLibrary();
+    if (!context.mounted) return;
     await Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
-        builder: (context) => CategoryProductsPage(
+        builder: (context) => category_products_page.CategoryProductsPage(
           category: category,
           subCategory: subCategory,
           products: products,
@@ -412,11 +434,7 @@ class HomeQuickActionChip extends StatelessWidget {
                         color: AppColors.primary.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Icon(
-                        icon,
-                        color: AppColors.primary,
-                        size: 28,
-                      ),
+                      child: Icon(icon, color: AppColors.primary, size: 28),
                     ),
                     const SizedBox(height: 8),
                     Text(

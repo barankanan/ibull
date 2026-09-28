@@ -119,6 +119,8 @@ import '../features/seller/panel/widgets/seller_panel_shell.dart';
 import '../features/seller/panel/widgets/seller_feedback_dashboard_widgets.dart';
 import '../features/seller/panel/widgets/seller_store_profile_dashboard_widgets.dart';
 import '../features/seller/panel/widgets/ihiz_store_profile_card.dart';
+import '../features/vehicle/screens/seller/vehicle_seller_module_page.dart';
+import '../features/seller/contracts/seller_contracts_page.dart';
 import '../ads/presentation/pages/seller_ads_manager_content.dart';
 import '../features/seller/finance/screens/finance_shell.dart';
 import '../features/seller/achievements/models/seller_badge_models.dart';
@@ -2244,6 +2246,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return 'support';
       case SellerModule.downloadApp:
         return 'download_app';
+      case SellerModule.vehicles:
+        return 'vehicles';
+      case SellerModule.contracts:
+        return 'contracts';
     }
   }
 
@@ -2277,6 +2283,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return 'sidebar_support_tap';
       case SellerModule.downloadApp:
         return 'sidebar_download_app_tap';
+      case SellerModule.vehicles:
+        return 'sidebar_vehicles_tap';
+      case SellerModule.contracts:
+        return 'sidebar_contracts_tap';
     }
   }
 
@@ -2310,6 +2320,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return SellerModule.support;
       case 'download_app':
         return SellerModule.downloadApp;
+      case 'vehicles':
+        return SellerModule.vehicles;
+      case 'contracts':
+        return SellerModule.contracts;
       default:
         return null;
     }
@@ -3032,6 +3046,18 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         _logSellerPanel(
           'Tab',
           'module=${module.name} fetch=none refetch=false',
+        );
+        break;
+      case SellerModule.vehicles:
+        _logSellerPanel(
+          'Tab',
+          'module=${module.name} fetch=vehicle_dashboard refetch=true',
+        );
+        break;
+      case SellerModule.contracts:
+        _logSellerPanel(
+          'Tab',
+          'module=${module.name} fetch=store_contracts refetch=true',
         );
         break;
     }
@@ -7177,7 +7203,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     required int tableNumber,
     required String token,
   }) {
-    final fallbackBase = 'https://ibul-ecommerce.web.app';
+    final fallbackBase = 'https://ibul.com.tr';
     final origin = kIsWeb && Uri.base.origin.isNotEmpty
         ? Uri.base.origin
         : fallbackBase;
@@ -8939,6 +8965,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         return _buildMobileSupportModule();
       case SellerModule.downloadApp:
         return _buildDownloadAppModule();
+      case SellerModule.vehicles:
+        return _buildVehiclesModule();
+      case SellerModule.contracts:
+        return _buildContractsModule();
     }
   }
 
@@ -16114,6 +16144,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         return _buildSupportModule();
       case SellerModule.downloadApp:
         return _buildDownloadAppModule();
+      case SellerModule.vehicles:
+        return _buildVehiclesModule();
+      case SellerModule.contracts:
+        return _buildContractsModule();
     }
   }
 
@@ -29847,6 +29881,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     await _loadSellerQuestions();
     if (!mounted) return;
     setState(() {});
+  }
+
+  Widget _buildVehiclesModule() {
+    final sellerId = _authService.currentUser?.id ?? '';
+    return VehicleSellerModulePage(sellerId: sellerId);
+  }
+
+  Widget _buildContractsModule() {
+    final sellerId = _authService.currentUser?.id ?? '';
+    return SellerContractsPage(sellerId: sellerId);
   }
 
   Widget _buildDownloadAppModule() {

@@ -10,6 +10,14 @@ import 'dart:html' as html;
 /// `addPostFrameCallback` içinden çağrılıyor (bkz. `ibul_app_boot.dart` →
 /// `_scheduleWebBootLoaderDismiss`); o noktada ilk frame'in sahnesi zaten
 /// submit edilmiş oluyor, dolayısıyla loader aynı JS task'ında kaldırılıyor.
+void markFlutterFirstFrame() {
+  html.window.performance.mark('ibul_flutter_first_frame');
+}
+
 void dismissWebBootLoader() {
-  html.document.getElementById('ibul-loader')?.remove();
+  final loader = html.document.getElementById('ibul-loader');
+  if (loader == null) return;
+  html.window.performance.mark('ibul_flutter_interactive');
+  loader.remove();
+  html.window.performance.mark('ibul_shell_removed');
 }

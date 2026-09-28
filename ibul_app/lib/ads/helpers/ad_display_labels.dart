@@ -21,6 +21,9 @@ class AdDisplayLabels {
       case 'coupon_offer':
       case 'coupon_ads':
         return 'Kupon / Teklif Reklamı';
+      case 'reward_wheel':
+      case 'wheel_ad':
+        return 'Hediye Çarkında Yer Al';
       default:
         return _titleCase(raw);
     }

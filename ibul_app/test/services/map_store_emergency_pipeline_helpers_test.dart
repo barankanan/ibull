@@ -49,5 +49,24 @@ void main() {
       expect(record['name'], 'sem usta');
       expect(record['location'], isNotNull);
     });
+
+    test('gallery pin keeps Galerici even when map category is other', () {
+      final marker = MapStoreMarker.fromPipelineRow(
+        const {
+          'seller_id': 'dc3b13dc-6c64-47bf-9670-971dc01c728f',
+          'business_name': 'seco',
+          'category': 'Galerici',
+          'store_lat': 36.21,
+          'store_lng': 36.17,
+        },
+        disambiguationIndex: 0,
+        source: 'stores_table',
+        mapCategory: (_) => 'other',
+      );
+      final record = marker!.toBusinessRecord(index: 0);
+      expect(record['category'], 'other');
+      expect(record['store_category'], 'Galerici');
+      expect(record['seller_id'], 'dc3b13dc-6c64-47bf-9670-971dc01c728f');
+    });
   });
 }

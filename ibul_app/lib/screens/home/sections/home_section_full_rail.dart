@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/catalog_image_priority.dart';
 import '../../../core/constants.dart';
 import '../../../core/home_ui_diagnostics.dart';
-import '../../../core/catalog_image_priority.dart';
 import '../../../models/db_product.dart';
 import '../../../models/product_model.dart';
 import '../../../widgets/product_card.dart';
 import '../../../widgets/skeleton_loading.dart';
+import '../home_product_rail_groups.dart';
 
-/// Legacy-style horizontal product rail with real [ProductCard].
-class HomeFullProductRailSection extends StatefulWidget {
+/// Horizontal [ProductCard] rails. When [grouped] is true, products are split
+/// into Fırsat / Elektronik / Ev / Telefonlar sections.
+class HomeFullProductRailSection extends StatelessWidget {
   const HomeFullProductRailSection({
     super.key,
     required this.title,
@@ -19,6 +21,7 @@ class HomeFullProductRailSection extends StatefulWidget {
     this.errorMessage,
     this.onRetry,
     this.showViewAll = true,
+    this.grouped = false,
   });
 
   final String title;
@@ -28,46 +31,111 @@ class HomeFullProductRailSection extends StatefulWidget {
   final String? errorMessage;
   final VoidCallback? onRetry;
   final bool showViewAll;
+  final bool grouped;
 
-  @override
-  State<HomeFullProductRailSection> createState() =>
-      _HomeFullProductRailSectionState();
-}
-
-class _HomeFullProductRailSectionState extends State<HomeFullProductRailSection> {
   @override
   Widget build(BuildContext context) {
-    if (widget.isLoading && widget.products.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: SkeletonLoading(
-          width: double.infinity,
-          height: 312,
-          borderRadius: 12,
-        ),
+    if (isLoading && products.isEmpty) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const HomeProductRailSkeleton(),
+          if (grouped) const HomeProductRailSkeleton(),
+        ],
       );
     }
 
-    if (widget.errorMessage != null && widget.products.isEmpty) {
-      return _HomeProductEmptyState(
-        message: widget.errorMessage!,
-        onRetry: widget.onRetry,
-      );
+    if (errorMessage != null && products.isEmpty) {
+      return _HomeProductEmptyState(message: errorMessage!, onRetry: onRetry);
     }
 
-    if (widget.products.isEmpty) {
+    if (products.isEmpty) {
       HomeUiDiagnostics.noProductsEmptyState();
-      if (!widget.showViewAll) {
-        return const SizedBox.shrink();
-      }
+      if (!showViewAll) return const SizedBox.shrink();
       return _HomeProductEmptyState(
         message: 'Henüz ürün bulunmuyor.',
-        onRetry: widget.onRetry,
+        onRetry: onRetry,
       );
     }
 
-    final items = widget.products.take(widget.maxItems).toList();
-    HomeUiDiagnostics.realProductCard(count: items.length);
+    final groups = grouped
+        ? HomeProductRailGroups.build(products, maxPerRail: maxItems)
+        : [
+            HomeProductRailGroup(
+              id: 'single',
+              title: title,
+              products: products.take(maxItems).toList(growable: false),
+            ),
+          ];
+
+    if (groups.isEmpty) {
+      HomeUiDiagnostics.noProductsEmptyState();
+      return const SizedBox.shrink();
+    }
+
+    final cardCount = groups.fold<int>(0, (sum, g) => sum + g.products.length);
+    HomeUiDiagnostics.realProductCard(count: cardCount);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final group in groups)
+          _HomeProductHorizontalRail(
+            title: group.title,
+            items: group.products,
+            showViewAll: showViewAll,
+          ),
+      ],
+    );
+  }
+}
+
+class _HomeProductHorizontalRail extends StatefulWidget {
+  const _HomeProductHorizontalRail({
+    required this.title,
+    required this.items,
+    required this.showViewAll,
+  });
+
+  final String title;
+  final List<DBProduct> items;
+  final bool showViewAll;
+
+  @override
+  State<_HomeProductHorizontalRail> createState() =>
+      _HomeProductHorizontalRailState();
+}
+
+class _HomeProductHorizontalRailState
+    extends State<_HomeProductHorizontalRail> {
+  static const double _cardWidth = 220;
+  static const double _cardHeight = 348;
+  static const double _gap = 12;
+
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollBy(double delta) {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      (_scrollController.offset + delta).clamp(
+        0,
+        _scrollController.position.maxScrollExtent,
+      ),
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final showArrows =
+        widget.items.length > 3 && MediaQuery.sizeOf(context).width >= 700;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 16, 10, 8),
@@ -77,12 +145,14 @@ class _HomeFullProductRailSectionState extends State<HomeFullProductRailSection>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                widget.title,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF333333),
+              Expanded(
+                child: Text(
+                  widget.title,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF333333),
+                  ),
                 ),
               ),
               if (widget.showViewAll)
@@ -103,27 +173,75 @@ class _HomeFullProductRailSectionState extends State<HomeFullProductRailSection>
           ),
           const SizedBox(height: 16),
           SizedBox(
-            height: 312,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              cacheExtent: 280,
-              itemCount: items.length,
-              separatorBuilder: (context, index) => const SizedBox(width: 12),
-              itemBuilder: (context, index) {
-                final db = items[index];
-                return SizedBox(
-                  width: 198,
-                  child: ProductCard(
-                    product: Product.fromDBProduct(db),
-                    margin: EdgeInsets.zero,
-                    imagePriority: CatalogImagePriority.forRailIndex(index),
+            height: _cardHeight,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                ListView.separated(
+                  controller: _scrollController,
+                  scrollDirection: Axis.horizontal,
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  itemCount: widget.items.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: _gap),
+                  itemBuilder: (context, index) {
+                    return SizedBox(
+                      width: _cardWidth,
+                      height: _cardHeight,
+                      child: ProductCard(
+                        product: Product.fromDBProduct(widget.items[index]),
+                        width: _cardWidth,
+                        margin: EdgeInsets.zero,
+                        imagePriority: CatalogImagePriority.forRailIndex(index),
+                      ),
+                    );
+                  },
+                ),
+                if (showArrows) ...[
+                  Positioned(
+                    left: 0,
+                    child: _RailArrow(
+                      icon: Icons.chevron_left,
+                      onTap: () => _scrollBy(-(_cardWidth + _gap) * 2),
+                    ),
                   ),
-                );
-              },
+                  Positioned(
+                    right: 0,
+                    child: _RailArrow(
+                      icon: Icons.chevron_right,
+                      onTap: () => _scrollBy((_cardWidth + _gap) * 2),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _RailArrow extends StatelessWidget {
+  const _RailArrow({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.92),
+      shape: const CircleBorder(),
+      elevation: 2,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: Icon(icon, size: 22, color: const Color(0xFF333333)),
+        ),
       ),
     );
   }
@@ -149,7 +267,11 @@ class _HomeProductEmptyState extends StatelessWidget {
         ),
         child: Column(
           children: [
-            Icon(Icons.inventory_2_outlined, size: 40, color: Colors.grey.shade400),
+            Icon(
+              Icons.inventory_2_outlined,
+              size: 40,
+              color: Colors.grey.shade400,
+            ),
             const SizedBox(height: 12),
             Text(
               message,
@@ -175,6 +297,7 @@ Widget buildHomeFullProductRailSection({
   String? errorMessage,
   VoidCallback? onRetry,
   bool showViewAll = true,
+  bool grouped = false,
 }) {
   return HomeFullProductRailSection(
     title: title,
@@ -184,5 +307,6 @@ Widget buildHomeFullProductRailSection({
     errorMessage: errorMessage,
     onRetry: onRetry,
     showViewAll: showViewAll,
+    grouped: grouped,
   );
 }

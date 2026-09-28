@@ -23,6 +23,9 @@ import 'my_chats_page.dart';
 import 'coupons_page.dart';
 import 'addresses_page.dart';
 import '../features/saved_payment_cards/screens/saved_payment_cards_page.dart';
+import '../features/vehicle/screens/vehicle_customer_rentals_page.dart';
+import '../features/vehicle/widgets/vehicle_account_recent_section.dart';
+import '../app/account_sections.dart';
 import '../core/home_navigation.dart';
 import 'login_page.dart';
 import 'seller_login_page.dart';
@@ -42,6 +45,18 @@ class AccountPage extends StatefulWidget {
 class _AccountPageState extends State<AccountPage> {
   Future<List<Map<String, dynamic>>>? _ordersFuture;
   String _ordersFutureUserId = '';
+
+  Future<void> _openAccountSection(
+    AccountSection section, {
+    required Widget page,
+  }) {
+    return AccountSections.open(
+      context,
+      section,
+      nativePage: page,
+      replaceNative: false,
+    );
+  }
 
   Future<List<Map<String, dynamic>>> _getOrdersFuture(String userId) {
     if (_ordersFuture != null && _ordersFutureUserId == userId) {
@@ -655,6 +670,8 @@ class _AccountPageState extends State<AccountPage> {
                 ),
         ),
 
+        const VehicleAccountRecentSection(),
+
         const SizedBox(height: 32),
 
         // Recommended / Favorites Preview
@@ -731,12 +748,9 @@ class _AccountPageState extends State<AccountPage> {
                                 ),
                                 TextButton(
                                   onPressed: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            const AddressesPage(),
-                                      ),
+                                    _openAccountSection(
+                                      AccountSection.addresses,
+                                      page: const AddressesPage(),
                                     );
                                   },
                                   child: const Text('Adres Ekle'),
@@ -778,12 +792,9 @@ class _AccountPageState extends State<AccountPage> {
                                 alignment: Alignment.bottomRight,
                                 child: TextButton(
                                   onPressed: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            const AddressesPage(),
-                                      ),
+                                    _openAccountSection(
+                                      AccountSection.addresses,
+                                      page: const AddressesPage(),
                                     );
                                   },
                                   child: const Text('Tüm Adresler'),
@@ -1282,12 +1293,9 @@ class _AccountPageState extends State<AccountPage> {
                     // Settings Button
                     OutlinedButton.icon(
                       onPressed: () {
-                        // Navigate to Settings Page
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const SettingsPage(),
-                          ),
+                        _openAccountSection(
+                          AccountSection.settings,
+                          page: const SettingsPage(),
                         );
                       },
                       icon: const Icon(Icons.settings, size: 16),
@@ -1351,11 +1359,9 @@ class _AccountPageState extends State<AccountPage> {
                           const SizedBox(width: 8),
                           GestureDetector(
                             onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const AddressesPage(),
-                                ),
+                              _openAccountSection(
+                                AccountSection.addresses,
+                                page: const AddressesPage(),
                               );
                             },
                             child: Container(
@@ -1455,11 +1461,9 @@ class _AccountPageState extends State<AccountPage> {
                         Icons.shopping_bag_outlined,
                         'Siparişlerim',
                         onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const OrdersPage(),
-                            ),
+                          _openAccountSection(
+                            AccountSection.orders,
+                            page: const OrdersPage(),
                           );
                         },
                       ),
@@ -1470,11 +1474,9 @@ class _AccountPageState extends State<AccountPage> {
                         Icons.favorite_border,
                         'Beğendiklerim',
                         onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const FavoritesPage(),
-                            ),
+                          _openAccountSection(
+                            AccountSection.favorites,
+                            page: const FavoritesPage(),
                           );
                         },
                       ),
@@ -1485,11 +1487,9 @@ class _AccountPageState extends State<AccountPage> {
                         Icons.chat_bubble_outline,
                         'Değerlendirmeler',
                         onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const ReviewsPage(),
-                            ),
+                          _openAccountSection(
+                            AccountSection.reviews,
+                            page: const ReviewsPage(),
                           );
                         },
                       ),
@@ -1505,12 +1505,9 @@ class _AccountPageState extends State<AccountPage> {
                 'Yapay Zekaya Danış',
                 subtitle: 'Ne almak istediği sor , Hızlı karşılaştırmalar yap',
                 onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) =>
-                          const AIChatPage(showAccountSidebar: true),
-                    ),
+                  _openAccountSection(
+                    AccountSection.ai,
+                    page: const AIChatPage(showAccountSidebar: true),
                   );
                 },
               ),
@@ -1519,11 +1516,20 @@ class _AccountPageState extends State<AccountPage> {
                 'Siparişlerim',
                 subtitle: 'Aktif ve son siparişlerini takip et.',
                 onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const OrdersPage(),
-                    ),
+                  _openAccountSection(
+                    AccountSection.orders,
+                    page: const OrdersPage(),
+                  );
+                },
+              ),
+              _buildMenuItem(
+                Icons.directions_car_outlined,
+                'Araç Kiralamalarım',
+                subtitle: 'Yaklaşan, aktif ve geçmiş araç kiralamaların.',
+                onTap: () {
+                  _openAccountSection(
+                    AccountSection.rentals,
+                    page: const VehicleCustomerRentalsPage(),
                   );
                 },
               ),
@@ -1545,11 +1551,9 @@ class _AccountPageState extends State<AccountPage> {
                 'Müşteri Hizmetleri',
                 subtitle: 'Şikayet, istek ve destek taleplerini bize ilet.',
                 onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const CustomerSupportPage(),
-                    ),
+                  _openAccountSection(
+                    AccountSection.support,
+                    page: const CustomerSupportPage(),
                   );
                 },
               ),
@@ -1558,11 +1562,9 @@ class _AccountPageState extends State<AccountPage> {
                 'Kartlarım',
                 subtitle: 'Kayıtlı ödeme kartlarını yönet.',
                 onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const SavedPaymentCardsPage(),
-                    ),
+                  _openAccountSection(
+                    AccountSection.cards,
+                    page: const SavedPaymentCardsPage(),
                   );
                 },
               ),
@@ -1570,11 +1572,9 @@ class _AccountPageState extends State<AccountPage> {
                 Icons.local_offer_outlined,
                 'Kuponlarım',
                 onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const CouponsPage(),
-                    ),
+                  _openAccountSection(
+                    AccountSection.coupons,
+                    page: const CouponsPage(),
                   );
                 },
               ),
@@ -1582,11 +1582,9 @@ class _AccountPageState extends State<AccountPage> {
                 Icons.bookmark_border,
                 'Takip Ettiklerim',
                 onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const FollowedStoresPage(),
-                    ),
+                  _openAccountSection(
+                    AccountSection.following,
+                    page: const FollowedStoresPage(),
                   );
                 },
               ),

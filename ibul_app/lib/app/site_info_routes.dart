@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../features/customer_support/screens/customer_support_page.dart';
+import '../features/customer_support/screens/customer_support_page.dart'
+    deferred as customer_support;
 import '../screens/feature_coming_soon_page.dart';
+import '../widgets/deferred_module_screen.dart';
 import '../screens/legal/legal_document.dart';
 import '../screens/legal/legal_document_page.dart';
 import '../screens/legal/public_tracking_lookup_page.dart';
@@ -79,7 +81,15 @@ abstract final class SiteInfoRoutes {
       case safeShopping:
         return const LegalDocumentPage(documentId: LegalDocumentId.safeShopping);
       case support:
-        return const CustomerSupportPage();
+        return DeferredModuleScreen(
+          moduleName: 'customer_support_page',
+          loadLibrary: customer_support.loadLibrary,
+          loading: const Scaffold(
+            backgroundColor: Color(0xFFF9FAFB),
+            body: Center(child: CircularProgressIndicator()),
+          ),
+          builder: () => customer_support.CustomerSupportPage(),
+        );
       case shipmentLookup:
         return const PublicTrackingLookupPage();
       case career:

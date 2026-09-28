@@ -23,7 +23,7 @@ import '../widgets/staggered_reveal.dart';
 import '../widgets/custom_header.dart';
 import '../widgets/address_bar.dart';
 import '../utils/category_product_filter.dart';
-import 'product_detail_page.dart';
+import 'home_lazy_routes.dart';
 
 class CategoryProductsPage extends StatefulWidget {
   final String category;
@@ -985,12 +985,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
 
     return GestureDetector(
       onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ProductDetailPage(product: product),
-          ),
-        );
+        HomeLazyRoutes.openProductDetail(context, product);
       },
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1557,28 +1552,17 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                         );
                       }
                       final product = _filteredProducts[index];
-                      return GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  ProductDetailPage(product: product),
-                            ),
-                          );
-                        },
-                        child: _wrapCategoryProductReveal(
-                          scope: 'product-grid',
-                          index: index,
+                      return _wrapCategoryProductReveal(
+                        scope: 'product-grid',
+                        index: index,
+                        product: product,
+                        child: ProductCard(
                           product: product,
-                          child: ProductCard(
-                            product: product,
-                            compact: false,
-                            tight: true,
-                            imagePriority: CatalogImagePriority.forGridIndex(
-                              index,
-                              crossAxisCount: isWeb ? 6 : 2,
-                            ),
+                          compact: false,
+                          tight: true,
+                          imagePriority: CatalogImagePriority.forGridIndex(
+                            index,
+                            crossAxisCount: isWeb ? 6 : 2,
                           ),
                         ),
                       );

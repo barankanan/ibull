@@ -36,7 +36,11 @@ class CouponService extends ChangeNotifier {
   List<CouponModel> get wonCoupons => _wonCoupons;
 
   void addCoupon(CouponModel coupon) {
-    _wonCoupons.insert(0, coupon); // En yeniyi başa ekle
+    _wonCoupons.insert(0, coupon);
+    notifyListeners();
+  }
+
+  void notifyListenersSafe() {
     notifyListeners();
   }
 }

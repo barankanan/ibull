@@ -37,6 +37,8 @@ void main() {
       expect(core, contains('IbulChrome.contentConstraints'));
       expect(core, contains('IbulChrome.isWebOf'));
       expect(core, contains('WebStickyFooterScrollView'));
+      expect(core, contains('RewardWheelHomeOverlay(hasBottomNav: !isWeb)'));
+      expect(core, isNot(contains('floatingActionButton: isWeb')));
     });
 
     testWidgets('HomeProductPreviewCard shows quick view eye icon', (tester) async {

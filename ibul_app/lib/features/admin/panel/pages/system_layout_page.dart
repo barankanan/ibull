@@ -12,6 +12,8 @@ import '../widgets/home_card_template_panel.dart';
 import '../widgets/home_feature_sorting_panel.dart';
 import '../widgets/system_layout_editor_card.dart';
 import '../widgets/system_layout_managed_category_widgets.dart';
+import '../../../coupon/screens/admin/coupon_admin_hub_page.dart';
+import '../../../coupon/screens/admin/reward_wheel_settings_page.dart';
 
 class SystemLayoutPage extends StatefulWidget {
   const SystemLayoutPage({super.key});
@@ -51,7 +53,7 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 6, vsync: this);
     _fetchHairCareLayouts();
     _fetchCampaignImages();
     _fetchAppCategories();
@@ -785,6 +787,8 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
                   Tab(text: 'Ana Sayfa Sıralaması'),
                   Tab(text: 'Görseller'),
                   Tab(text: 'Kategoriler'),
+                  Tab(text: 'Kuponlar'),
+                  Tab(text: 'Hediye Çarkı'),
                 ],
               ),
             ],
@@ -798,6 +802,8 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
               const HomeFeatureSortingPanel(),
               _buildImagesTab(),
               _buildManagedCategoriesTab(),
+              const CouponAdminHubPage(),
+              const RewardWheelSettingsPage(),
             ],
           ),
         ),

@@ -10,5 +10,8 @@ void main() {
     expect(core, contains('HomeDeferredTab'));
     expect(core, contains('AppAnimatedIndexedStack'));
     expect(const MapPage(), isA<MapPage>());
+    final map = File('lib/screens/map_page.dart').readAsStringSync();
+    expect(map, contains('Navigator.canPop(context)'));
+    expect(map, isNot(contains('_openedFromProductDetail')));
   });
 }

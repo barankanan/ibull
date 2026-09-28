@@ -27,16 +27,14 @@ class IbulBootController extends ChangeNotifier {
     Future<void> Function()? afterCoreInit,
   }) async {
     try {
-      _setStep('date_formatting');
-      WebBootStepProfiler.start('date_formatting');
+      _setStep('core_init');
+      WebBootStepProfiler.start('core_init');
       Intl.defaultLocale = 'tr_TR';
-      await initializeDateFormatting('tr_TR').timeout(const Duration(seconds: 8));
-      WebBootStepProfiler.done('date_formatting');
-
-      _setStep('supabase_init');
-      WebBootStepProfiler.start('supabase_init');
-      await initializeAppSupabase().timeout(const Duration(seconds: 12));
-      WebBootStepProfiler.done('supabase_init');
+      await Future.wait<void>([
+        initializeDateFormatting('tr_TR').timeout(const Duration(seconds: 8)),
+        initializeAppSupabase().timeout(const Duration(seconds: 12)),
+      ]);
+      WebBootStepProfiler.done('core_init');
 
       if (afterCoreInit != null) {
         _setStep('after_core_init');

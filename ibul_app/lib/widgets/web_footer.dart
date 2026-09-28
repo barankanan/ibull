@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../app/customer_routes.dart';
+import '../app/seller_routes.dart';
 import '../app/site_info_routes.dart';
 import '../app/ibul_router.dart';
 import '../core/constants.dart';
 import '../core/ibul_chrome.dart';
-import '../screens/become_seller_page.dart';
-import '../screens/seller_login_page.dart';
 
 class WebFooter extends StatelessWidget {
   const WebFooter({super.key});
@@ -133,23 +133,14 @@ class WebFooter extends StatelessWidget {
                           label: 'Admin Paneli',
                           color: Colors.grey[600]!,
                           onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    const SellerLoginPage(adminMode: true),
-                              ),
-                            );
+                            _openSellerLogin(context, adminMode: true);
                           },
                         ),
                         _buildActionLink(
                           label: 'Satıcı Girişi',
                           color: AppColors.primary,
                           onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const SellerLoginPage(),
-                              ),
-                            );
+                            _openSellerLogin(context);
                           },
                         ),
                       ],
@@ -187,25 +178,12 @@ class WebFooter extends StatelessWidget {
                           _buildActionLink(
                             label: 'Admin Paneli',
                             color: Colors.grey[600]!,
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) =>
-                                      const SellerLoginPage(adminMode: true),
-                                ),
-                              );
-                            },
+                            onTap: () => _openSellerLogin(context, adminMode: true),
                           ),
                           _buildActionLink(
                             label: 'Satıcı Girişi',
                             color: AppColors.primary,
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => const SellerLoginPage(),
-                                ),
-                              );
-                            },
+                            onTap: () => _openSellerLogin(context),
                           ),
                         ],
                       ),
@@ -364,15 +342,11 @@ class WebFooter extends StatelessWidget {
 
   void _openFooterLabel(BuildContext context, String link) {
     if (link == 'Satıcı Ol') {
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const BecomeSellerPage()),
-      );
+      _openBecomeSeller(context);
       return;
     }
     if (link == 'Satıcı Girişi') {
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const SellerLoginPage()),
-      );
+      _openSellerLogin(context);
       return;
     }
     if (link == 'İhız') {
@@ -384,6 +358,23 @@ class WebFooter extends StatelessWidget {
       return;
     }
     SiteInfoRoutes.openFooterLabel(context, link);
+  }
+
+  void _openSellerLogin(BuildContext context, {bool adminMode = false}) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            CustomerRoutes.buildSellerLoginPage(adminMode: adminMode),
+      ),
+    );
+  }
+
+  void _openBecomeSeller(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SellerRoutes.buildBecomeSeller(),
+      ),
+    );
   }
 
   void _openIhiz(BuildContext context) {

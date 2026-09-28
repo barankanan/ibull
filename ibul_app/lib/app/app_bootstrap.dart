@@ -150,10 +150,16 @@ ThemeData buildAppTheme() {
 }
 
 class HomeWrapper extends StatefulWidget {
-  const HomeWrapper({super.key, this.initialIndex = 0, this.initialCategory});
+  const HomeWrapper({
+    super.key,
+    this.initialIndex = 0,
+    this.initialCategory,
+    this.initialSearchQuery,
+  });
 
   final int initialIndex;
   final String? initialCategory;
+  final String? initialSearchQuery;
 
   @override
   State<HomeWrapper> createState() => _HomeWrapperState();
@@ -173,6 +179,7 @@ class _HomeWrapperState extends State<HomeWrapper> {
     return HomeScreenGate(
       initialIndex: widget.initialIndex,
       initialCategory: widget.initialCategory,
+      initialSearchQuery: widget.initialSearchQuery,
     );
   }
 }

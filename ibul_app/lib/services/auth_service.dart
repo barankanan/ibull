@@ -1,8 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter/foundation.dart'
     show
         TargetPlatform,
@@ -12,10 +12,12 @@ import 'package:flutter/foundation.dart'
         kIsWeb;
 import '../core/auth/auth_debug_logger.dart';
 import '../core/auth/ibul_auth_context.dart';
-import '../core/config/runtime_config.dart';
 import '../core/runtime_diagnostic_logger.dart';
 import '../core/secure_local_store.dart';
-import 'store_service.dart';
+import '../features/seller/domain/store_vertical.dart';
+import 'google_sign_in_gateway.dart' deferred as google_sign_in_gateway;
+import 'google_sign_in_result.dart';
+import 'store_service.dart' deferred as store_service_lib;
 
 enum LoginResolvedRole { seller, waiter, admin, user, unknown }
 
@@ -42,18 +44,15 @@ class LoginRouteResolution {
   bool get storeProfileFound => storeProfile != null;
 
   String get chosenRoute {
-    switch (resolvedRole) {
-      case LoginResolvedRole.seller:
-        return '/seller';
-      case LoginResolvedRole.waiter:
-        return '/seller[garson]';
-      case LoginResolvedRole.admin:
-        return '/admin';
-      case LoginResolvedRole.user:
-        return '/home';
-      case LoginResolvedRole.unknown:
-        return 'unresolved';
+    if (resolvedRole == LoginResolvedRole.waiter) {
+      return '/seller[garson]';
     }
+    return SellerDashboardResolver.routeFor(
+      resolvedRoleName: resolvedRole.name,
+      vertical: resolveStoreVertical(
+        storeProfile?['category']?.toString(),
+      ),
+    );
   }
 }
 
@@ -71,7 +70,7 @@ class AuthService {
     'admin_finance',
     'admin_security',
   ];
-  GoogleSignIn? _googleSignIn;
+  bool _googleAuthLoaded = false;
 
   AuthService();
 
@@ -137,12 +136,10 @@ class AuthService {
     }
   }
 
-  GoogleSignIn get _googleSignInClient {
-    final clientId = AppRuntimeConfig.googleClientId;
-    final serverClientId = AppRuntimeConfig.googleServerClientId;
-    return _googleSignIn ??= kIsWeb
-        ? GoogleSignIn(clientId: clientId)
-        : GoogleSignIn(clientId: clientId, serverClientId: serverClientId);
+  Future<void> _signOutGoogleIfLoaded() async {
+    if (!_googleAuthLoaded) return;
+    await google_sign_in_gateway.loadLibrary();
+    await google_sign_in_gateway.GoogleSignInGateway.instance.signOut();
   }
 
   String _mapFieldNameToDb(String fieldName) {
@@ -166,9 +163,12 @@ class AuthService {
 
   // Sign in with Google
   Future<AuthResponse> signInWithGoogle({String authArea = 'user'}) async {
-    GoogleSignInAccount? googleUser;
+    GoogleSignInResult? googleUser;
     try {
-      googleUser = await _googleSignInClient.signIn();
+      _googleAuthLoaded = true;
+      await google_sign_in_gateway.loadLibrary();
+      googleUser =
+          await google_sign_in_gateway.GoogleSignInGateway.instance.signIn();
       if (googleUser == null) {
         await _recordAuthLoginAttempt(
           provider: 'google',
@@ -180,11 +180,7 @@ class AuthService {
         throw Exception('Google sign in canceled');
       }
 
-      final GoogleSignInAuthentication googleAuth =
-          await googleUser.authentication;
-      final accessToken = googleAuth.accessToken;
-      final idToken = googleAuth.idToken;
-
+      final idToken = googleUser.idToken;
       if (idToken == null) {
         throw Exception('No ID Token found.');
       }
@@ -192,7 +188,7 @@ class AuthService {
       final response = await _supabase.auth.signInWithIdToken(
         provider: OAuthProvider.google,
         idToken: idToken,
-        accessToken: accessToken,
+        accessToken: googleUser.accessToken,
       );
       await _recordAuthLoginAttempt(
         email: googleUser.email,
@@ -287,13 +283,34 @@ class AuthService {
     }
   }
 
-  String describeSignInError(Object error, {bool adminMode = false}) {
+  String describeSignInError(
+    Object error, {
+    bool adminMode = false,
+    String authArea = 'user',
+  }) {
+    if (authArea == 'user' && !adminMode) {
+      if (error is AuthApiException) {
+        switch (error.code) {
+          case 'invalid_credentials':
+            return 'E-posta veya şifre hatalı.';
+          case 'email_not_confirmed':
+            return 'E-posta adresiniz henüz doğrulanmamış.';
+          case 'too_many_requests':
+            return 'Çok fazla deneme yapıldı. Lütfen kısa süre sonra tekrar deneyin.';
+        }
+      }
+      final raw = error.toString().toLowerCase();
+      if (raw.contains('invalid_credentials') || raw.contains('invalid login')) {
+        return 'E-posta veya şifre hatalı.';
+      }
+      return 'Giriş yapılamadı. Lütfen bilgilerinizi kontrol edin.';
+    }
     if (error is AuthApiException) {
       switch (error.code) {
         case 'invalid_credentials':
           return adminMode
               ? 'E-posta veya şifre Supabase Auth tarafında doğrulanamadı. Bu hesap Google ile açıldıysa parola ile admin girişi çalışmaz.'
-              : 'E-posta veya şifre Supabase Auth tarafında doğrulanamadı. Bu hesap Google ile açıldıysa parola ile giriş çalışmaz.';
+              : 'E-posta veya şifre doğrulanamadı. Bu hesap Google ile açıldıysa satıcı paneline o parolayla girilemez. Şifremi unuttum ile e-posta, SMS veya mağaza kodu kullanın.';
         case 'email_not_confirmed':
           return 'E-posta adresiniz henüz doğrulanmamış.';
         case 'too_many_requests':
@@ -383,27 +400,44 @@ class AuthService {
       debugPrintStack(stackTrace: stackTrace);
     }
 
-    final rawRole = (profile?['role'] ?? user.userMetadata?['role'])
-        ?.toString()
-        .trim();
-    final resolvedRole = normalizeLoginRole(rawRole);
-    final isSellerApproved = _coerceBool(
+    var rawRole = await _resolveRawRole(
+      user: user,
+      profile: profile,
+    );
+    var resolvedRole = normalizeLoginRole(rawRole);
+    var isSellerApproved = _coerceBool(
       profile?['is_seller_approved'] ??
           profile?['isSellerApproved'] ??
           user.userMetadata?['is_seller_approved'] ??
           user.userMetadata?['isSellerApproved'],
     );
 
-    if (includeStoreProfile &&
+    final shouldLoadStore =
+        includeStoreProfile &&
         (resolvedRole == LoginResolvedRole.seller ||
-            resolvedRole == LoginResolvedRole.waiter)) {
+            resolvedRole == LoginResolvedRole.waiter ||
+            diagnosticContext == 'seller_login');
+    if (shouldLoadStore) {
       try {
-        storeProfile = await StoreService().getStoreProfile();
+        await store_service_lib.loadLibrary();
+        storeProfile = await store_service_lib.StoreService().getStoreProfile();
       } catch (error, stackTrace) {
         debugPrint(
           '[AuthRoute][$diagnosticContext] store fetch failed for ${user.id}: $error',
         );
         debugPrintStack(stackTrace: stackTrace);
+      }
+    }
+
+    if (diagnosticContext == 'seller_login' &&
+        resolvedRole != LoginResolvedRole.admin &&
+        resolvedRole != LoginResolvedRole.waiter &&
+        SellerLoginAccess.ownedStoreMarksUserAsSeller(storeProfile)) {
+      rawRole = 'seller';
+      resolvedRole = LoginResolvedRole.seller;
+      if (SellerLoginAccess.ownedStoreIsApproved(storeProfile)) {
+        isSellerApproved = true;
+        unawaited(_repairApprovedSellerRole(userId: user.id));
       }
     }
 
@@ -421,6 +455,48 @@ class AuthService {
       resolution: resolution,
     );
     return resolution;
+  }
+
+  Future<String?> _resolveRawRole({
+    required User user,
+    required Map<String, dynamic>? profile,
+  }) async {
+    final fromProfile = profile?['role']?.toString().trim();
+    if (isAdminRole(fromProfile)) return fromProfile;
+
+    final restored = await _restoreAdminRoleFromPermissions(user.id);
+    if (restored != null) return restored;
+
+    // user_metadata.role is client-controlled (signup `data`). Never copy it
+    // into public.users and never treat it as an admin grant.
+    final fromMetadata = user.userMetadata?['role']?.toString().trim();
+    if (isAdminRole(fromMetadata)) {
+      return fromProfile?.isNotEmpty == true ? fromProfile : 'user';
+    }
+    return (fromProfile?.isNotEmpty == true ? fromProfile : fromMetadata);
+  }
+
+  Future<void> _repairApprovedSellerRole({required String userId}) async {
+    try {
+      await _supabase.from('users').update({
+        'role': 'seller',
+        'is_seller_approved': true,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', userId);
+    } catch (error) {
+      debugPrint('[AuthRoute] seller role repair skipped: $error');
+    }
+  }
+
+  Future<String?> _restoreAdminRoleFromPermissions(String userId) async {
+    try {
+      final raw = await _supabase.rpc('restore_own_admin_role');
+      final restored = raw?.toString().trim();
+      if (isAdminRole(restored)) return restored;
+    } catch (error) {
+      debugPrint('[AuthRoute] restore_own_admin_role skipped: $error');
+    }
+    return null;
   }
 
   bool _coerceBool(dynamic value) {
@@ -495,7 +571,7 @@ class AuthService {
     );
 
     try {
-      await _googleSignIn?.signOut();
+      await _signOutGoogleIfLoaded();
     } catch (error, stackTrace) {
       RuntimeDiagnosticLogger.logFailure(
         'AuthService',
@@ -555,7 +631,7 @@ class AuthService {
     );
 
     try {
-      await _googleSignIn?.signOut();
+      await _signOutGoogleIfLoaded();
     } catch (e) {
       debugPrint('Google sign-out skipped during seller restore: $e');
     }
@@ -625,21 +701,26 @@ class AuthService {
   }) async {
     if (user == null) return;
 
-    final updates = {
+    final existing = await _supabase
+        .from('users')
+        .select('id')
+        .eq('id', user.id)
+        .maybeSingle();
+
+    final updates = <String, dynamic>{
       'id': user.id,
       'email': user.email,
       'display_name': displayName ?? user.userMetadata?['display_name'],
       'photo_url':
           user.userMetadata?['avatar_url'] ?? user.userMetadata?['picture'],
-      'role': 'user', // default role
       'updated_at': DateTime.now().toIso8601String(),
     };
-
-    // Only add phone if provided
+    if (existing == null) {
+      updates['role'] = 'user';
+    }
     if (phone != null) updates['phone'] = phone;
 
-    // Upsert: Insert if not exists, update if exists
-    await _supabase.from('users').upsert(updates);
+    await _supabase.from('users').upsert(updates, onConflict: 'id');
   }
 
   Future<void> ensureCurrentUserRow({
@@ -671,7 +752,7 @@ class AuthService {
     }
 
     if (existing == null) {
-      updates['role'] = resolvedUser.userMetadata?['role'] ?? 'user';
+      updates['role'] = 'user';
       final initialPhoto =
           resolvedUser.userMetadata?['avatar_url'] ??
           resolvedUser.userMetadata?['picture'];
@@ -949,6 +1030,27 @@ class AuthService {
           'user_name': user.userMetadata?['display_name'],
         })
         .timeout(const Duration(seconds: 30));
+
+    Map<String, dynamic>? profile;
+    try {
+      profile = await getUserProfile();
+    } catch (_) {}
+    final currentRole = profile?['role']?.toString();
+    if (isAdminRole(currentRole)) {
+      throw Exception(
+        'Admin hesabıyla satıcı başvurusu yapılamaz. Satıcı için ayrı bir e-posta kullanın.',
+      );
+    }
+    final patch = SellerLoginAccess.pendingSellerUserPatch(
+      currentRole: currentRole,
+      isAdminRole: isAdminRole,
+    );
+    if (patch != null) {
+      await _supabase.from('users').update({
+        ...patch,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', user.id);
+    }
   }
 
   // Register New Seller Account
@@ -1019,10 +1121,22 @@ class AuthService {
         })
         .eq('id', applicationId);
 
-    // 3. Update User Status
+    // 3. Update User Status without overwriting an admin role.
+    String roleToWrite = 'seller';
+    try {
+      final existing = await _supabase
+          .from('users')
+          .select('role')
+          .eq('id', userId)
+          .maybeSingle();
+      final existingRole = existing?['role']?.toString();
+      if (isAdminRole(existingRole) && existingRole != null) {
+        roleToWrite = existingRole;
+      }
+    } catch (_) {}
     await _supabase
         .from('users')
-        .update({'is_seller_approved': true, 'role': 'seller'})
+        .update({'is_seller_approved': true, 'role': roleToWrite})
         .eq('id', userId);
 
     // 4. Create/Update Store Profile in 'stores' table (haritada görünsün diye store_lat/store_lng eklenir)
@@ -1093,15 +1207,16 @@ class AuthService {
     final user = _supabase.auth.currentUser;
     if (user == null) return;
 
-    // Delete from Database (Cascade usually handles this, but explicit delete is safer)
-    await _supabase.from('users').delete().eq('id', user.id);
-
-    // Delete from Authentication (Admin SDK usually required for this, but user can delete self if configured)
-    // Note: Supabase Client SDK doesn't have deleteUser() for self unless using RPC or Edge Function usually.
-    // For now, we will rely on database deletion or implementing an Edge Function.
-    // However, to keep it simple, we'll try to call the management endpoint if available or just sign out.
-    // Actually, Supabase doesn't allow self-deletion via client SDK by default security.
-    // We will just sign out for now and mark as deleted in DB.
+    try {
+      final response = await _supabase.functions.invoke('delete-account');
+      final status = response.status;
+      if (status < 200 || status >= 300) {
+        throw Exception('delete-account HTTP $status');
+      }
+    } catch (error) {
+      debugPrint('[Auth] delete-account function failed: $error');
+      await _supabase.from('users').delete().eq('id', user.id);
+    }
     await signOut();
   }
 

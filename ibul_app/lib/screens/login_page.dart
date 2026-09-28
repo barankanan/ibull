@@ -9,6 +9,7 @@ import '../core/constants.dart';
 import '../core/runtime_diagnostic_logger.dart';
 import 'register_page.dart';
 import '../services/auth_service.dart';
+import '../core/auth/customer_login_completion.dart';
 import '../core/home_navigation.dart';
 
 class LoginPage extends StatefulWidget {
@@ -128,14 +129,6 @@ class _LoginPageState extends State<LoginPage>
         await appState.applyCustomerSessionFromSignIn(role: resolution.rawRole);
         if (!mounted) return;
 
-        // Login successful (customer context)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Giriş başarılı!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-
         if (!appState.isLoggedIn) {
           for (int i = 0; i < 20; i++) {
             if (!mounted) return;
@@ -145,22 +138,26 @@ class _LoginPageState extends State<LoginPage>
         }
         if (!mounted) return;
         RuntimeDiagnosticLogger.auth('non-critical init deferred');
-        AuthFlowLogger.redirect(target: '/home?tab=4');
         RuntimeDiagnosticLogger.auth(
-          'route to home '
-          'ms=${DateTime.now().millisecondsSinceEpoch - loginStartedMs}',
+          'post-login navigation '
+          'ms=${DateTime.now().millisecondsSinceEpoch - loginStartedMs} '
+          'loggedIn=${appState.isLoggedIn} '
+          'canPop=${Navigator.of(context).canPop()}',
         );
-        HomeNavigation.openHome(context, initialIndex: 4);
+        CustomerLoginCompletion.finish(
+          context,
+          sessionReady: _authService.currentUser != null,
+        );
       } catch (e) {
         if (!mounted) return;
         AuthFlowLogger.supabaseSignInError(
           code: e.runtimeType.toString(),
-          message: _authService.describeSignInError(e),
+          message: _authService.describeSignInError(e, authArea: 'user'),
         );
-        final message = _authService.describeSignInError(e);
+        final message = _authService.describeSignInError(e, authArea: 'user');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Giriş başarısız: $message'),
+            content: Text(message),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 4),
           ),
@@ -582,16 +579,22 @@ class _LoginPageState extends State<LoginPage>
                                               );
                                           await appState.loginWithGoogle();
                                           if (!context.mounted) return;
-                                          HomeNavigation.openHome(
+                                          await appState
+                                              .applyCustomerSessionFromSignIn();
+                                          if (!context.mounted) return;
+                                          CustomerLoginCompletion.finish(
                                             context,
-                                            initialIndex: 4,
+                                            sessionReady: appState.isLoggedIn,
                                           );
                                         } catch (e) {
                                           if (!mounted) return;
                                           messenger.showSnackBar(
                                             SnackBar(
                                               content: Text(
-                                                'Giriş başarısız: ${e.toString()}',
+                                                _authService.describeSignInError(
+                                                  e,
+                                                  authArea: 'user',
+                                                ),
                                               ),
                                               backgroundColor: Colors.red,
                                             ),

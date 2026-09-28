@@ -26,6 +26,12 @@ import '../services/supabase_service.dart';
 import '../utils/external_navigation.dart';
 import '../widgets/map_filter_bottom_sheet.dart';
 import '../utils/text_normalizer.dart';
+import '../features/seller/domain/store_vertical.dart';
+import '../features/vehicle/domain/vehicle_compare_fields.dart';
+import '../features/vehicle/domain/vehicle_map_search.dart';
+import '../features/vehicle/models/vehicle_listing.dart';
+import '../features/vehicle/navigation/gallery_store_entry.dart';
+import '../features/vehicle/navigation/vehicle_routes.dart';
 import 'business_detail_page.dart';
 import '../models/store_follow_state.dart';
 import '../features/seller/achievements/helpers/seller_badge_public_display.dart';
@@ -39,6 +45,9 @@ class MapPage extends StatefulWidget {
   final Map<String, dynamic>? targetBusiness;
   final String? initialSearchQuery;
   final String? initialStoreProductQuery;
+  final String? contentType;
+  final String? vehicleBrand;
+  final String? vehicleModel;
 
   const MapPage({
     super.key,
@@ -47,6 +56,9 @@ class MapPage extends StatefulWidget {
     this.targetBusiness,
     this.initialSearchQuery,
     this.initialStoreProductQuery,
+    this.contentType,
+    this.vehicleBrand,
+    this.vehicleModel,
   });
 
   @override
@@ -65,6 +77,10 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   List<int> _filteredBusinessIndices = [];
   String _searchQuery = '';
   List<int>? _searchCandidateIndices;
+  List<VehicleListing> _vehicleHits = const [];
+  String _vehicleMatchLabel = '';
+  bool get _vehicleMode =>
+      (widget.contentType ?? '').trim().toLowerCase() == 'vehicle';
   List<MapStoreMarker> _mapStores = [];
   List<Map<String, dynamic>> _businesses = [];
 
@@ -196,16 +212,21 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     }
   }
 
+  void _rerunVehicleSearchIfNeeded() {
+    if (!_vehicleMode || _searchQuery.trim().isEmpty) return;
+    unawaited(_performSearch(_searchQuery));
+  }
+
   String get _mapListEmptyMessage => resolveMapFilteredEmptyMessage(
-        rawCount: _rawStoreCount,
-        markerCount: _markerStoreCount,
-        filteredCount: _filteredBusinessIndices.length,
-        searchQuery: _searchQuery,
-        filterCategories: _filterCategories,
-        hasUserLocation: _userLocation != null,
-        filterDistanceKm: _filterDistance,
-        userAppliedDistanceFilter: _userAppliedDistanceFilter,
-      );
+    rawCount: _rawStoreCount,
+    markerCount: _markerStoreCount,
+    filteredCount: _filteredBusinessIndices.length,
+    searchQuery: _searchQuery,
+    filterCategories: _filterCategories,
+    hasUserLocation: _userLocation != null,
+    filterDistanceKm: _filterDistance,
+    userAppliedDistanceFilter: _userAppliedDistanceFilter,
+  );
 
   String _normalize(String s) {
     return TextNormalizer.normalize(s);
@@ -560,12 +581,12 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         type: match['type']!,
         term: match['term']!,
       );
-      final notificationShown =
-          await PushNotificationService.instance.showNearbyStoreNotification(
-        storeName: storeName,
-        body: body,
-        initialStoreProductQuery: match['term'],
-      );
+      final notificationShown = await PushNotificationService.instance
+          .showNearbyStoreNotification(
+            storeName: storeName,
+            body: body,
+            initialStoreProductQuery: match['term'],
+          );
       if (notificationShown) {
         _storesNotifiedInCurrentProximity.add(storeName);
         _addProximityDebugLog(
@@ -666,7 +687,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
   Future<void> _loadMapStoresEmergencyPipeline() async {
     if (_storesLoadInFlight) {
-      RuntimeDiagnosticLogger.map('stores query skipped — load already in flight');
+      RuntimeDiagnosticLogger.map(
+        'stores query skipped — load already in flight',
+      );
       return;
     }
     _storesLoadInFlight = true;
@@ -681,9 +704,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     }
     var rawCount = 0;
     try {
-      final result = await MapStoreEmergencyPipeline()
-          .load()
-          .timeout(_mapStoresQueryTimeout);
+      final result = await MapStoreEmergencyPipeline().load().timeout(
+        _mapStoresQueryTimeout,
+      );
       final list = result.rows;
       rawCount = list.length;
       _rawStoreCount = rawCount;
@@ -795,7 +818,12 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             'Mağazalar şu an yüklenemedi. Harita varsayılan bölgede açık.';
       });
     } catch (e, stackTrace) {
-      RuntimeDiagnosticLogger.logFailure('Map', e, stackTrace, context: 'stores');
+      RuntimeDiagnosticLogger.logFailure(
+        'Map',
+        e,
+        stackTrace,
+        context: 'stores',
+      );
       if (!mounted) return;
       setState(() {
         _storesLoadError =
@@ -885,17 +913,20 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       );
       if (mounted) {
         setState(() {
-          _locationNotice =
-              'Konum alınamadı, varsayılan bölge gösteriliyor.';
+          _locationNotice = 'Konum alınamadı, varsayılan bölge gösteriliyor.';
         });
       }
       _showDefaultMapCenter(reason: 'location timeout');
     } catch (e, stackTrace) {
-      RuntimeDiagnosticLogger.logFailure('Map', e, stackTrace, context: 'location');
+      RuntimeDiagnosticLogger.logFailure(
+        'Map',
+        e,
+        stackTrace,
+        context: 'location',
+      );
       if (mounted) {
         setState(() {
-          _locationNotice =
-              'Konum alınamadı, varsayılan bölge gösteriliyor.';
+          _locationNotice = 'Konum alınamadı, varsayılan bölge gösteriliyor.';
         });
       }
       _showDefaultMapCenter(reason: 'location catch');
@@ -959,6 +990,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           _syncUserLocationToBackend();
           _maybeStartProximityAfterStoresLoaded();
           _startLiveLocationUpdates();
+          _rerunVehicleSearchIfNeeded();
         } else if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -1008,7 +1040,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Konum servisleri kapalı. Harita varsayılan konumda açılıyor.'),
+              content: const Text(
+                'Konum servisleri kapalı. Harita varsayılan konumda açılıyor.',
+              ),
               action: SnackBarAction(
                 label: 'Ayarlar',
                 onPressed: () {
@@ -1027,8 +1061,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       if (permission == LocationPermission.denied) {
         if (mounted) {
           setState(() {
-            _locationNotice =
-                'Konum alınamadı, varsayılan bölge gösteriliyor.';
+            _locationNotice = 'Konum alınamadı, varsayılan bölge gösteriliyor.';
           });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -1083,7 +1116,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Konum alınamadı. Harita varsayılan konumda açılıyor.'),
+              content: Text(
+                'Konum alınamadı. Harita varsayılan konumda açılıyor.',
+              ),
             ),
           );
         }
@@ -1099,6 +1134,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         });
         _syncUserLocationToBackend();
         _maybeStartProximityAfterStoresLoaded();
+        _rerunVehicleSearchIfNeeded();
 
         // Move map to user location on initial load
         if (_userLocation != null) {
@@ -1108,11 +1144,18 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
       _startLiveLocationUpdates();
     } catch (e, stackTrace) {
-      RuntimeDiagnosticLogger.logFailure('Map', e, stackTrace, context: 'location');
+      RuntimeDiagnosticLogger.logFailure(
+        'Map',
+        e,
+        stackTrace,
+        context: 'location',
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Konum alınamadı. Harita varsayılan konumda açılıyor.'),
+            content: Text(
+              'Konum alınamadı. Harita varsayılan konumda açılıyor.',
+            ),
           ),
         );
       }
@@ -1129,13 +1172,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         }
 
         try {
-          final position = await LocationAccessService.instance.getCurrentPosition(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.medium,
-              timeLimit: Duration(seconds: 8),
-            ),
-            requestPermissionIfNeeded: false,
-          );
+          final position = await LocationAccessService.instance
+              .getCurrentPosition(
+                locationSettings: const LocationSettings(
+                  accuracy: LocationAccuracy.medium,
+                  timeLimit: Duration(seconds: 8),
+                ),
+                requestPermissionIfNeeded: false,
+              );
           if (position == null) return;
 
           if (mounted) {
@@ -1283,6 +1327,10 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   }
 
   Future<void> _performSearch(String query) async {
+    if (_vehicleMode) {
+      await _performVehicleSearch(query);
+      return;
+    }
     final trimmedQuery = query.trim();
     final requestVersion = ++_searchRequestVersion;
 
@@ -1353,6 +1401,245 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _performVehicleSearch(String query) async {
+    final trimmedQuery = query.trim();
+    final requestVersion = ++_searchRequestVersion;
+    setState(() => _searchQuery = trimmedQuery);
+    if (trimmedQuery.isEmpty) {
+      if (!mounted || requestVersion != _searchRequestVersion) return;
+      setState(() {
+        _vehicleHits = const [];
+        _vehicleMatchLabel = '';
+        _searchCandidateIndices = null;
+        _rebuildFilteredIndices(log: true);
+      });
+      return;
+    }
+
+    VehicleMapSearchHit hit;
+    try {
+      hit = await VehicleMapSearch.search(
+        query: trimmedQuery,
+        brand: widget.vehicleBrand,
+        model: widget.vehicleModel,
+        nearLat: _userLocation?.latitude,
+        nearLng: _userLocation?.longitude,
+      );
+    } catch (error) {
+      debugPrint('[Map] vehicle search failed: $error');
+      if (!mounted || requestVersion != _searchRequestVersion) return;
+      hit = const VehicleMapSearchHit(
+        listings: [],
+        sellerIds: {},
+        matchLabel: 'arama',
+      );
+    }
+    if (!mounted || requestVersion != _searchRequestVersion) return;
+
+    final queryNorm = _normalize(trimmedQuery);
+    final combinedIndices = <int>{};
+    for (int i = 0; i < _businesses.length; i++) {
+      final business = _businesses[i];
+      final sellerId = (business['seller_id'] ?? business['id'] ?? '')
+          .toString()
+          .trim();
+      final name = _normalize(business['name']?.toString() ?? '');
+      if ((sellerId.isNotEmpty && hit.sellerIds.contains(sellerId)) ||
+          (queryNorm.isNotEmpty && name.contains(queryNorm))) {
+        combinedIndices.add(i);
+      }
+    }
+    if (combinedIndices.isEmpty) {
+      for (int i = 0; i < _businesses.length; i++) {
+        if (isGalleryStoreRecord(_businesses[i])) combinedIndices.add(i);
+      }
+    }
+
+    setState(() {
+      _vehicleHits = _sortVehicleHits(hit.listings);
+      _vehicleMatchLabel = hit.matchLabel;
+      _searchCandidateIndices = combinedIndices.toList(growable: false);
+      _rebuildFilteredIndices(log: true);
+    });
+
+    if (_filteredBusinessIndices.isNotEmpty) {
+      final location =
+          _businesses[_filteredBusinessIndices.first]['location'] as LatLng?;
+      if (location != null) _animatedMapMove(location, 15.5);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _vehicleHits.isEmpty
+              ? 'Yakında eşleşen araç bulunamadı. Galeriler gösteriliyor.'
+              : '${_vehicleHits.length} araç • ${hit.matchLabel}',
+        ),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  List<VehicleListing> _sortVehicleHits(List<VehicleListing> listings) {
+    if (_userLocation == null || listings.length < 2) return listings;
+    final ranked = [...listings];
+    ranked.sort((a, b) {
+      final da = _distanceKmForListing(a);
+      final db = _distanceKmForListing(b);
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return da.compareTo(db);
+    });
+    return ranked;
+  }
+
+  double? _distanceKmForListing(VehicleListing listing) {
+    if (_userLocation == null) return null;
+    LatLng? location;
+    if (listing.gallery?.lat != null && listing.gallery?.lng != null) {
+      location = LatLng(listing.gallery!.lat!, listing.gallery!.lng!);
+    } else {
+      final sellerId = listing.sellerId.trim();
+      for (final business in _businesses) {
+        final id = (business['seller_id'] ?? business['id'] ?? '')
+            .toString()
+            .trim();
+        if (id.isNotEmpty && id == sellerId) {
+          location = business['location'] as LatLng?;
+          break;
+        }
+      }
+    }
+    if (location == null) return null;
+    return Geolocator.distanceBetween(
+          _userLocation!.latitude,
+          _userLocation!.longitude,
+          location.latitude,
+          location.longitude,
+        ) /
+        1000;
+  }
+
+  Widget _buildVehicleHitsStrip() {
+    return SizedBox(
+      height: 118,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+            child: Text(
+              _vehicleMatchLabel.isEmpty
+                  ? 'Yakındaki araçlar'
+                  : 'Yakındaki araçlar • $_vehicleMatchLabel',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppColors.ink,
+              ),
+            ),
+          ),
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              scrollDirection: Axis.horizontal,
+              itemCount: _vehicleHits.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final listing = _vehicleHits[index];
+                final km = _distanceKmForListing(listing);
+                return InkWell(
+                  onTap: () => VehicleRoutes.openDetail(context, listing.id),
+                  child: Container(
+                    width: 220,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: SizedBox(
+                            width: 56,
+                            height: 56,
+                            child:
+                                listing.coverUrl == null ||
+                                    listing.coverUrl!.isEmpty
+                                ? const ColoredBox(
+                                    color: Color(0xFFF3F4F6),
+                                    child: Icon(Icons.directions_car_outlined),
+                                  )
+                                : OptimizedImage(
+                                    imageUrlOrPath: listing.coverUrl!,
+                                    fit: BoxFit.cover,
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                listing.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              Text(
+                                [
+                                  if (listing.specs.year > 0)
+                                    '${listing.specs.year}',
+                                  if (listing.specs.mileageKm != null)
+                                    '${listing.specs.mileageKm} km',
+                                  if ((listing.gallery?.name ?? '').isNotEmpty)
+                                    listing.gallery!.name,
+                                ].join(' · '),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                              Text(
+                                [
+                                  VehicleCompareFields.headlinePrice(listing),
+                                  if (km != null) '${km.toStringAsFixed(1)} km',
+                                ].join(' · '),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showBusinessDetail(Map<String, dynamic> business) {
     if (_isBusinessSheetOpen) return;
     _isBusinessSheetOpen = true;
@@ -1373,6 +1660,16 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     Map<String, dynamic> business, {
     String? initialProductQuery,
   }) async {
+    if (isGalleryStoreRecord(business)) {
+      if (!mounted) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => PublicGalleryStoreView(business: business),
+        ),
+      );
+      return;
+    }
     final storeProducts = await _getStoreProducts(business['name'].toString());
     if (!mounted) return;
     Navigator.push(
@@ -1441,7 +1738,8 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       final hasOrigin = _userLocation != null;
       final candidateUrls = <String>[];
 
-      final prefersAppleMaps = !kIsWeb &&
+      final prefersAppleMaps =
+          !kIsWeb &&
           (defaultTargetPlatform == TargetPlatform.iOS ||
               defaultTargetPlatform == TargetPlatform.macOS);
       if (prefersAppleMaps) {
@@ -1481,9 +1779,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       if (!hasOrigin) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Konum izni verilirse rota oluşturulabilir.',
-            ),
+            content: Text('Konum izni verilirse rota oluşturulabilir.'),
             duration: Duration(seconds: 3),
           ),
         );
@@ -1514,10 +1810,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: Colors.grey.shade200,
-              width: 1.5,
-            ),
+            border: Border.all(color: Colors.grey.shade200, width: 1.5),
           ),
           clipBehavior: Clip.antiAlias,
           child: (logoUrl != null && logoUrl.isNotEmpty)
@@ -1657,8 +1950,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         business['address_line']?.toString().trim() ??
         business['address']?.toString().trim() ??
         '';
-    final bioText =
-        description.isNotEmpty ? description : mapStoreBioFallback;
+    final bioText = description.isNotEmpty ? description : mapStoreBioFallback;
 
     return Container(
       constraints: BoxConstraints(
@@ -1774,8 +2066,8 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                     ),
                                   ),
                                   clipBehavior: Clip.antiAlias,
-                                  child: OptimizedImage(imageUrlOrPath: 
-                                    url,
+                                  child: OptimizedImage(
+                                    imageUrlOrPath: url,
                                     fit: BoxFit.cover,
                                     width: double.infinity,
                                     height: 100,
@@ -1993,8 +2285,8 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           ),
           child: ClipOval(
             child: hasLogo
-                ? OptimizedImage(imageUrlOrPath: 
-                    logoUrl,
+                ? OptimizedImage(
+                    imageUrlOrPath: logoUrl,
                     fit: BoxFit.cover,
                     width: double.infinity,
                     height: double.infinity,
@@ -2050,14 +2342,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     );
   }
 
-  bool get _openedFromProductDetail => widget.product != null;
+  bool get _shouldShowBackButton {
+    final isWebLayout = MediaQuery.of(context).size.width >= 1100;
+    return isWebLayout || Navigator.canPop(context);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isWebLayout = MediaQuery.of(context).size.width >= 1100;
-    final shouldShowBackButton =
-        isWebLayout ||
-        (_openedFromProductDetail && Navigator.canPop(context));
+    final shouldShowBackButton = _shouldShowBackButton;
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Stack(
@@ -2143,8 +2435,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                     );
                                   },
                                   decoration: InputDecoration(
-                                    hintText:
-                                        'Ürün veya mağaza ara (örn: Samsung S24)',
+                                    hintText: _vehicleMode
+                                        ? 'Araç ara (örn: Renault Clio)'
+                                        : 'Ürün veya mağaza ara (örn: Samsung S24)',
                                     hintStyle: TextStyle(
                                       color: Colors.grey[600],
                                       fontSize: 12,
@@ -2212,6 +2505,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                     ],
                   ),
                 ),
+                if (_vehicleHits.isNotEmpty) _buildVehicleHitsStrip(),
                 Container(
                   height: 52,
                   margin: const EdgeInsets.symmetric(vertical: 10),
@@ -2280,8 +2574,12 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                     boxShadow: [
                                       BoxShadow(
                                         color: selected
-                                            ? AppColors.primary.withValues(alpha: 0.3)
-                                            : Colors.black.withValues(alpha: 0.08),
+                                            ? AppColors.primary.withValues(
+                                                alpha: 0.3,
+                                              )
+                                            : Colors.black.withValues(
+                                                alpha: 0.08,
+                                              ),
                                         blurRadius: selected ? 12 : 6,
                                         offset: const Offset(0, 3),
                                       ),
@@ -2319,8 +2617,12 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                         ),
                                         decoration: BoxDecoration(
                                           color: selected
-                                              ? Colors.white.withValues(alpha: 0.25)
-                                              : AppColors.primary.withValues(alpha: 0.1,),
+                                              ? Colors.white.withValues(
+                                                  alpha: 0.25,
+                                                )
+                                              : AppColors.primary.withValues(
+                                                  alpha: 0.1,
+                                                ),
                                           borderRadius: BorderRadius.circular(
                                             8,
                                           ),
@@ -2350,85 +2652,89 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                     child: Stack(
                       children: [
                         FlutterMap(
-                      mapController: _mapController,
-                      options: MapOptions(
-                        initialCenter: _userLocation ?? _initialPosition,
-                        initialZoom: 14.0,
-                        onTap: (_, _) {},
-                      ),
-                      children: [
-                        TileLayer(
-                          urlTemplate:
-                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                          userAgentPackageName: 'com.ibul.app',
-                        ),
-                        MarkerLayer(
-                          markers: _filteredBusinessIndices.map((index) {
-                            final business = _businesses[index];
-                            final isSelected = index == _selectedBusinessIndex;
-                            final location = business['location'] as LatLng;
+                          mapController: _mapController,
+                          options: MapOptions(
+                            initialCenter: _userLocation ?? _initialPosition,
+                            initialZoom: 14.0,
+                            onTap: (_, _) {},
+                          ),
+                          children: [
+                            TileLayer(
+                              urlTemplate:
+                                  'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                              userAgentPackageName: 'com.ibul.app',
+                            ),
+                            MarkerLayer(
+                              markers: _filteredBusinessIndices.map((index) {
+                                final business = _businesses[index];
+                                final isSelected =
+                                    index == _selectedBusinessIndex;
+                                final location = business['location'] as LatLng;
 
-                            return Marker(
-                              point: location,
-                              width: 80, // Increased width to fit label
-                              height:
-                                  80, // Increased height to prevent overflow
-                              child: GestureDetector(
-                                onTap: () {
-                                  _onBusinessSelected(index);
-                                  _showBusinessDetail(business);
-                                },
-                                child: _buildCustomMarker(business, isSelected),
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                        if (_userLocation != null)
-                          MarkerLayer(
-                            markers: [
-                              Marker(
-                                point: _userLocation!,
-                                width: 68,
-                                height: 68,
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    Container(
-                                      width: 44,
-                                      height: 44,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: const Color(
-                                          0xFF60A5FA,
-                                        ).withValues(alpha: 0.18),
-                                        boxShadow: [
-                                          BoxShadow(
+                                return Marker(
+                                  point: location,
+                                  width: 80, // Increased width to fit label
+                                  height:
+                                      80, // Increased height to prevent overflow
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      _onBusinessSelected(index);
+                                      _showBusinessDetail(business);
+                                    },
+                                    child: _buildCustomMarker(
+                                      business,
+                                      isSelected,
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                            if (_userLocation != null)
+                              MarkerLayer(
+                                markers: [
+                                  Marker(
+                                    point: _userLocation!,
+                                    width: 68,
+                                    height: 68,
+                                    child: Stack(
+                                      alignment: Alignment.center,
+                                      children: [
+                                        Container(
+                                          width: 44,
+                                          height: 44,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
                                             color: const Color(
                                               0xFF60A5FA,
-                                            ).withValues(alpha: 0.28),
-                                            blurRadius: 18,
-                                            spreadRadius: 6,
+                                            ).withValues(alpha: 0.18),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: const Color(
+                                                  0xFF60A5FA,
+                                                ).withValues(alpha: 0.28),
+                                                blurRadius: 18,
+                                                spreadRadius: 6,
+                                              ),
+                                            ],
                                           ),
-                                        ],
-                                      ),
+                                        ),
+                                        Transform.rotate(
+                                          angle:
+                                              (_userHeadingDegrees ?? 0) *
+                                              math.pi /
+                                              180,
+                                          child: CustomPaint(
+                                            size: const Size(28, 34),
+                                            painter: _UserDirectionPainter(),
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                    Transform.rotate(
-                                      angle:
-                                          (_userHeadingDegrees ?? 0) *
-                                          math.pi /
-                                          180,
-                                      child: CustomPaint(
-                                        size: const Size(28, 34),
-                                        painter: _UserDirectionPainter(),
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                      ],
-                    ),
+                          ],
+                        ),
                         if (shouldShowStoreLoadingChip(
                           isMapReady: _isMapReady,
                           isLoadingStores: _isLoadingStores,

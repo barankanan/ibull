@@ -8,7 +8,7 @@ import '../core/product_list_schema_helpers.dart';
 import '../models/product_list_model.dart';
 import '../models/product_list_price_change.dart';
 import '../models/product_model.dart';
-import 'store_service.dart';
+import 'store_service.dart' deferred as store_service_lib;
 import 'supabase_service.dart';
 
 class SellerProfilePublicListsFetchResult {
@@ -37,7 +37,6 @@ class ProductListService {
 
   final SupabaseClient _supabase = Supabase.instance.client;
   final Random _random = Random();
-  final StoreService _storeService = StoreService();
 
   static const Duration _opTimeout = Duration(seconds: 12);
 
@@ -758,7 +757,8 @@ class ProductListService {
         return productStoreName;
       }
     }
-    final storeProfile = await _storeService.getStoreProfile();
+    await store_service_lib.loadLibrary();
+    final storeProfile = await store_service_lib.StoreService().getStoreProfile();
     final profileStoreName = storeProfile?['storeName']?.toString().trim();
     if (profileStoreName != null && profileStoreName.isNotEmpty) {
       return profileStoreName;

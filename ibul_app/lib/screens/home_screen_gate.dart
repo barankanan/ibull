@@ -1,21 +1,28 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+// ignore: unused_import
 import 'package:ibul_app/screens/home_screen_deferred_entry.dart' deferred as home_entry;
 
 import '../core/perf_debug_config.dart';
+import '../core/web_boot_error_store.dart';
 import '../core/web_boot_trace.dart';
 import '../core/web_perf_trace.dart';
-import '../widgets/deferred_module_screen.dart';
 import '../widgets/web_perf_debug_panel.dart';
-import 'web_home_boot_shell.dart';
+import 'home/home_initial_page.dart';
 
 /// Defers the heavy home module; shows [WebHomeShell] until loaded or on failure.
 class HomeScreenGate extends StatefulWidget {
-  const HomeScreenGate({super.key, this.initialIndex = 0, this.initialCategory});
+  const HomeScreenGate({
+    super.key,
+    this.initialIndex = 0,
+    this.initialCategory,
+    this.initialSearchQuery,
+  });
 
   final int initialIndex;
   final String? initialCategory;
+  final String? initialSearchQuery;
 
   static const String moduleName = 'home_screen_deferred_entry';
 
@@ -38,6 +45,16 @@ class HomeScreenGate extends StatefulWidget {
   static Future<void> loadModule() {
     return home_entry.loadLibrary().then((_) {
       _moduleReady = true;
+    }).catchError((Object error, StackTrace stackTrace) {
+      // Chunk yüklenemedi — hata izlenebilir ve yeniden fırlatılarak
+      // çağıran (DeferredModuleScreen retry / test) doğru şekilde bilgilendirilir.
+      debugPrint('[HomeScreenGate] deferred chunk load failed: $error');
+      saveWebBootError(
+        module: 'home_screen_gate',
+        message: 'Deferred home chunk load failed: $error',
+        detail: stackTrace.toString(),
+      );
+      Error.throwWithStackTrace(error, stackTrace);
     });
   }
 
@@ -65,41 +82,16 @@ class _HomeScreenGateState extends State<HomeScreenGate> {
     // web cold-boot'un en kritik penceresinde işi ikiye katlıyordu.
   }
 
-  Widget _buildDeferredHome() {
-    _trace.setStage(WebBootTraceStage.deferredFactoryStarted);
-    try {
-      final homeWidget = home_entry.buildDeferredHomeScreen(
-        initialIndex: widget.initialIndex,
-        initialCategory: widget.initialCategory,
-      );
-      _trace.setStage(WebBootTraceStage.deferredFactoryCompleted);
-      _trace.setStage(WebBootTraceStage.homeCoreWidgetCreated);
-      return homeWidget;
-    } catch (error, stack) {
-      _trace.setStage(WebBootTraceStage.deferredFactoryError);
-      _trace.setError('$error');
-      Error.throwWithStackTrace(error, stack);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Stack(
       fit: StackFit.expand,
       children: [
         Positioned.fill(
-          child: DeferredModuleScreen(
-            moduleName: HomeScreenGate.moduleName,
-            loadLibrary: HomeScreenGate.loadModule,
-            timeout: const Duration(seconds: 90),
-            trace: _trace,
-            // Modül hazırsa shell hiç kurulmasın: home route'u her
-            // navigasyonda yeniden mount olduğu için (buildSafeHome →
-            // MaterialApp.home / '/home' / onGenerateRoute) modül çoktan
-            // yüklüyken bile bir kare WebHomeShell çiziliyordu.
-            isAlreadyLoaded: HomeScreenGate.isModuleReady,
-            loading: const WebHomeShell(),
-            builder: _buildDeferredHome,
+          child: HomeInitialPage(
+            initialIndex: widget.initialIndex,
+            initialCategory: widget.initialCategory,
+            initialSearchQuery: widget.initialSearchQuery,
           ),
         ),
         ListenableBuilder(

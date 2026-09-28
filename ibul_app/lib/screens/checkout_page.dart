@@ -12,6 +12,8 @@ import '../widgets/address_edit_sheet.dart';
 import '../services/order_service.dart';
 import '../features/saved_payment_cards/helpers/checkout_payment_integration.dart';
 import '../features/checkout/checkout_line_identity.dart';
+import '../features/coupon/data/coupon_repository.dart';
+import '../features/coupon/domain/coupon_models.dart';
 import '../features/saved_payment_cards/models/saved_payment_card_models.dart';
 import '../features/saved_payment_cards/services/saved_payment_cards_service.dart';
 import '../features/saved_payment_cards/widgets/checkout_save_card_checkbox.dart';
@@ -71,6 +73,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _useNewCard = true;
   bool _saveCardForFuture = false;
   bool _loadingSavedCards = true;
+  final _couponRepository = CouponRepository();
+  CouponQuote? _couponQuote;
 
   @override
   void initState() {
@@ -249,6 +253,46 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
+  List<Map<String, dynamic>> _couponCartItems() {
+    return widget.selectedProducts
+        .map((source) {
+          final qty = int.tryParse('${source['quantity']}') ?? 1;
+          final price =
+              double.tryParse('${source['price']}'.replaceAll(',', '.')) ?? 0;
+          return {
+            'product_id':
+                source['productId']?.toString() ?? source['id']?.toString(),
+            'seller_id': source['sellerId']?.toString(),
+            'main_category': source['category']?.toString(),
+            'sub_category': source['subCategory']?.toString(),
+            'line_total': price * qty,
+          };
+        })
+        .toList(growable: false);
+  }
+
+  Future<void> _applyCouponCode() async {
+    final code = _couponController.text.trim();
+    if (code.isEmpty) return;
+    try {
+      final quote = await _couponRepository.quote(
+        code: code,
+        items: _couponCartItems(),
+      );
+      if (!mounted) return;
+      setState(() => _couponQuote = quote);
+      await _showCheckoutFeedback(
+        quote.ok
+            ? '${quote.code} uygulandı. İndirim: ${quote.discountAmount.toStringAsFixed(0)} TL'
+            : (quote.error ?? 'Kupon uygulanamadı.'),
+        isError: !quote.ok,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      await _showCheckoutFeedback('Kupon doğrulanamadı.', isError: true);
+    }
+  }
+
   Future<void> _completeOrder() async {
     if (_isPlacingOrder) return;
     debugPrint('Checkout CTA tapped');
@@ -371,6 +415,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             ? '${_selectedFastDate.toIso8601String()}|$_selectedFastTime'
             : _selectedStandardDate.toIso8601String(),
         idempotencyKey: _checkoutIdempotencyKey,
+        couponCode: _couponQuote?.ok == true ? _couponQuote?.code : null,
       );
 
       if (_useNewCard && _saveCardForFuture) {
@@ -1413,17 +1458,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                           ),
                           const SizedBox(width: 12),
                           ElevatedButton(
-                            onPressed: () {
-                              if (_couponController.text.isNotEmpty) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      '${_couponController.text} uygulandı!',
-                                    ),
-                                  ),
-                                );
-                              }
-                            },
+                            onPressed: _applyCouponCode,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: AppColors.primary,
                               foregroundColor: Colors.white,
@@ -2928,19 +2963,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   ),
                 ),
                 ElevatedButton(
-                  onPressed: () {
-                    if (_couponController.text.isNotEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            '${_couponController.text} kodu uygulandı!',
-                          ),
-                          backgroundColor: Colors.green,
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
-                    }
-                  },
+                  onPressed: _applyCouponCode,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
                     foregroundColor: Colors.white,

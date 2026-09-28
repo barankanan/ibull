@@ -1,6 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../app/ibul_router.dart';
+import '../app/marketplace_paths.dart';
 import '../core/runtime_diagnostic_logger.dart';
 import '../models/product_model.dart';
 import 'account_page.dart' deferred as account_page;
@@ -19,16 +24,42 @@ import 'search_results_page.dart' deferred as search_page;
 /// Deferred route helpers — keeps map/detail/checkout out of initial home chunk.
 abstract final class HomeLazyRoutes {
   static bool _hotPrefetchStarted = false;
+  static bool _interactionArmed = false;
+  static bool _pointerRouteAdded = false;
+
+  /// Web cold start must not compile search/cart/PDP/account while the home
+  /// shell is still painting. Those chunks load on the first pointer event.
+  /// Native keeps the previous immediate prefetch.
+  static void armPrefetchAfterInteraction() {
+    if (_hotPrefetchStarted || _interactionArmed) return;
+    _interactionArmed = true;
+    if (!kIsWeb) {
+      unawaited(prefetchHotPaths());
+      return;
+    }
+    _pointerRouteAdded = true;
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_onPrefetchPointer);
+  }
+
+  static void _onPrefetchPointer(PointerEvent event) {
+    if (_pointerRouteAdded) {
+      GestureBinding.instance.pointerRouter.removeGlobalRoute(_onPrefetchPointer);
+      _pointerRouteAdded = false;
+    }
+    unawaited(prefetchHotPaths());
+  }
 
   /// Downloads search/cart/PDP/account chunks after first paint.
   /// Sequential so hero/product images keep the network.
   static Future<void> prefetchHotPaths() async {
     if (_hotPrefetchStarted) return;
     _hotPrefetchStarted = true;
-    await _prefetchQuiet(search_page.loadLibrary);
-    await _prefetchQuiet(cart_page.loadLibrary);
-    await _prefetchQuiet(product_detail_page.loadLibrary);
-    await _prefetchQuiet(account_page.loadLibrary);
+    await Future.wait<void>([
+      _prefetchQuiet(search_page.loadLibrary),
+      _prefetchQuiet(cart_page.loadLibrary),
+      _prefetchQuiet(product_detail_page.loadLibrary),
+      _prefetchQuiet(account_page.loadLibrary),
+    ]);
   }
 
   static Future<void> _prefetchQuiet(Future<void> Function() load) async {
@@ -44,6 +75,11 @@ abstract final class HomeLazyRoutes {
   @visibleForTesting
   static void resetPrefetchForTests() {
     _hotPrefetchStarted = false;
+    _interactionArmed = false;
+    if (_pointerRouteAdded) {
+      GestureBinding.instance.pointerRouter.removeGlobalRoute(_onPrefetchPointer);
+      _pointerRouteAdded = false;
+    }
   }
   static Future<Widget> categoriesTab() async {
     await categories_page.loadLibrary();
@@ -81,6 +117,22 @@ abstract final class HomeLazyRoutes {
     Product product, {
     String? heroTag,
   }) async {
+    final id = product.productId?.trim() ?? '';
+    if (IbulRouter.usesRootRouter) {
+      if (id.isEmpty) {
+        debugPrint(
+          '[Nav] product click skipped: empty productId name=${product.name}',
+        );
+        return;
+      }
+      if (!context.mounted) return;
+      await IbulRouter.push(
+        context,
+        MarketplacePaths.product(id, slug: product.name),
+        extra: product,
+      );
+      return;
+    }
     await product_detail_page.loadLibrary();
     if (!context.mounted) return;
     await Navigator.of(context).push(
@@ -96,6 +148,10 @@ abstract final class HomeLazyRoutes {
   static Future<void> openLogin(BuildContext context) async {
     await login_page.loadLibrary();
     if (!context.mounted) return;
+    if (IbulRouter.usesRootRouter) {
+      await IbulRouter.push(context, '/login');
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => login_page.LoginPage(),
@@ -114,6 +170,21 @@ abstract final class HomeLazyRoutes {
   }) async {
     await business_detail_page.loadLibrary();
     if (!context.mounted) return;
+    final storeId = (business['seller_id'] ?? '').toString().trim();
+    if (IbulRouter.usesRootRouter &&
+        storeId.isNotEmpty &&
+        !fromQr &&
+        !unverifiedQrTableFlow) {
+      await IbulRouter.push(
+        context,
+        MarketplacePaths.store(
+          storeId,
+          slug: business['name']?.toString(),
+        ),
+        extra: business,
+      );
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => business_detail_page.BusinessDetailPage(
@@ -128,17 +199,33 @@ abstract final class HomeLazyRoutes {
     );
   }
 
-  static Future<void> openMap(BuildContext context) async {
+  static Future<void> openMap(
+    BuildContext context, {
+    String? query,
+    String? contentType,
+    String? brand,
+    String? model,
+  }) async {
     await map_page.loadLibrary();
     if (!context.mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => map_page.MapPage(),
+        builder: (_) => map_page.MapPage(
+          initialSearchQuery: query,
+          contentType: contentType,
+          vehicleBrand: brand,
+          vehicleModel: model,
+        ),
       ),
     );
   }
 
   static Future<void> openAccount(BuildContext context) async {
+    if (IbulRouter.usesRootRouter) {
+      if (IbulRouter.currentPath(context) == MarketplacePaths.account) return;
+      await IbulRouter.push(context, MarketplacePaths.account);
+      return;
+    }
     await account_page.loadLibrary();
     if (!context.mounted) return;
     await Navigator.of(context).push(
@@ -149,6 +236,13 @@ abstract final class HomeLazyRoutes {
   }
 
   static Future<void> openFavorites(BuildContext context) async {
+    if (IbulRouter.usesRootRouter) {
+      if (IbulRouter.currentPath(context) == MarketplacePaths.favorites) {
+        return;
+      }
+      await IbulRouter.push(context, MarketplacePaths.favorites);
+      return;
+    }
     await favorites_page.loadLibrary();
     if (!context.mounted) return;
     await Navigator.of(context).push(

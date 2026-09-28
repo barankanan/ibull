@@ -5,6 +5,8 @@ import '../core/constants.dart';
 import '../models/product_model.dart';
 import '../services/review_repository.dart';
 import '../viewmodels/product_detail_viewmodel.dart';
+import '../widgets/catalog_detail/catalog_detail_breadcrumb.dart';
+import '../widgets/catalog_detail/catalog_detail_card.dart';
 import '../widgets/web_header.dart';
 import '../widgets/product_detail/product_delivery_info.dart';
 import '../widgets/product_detail/product_image_slider.dart';
@@ -146,7 +148,6 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                 child: SingleChildScrollView(
                   child: Column(
                     children: [
-                      // Breadcrumb
                       if (isWide) _buildBreadcrumb(context),
                       // Main content
                       if (isWide)
@@ -248,49 +249,7 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
           ? '${product.name.substring(0, 40)}...'
           : product.name,
     ];
-
-    return Container(
-      width: double.infinity,
-      color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 8),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: IbulChrome.contentConstraints,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: parts.asMap().entries.map((entry) {
-                final i = entry.key;
-                final text = entry.value;
-                final isLast = i == parts.length - 1;
-                return Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      text,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isLast ? Colors.black54 : AppColors.primary,
-                        fontWeight: isLast ? FontWeight.w400 : FontWeight.w500,
-                      ),
-                    ),
-                    if (!isLast)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 6),
-                        child: Icon(
-                          Icons.chevron_right,
-                          size: 14,
-                          color: Colors.grey,
-                        ),
-                      ),
-                  ],
-                );
-              }).toList(),
-            ),
-          ),
-        ),
-      ),
-    );
+    return CatalogDetailBreadcrumb(parts: parts);
   }
 
   Widget _buildWideLayout(BuildContext context) {
@@ -303,13 +262,14 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _webProductBackButton(context),
-                const SizedBox(width: 10),
                 SizedBox(
                   width: 360,
                   child: Column(
                     children: [
-                      ProductImageSlider(heroTag: widget.heroTag),
+                      ProductImageSlider(
+                        heroTag: widget.heroTag,
+                        topLeftOverlay: _webProductBackButton(context),
+                      ),
                       const SizedBox(height: 14),
                       Expanded(
                         child: ProductTabsSection(
@@ -333,27 +293,27 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
   }
 
   Widget _webProductBackButton(BuildContext context) {
-    return Tooltip(
-      message: 'Geri',
-      child: Material(
-        color: AppColors.primary,
-        shape: const CircleBorder(),
-        elevation: 2,
-        shadowColor: AppColors.primary.withValues(alpha: 0.35),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: () {
-            final nav = Navigator.of(context);
-            if (nav.canPop()) {
-              nav.pop();
-              return;
-            }
-            HomeNavigation.openHome(context);
-          },
-          child: const SizedBox(
-            width: 40,
-            height: 40,
-            child: Center(
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: Tooltip(
+        message: 'Geri',
+        child: Material(
+          color: AppColors.primary,
+          shape: const CircleBorder(),
+          elevation: 2,
+          shadowColor: AppColors.primary.withValues(alpha: 0.35),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: () {
+              final nav = Navigator.of(context);
+              if (nav.canPop()) {
+                nav.pop();
+                return;
+              }
+              HomeNavigation.openHome(context);
+            },
+            child: const Center(
               child: Icon(
                 Icons.arrow_back_ios_new_rounded,
                 size: 16,
@@ -376,9 +336,8 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 600),
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
+        child: Column(
+          children: [
               ProductImageSlider(isMobile: true, heroTag: widget.heroTag),
               Padding(
                 padding: const EdgeInsets.all(16),
@@ -472,7 +431,6 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                 ),
               ),
             ],
-          ),
         ),
       ),
     );
@@ -492,22 +450,7 @@ class _CenterColumn extends StatelessWidget {
         product.variants != null && product.variants!.isNotEmpty;
 
     return SingleChildScrollView(
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade200),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(
-                alpha: 0.05,
-              ), // withValues -> withOpacity
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
+      child: CatalogDetailCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

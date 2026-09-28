@@ -3,14 +3,17 @@ import 'package:flutter/material.dart';
 
 import '../features/products/models/product_filter_models.dart';
 import '../models/product_model.dart';
-import '../screens/ai_chat_page.dart';
-import '../screens/category_products_page.dart';
-import '../screens/coming_soon/coming_soon_catalog.dart';
-import '../screens/feature_coming_soon_page.dart';
-import '../screens/lists_page.dart';
-import '../screens/map_page.dart';
-import '../screens/visual_search_selection_page.dart';
-import '../services/database_helper.dart';
+import '../screens/ai_chat_page.dart' deferred as ai_chat_page;
+import '../screens/category_products_page.dart' deferred as category_products_page;
+import '../screens/coming_soon/coming_soon_catalog.dart'
+    deferred as coming_soon_catalog;
+import '../screens/feature_coming_soon_page.dart'
+    deferred as feature_coming_soon_page;
+import '../screens/lists_page.dart' deferred as lists_page;
+import '../screens/map_page.dart' deferred as map_page;
+import '../screens/visual_search_selection_page.dart'
+    deferred as visual_search_page;
+import '../services/database_helper.dart' deferred as database_helper;
 
 enum HomeMobileShortcutType {
   nearbyLocation,
@@ -154,31 +157,41 @@ abstract final class HomeMobileShortcutNavigator {
         }
         logTap(action, target: 'MapPage');
         callbacks.showAddressSelection?.call();
+        await map_page.loadLibrary();
+        if (!context.mounted) return;
         await Navigator.of(context, rootNavigator: true).push(
-          MaterialPageRoute<void>(builder: (_) => const MapPage()),
+          MaterialPageRoute<void>(builder: (_) => map_page.MapPage()),
         );
       case HomeMobileShortcutType.createList:
         logTap(action, target: 'ListsPage');
+        await lists_page.loadLibrary();
+        if (!context.mounted) return;
         await Navigator.of(context, rootNavigator: true).push(
-          MaterialPageRoute<void>(builder: (_) => const ListsPage()),
+          MaterialPageRoute<void>(builder: (_) => lists_page.ListsPage()),
         );
       case HomeMobileShortcutType.visualSearch:
         logTap(action, target: 'VisualSearchSelectionPage');
+        await visual_search_page.loadLibrary();
+        if (!context.mounted) return;
         await Navigator.of(context, rootNavigator: true).push(
           MaterialPageRoute<void>(
-            builder: (_) => const VisualSearchSelectionPage(),
+            builder: (_) => visual_search_page.VisualSearchSelectionPage(),
           ),
         );
       case HomeMobileShortcutType.productBreakdown:
         logTap(action, target: 'VisualSearchSelectionPage');
+        await visual_search_page.loadLibrary();
+        if (!context.mounted) return;
         await Navigator.of(context, rootNavigator: true).push(
           MaterialPageRoute<void>(
-            builder: (_) => const VisualSearchSelectionPage(),
+            builder: (_) => visual_search_page.VisualSearchSelectionPage(),
           ),
         );
       case HomeMobileShortcutType.comingSoonShelf:
         logTap(action, target: 'ComingSoonShelfPage');
-        await ComingSoonCatalog.openShelf(context);
+        await coming_soon_catalog.loadLibrary();
+        if (!context.mounted) return;
+        await coming_soon_catalog.ComingSoonCatalog.openShelf(context);
       case HomeMobileShortcutType.personalized:
         logTap(action, target: 'scrollPersonalized');
         callbacks.scrollToPersonalizedSection?.call();
@@ -187,8 +200,10 @@ abstract final class HomeMobileShortcutNavigator {
         await _openCategory(context, category: action.categorySlug ?? 'Yemek');
       case HomeMobileShortcutType.aiAssistant:
         logTap(action, target: 'AIChatPage');
+        await ai_chat_page.loadLibrary();
+        if (!context.mounted) return;
         await Navigator.of(context, rootNavigator: true).push(
-          MaterialPageRoute<void>(builder: (_) => const AIChatPage()),
+          MaterialPageRoute<void>(builder: (_) => ai_chat_page.AIChatPage()),
         );
     }
   }
@@ -197,9 +212,11 @@ abstract final class HomeMobileShortcutNavigator {
     BuildContext context,
     HomeMobileShortcutAction action,
   ) async {
+    await feature_coming_soon_page.loadLibrary();
+    if (!context.mounted) return;
     await Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
-        builder: (_) => FeatureComingSoonPage(
+        builder: (_) => feature_coming_soon_page.FeatureComingSoonPage(
           title: action.title,
           description: '${action.title} özelliği üzerinde çalışıyoruz. '
               'Yakında aktif olacak.',
@@ -213,7 +230,10 @@ abstract final class HomeMobileShortcutNavigator {
     required String category,
   }) async {
     try {
-      final page = await DatabaseHelper.instance.getCategoryProductsPaged(
+      await database_helper.loadLibrary();
+      if (!context.mounted) return;
+      final page = await database_helper.DatabaseHelper.instance
+          .getCategoryProductsPaged(
         category: category,
         limit: 24,
       );
@@ -237,9 +257,11 @@ abstract final class HomeMobileShortcutNavigator {
         meta[id] = ProductFilterMeta(stock: item.stock);
       }
 
+      await category_products_page.loadLibrary();
+      if (!context.mounted) return;
       await Navigator.of(context, rootNavigator: true).push(
         MaterialPageRoute<void>(
-          builder: (_) => CategoryProductsPage(
+          builder: (_) => category_products_page.CategoryProductsPage(
             category: category,
             subCategory: 'HEPSİ',
             products: products,

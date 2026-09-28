@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
-import '../core/auth/user_identity.dart';
 import '../core/constants.dart';
-import '../core/app_state.dart';
+import '../features/coupon/data/coupon_repository.dart';
+import '../features/coupon/domain/coupon_enums.dart';
+import '../features/coupon/screens/customer/coupon_discover_page.dart';
 import '../services/coupon_service.dart';
+import '../features/coupon/widgets/reward_wheel_floating_button.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
@@ -19,92 +20,60 @@ class CouponsPage extends StatefulWidget {
 class _CouponsPageState extends State<CouponsPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-
-  // Mock Data for GUEST Coupons
-  final List<Map<String, dynamic>> _guestActiveCoupons = [];
-
-  final List<Map<String, dynamic>> _guestExpiredCoupons = [];
+  final _couponRepository = CouponRepository();
+  List<Map<String, dynamic>> _activeCoupons = const [];
+  List<Map<String, dynamic>> _expiredCoupons = const [];
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-
-    // Listen to coupon service updates
-    CouponService().addListener(_updateCoupons);
+    CouponService().addListener(_loadCoupons);
+    _loadCoupons();
   }
 
   @override
   void dispose() {
-    CouponService().removeListener(_updateCoupons);
+    CouponService().removeListener(_loadCoupons);
     _tabController.dispose();
     super.dispose();
   }
 
-  void _updateCoupons() {
-    if (mounted) setState(() {});
-  }
-
-  // Combine static and won coupons
-  List<Map<String, dynamic>> get _allActiveCoupons {
-    final appState = Provider.of<AppState>(context, listen: false);
-    final isGuestUser = UserIdentity.isGuest(appState.currentUser);
-
-    // If NOT guest (Real User), return empty list (or only won coupons if logic allows)
-    // Assuming new real users start empty.
-    if (!isGuestUser) {
-      // Still show WON coupons from Lucky Wheel for real users
-      final wonMapped = CouponService().wonCoupons
-          .map(
-            (c) => {
-              'id': c.id,
-              'code': c.code,
-              'title': c.title,
-              'description': c.description,
-              'detail': 'Şans Çarkı ödülü.',
-              'discountAmount': c.discountAmount,
-              'isPercentage': c.isPercentage,
-              'minPrice': c.minPrice,
-              'expiryDate': c.expiryDate,
-              'color': c.color,
-              'iconColor': c.iconColor,
-            },
-          )
-          .toList();
-      return wonMapped;
+  Future<void> _loadCoupons() async {
+    try {
+      final mine = await _couponRepository.listMine();
+      final mapped = mine.map((item) {
+        final campaign = item.campaign;
+        return {
+          'id': item.id,
+          'code': campaign?.code ?? '',
+          'title': campaign?.name ?? 'Kupon',
+          'description': campaign?.discountLabel ?? '',
+          'detail': item.source == 'wheel' ? 'Hediye çarkı ödülü.' : 'Kupon',
+          'discountAmount': campaign?.discountValue ?? 0,
+          'isPercentage': campaign?.discountType == CouponDiscountType.percent,
+          'minPrice': campaign?.minOrderAmount ?? 0,
+          'expiryDate': campaign == null
+              ? ''
+              : '${campaign.endsAt.toLocal().day}.${campaign.endsAt.toLocal().month}.${campaign.endsAt.toLocal().year}',
+          'color': AppColors.softPurple,
+          'iconColor': AppColors.primary,
+          'usable': item.isUsable,
+        };
+      }).toList();
+      if (!mounted) return;
+      setState(() {
+        _activeCoupons = mapped.where((row) => row['usable'] == true).toList();
+        _expiredCoupons = mapped.where((row) => row['usable'] != true).toList();
+      });
+    } catch (_) {
+      if (mounted) setState(() {});
     }
-
-    // For Guest, show mock data
-    final wonMapped = CouponService().wonCoupons
-        .map(
-          (c) => {
-            'id': c.id,
-            'code': c.code,
-            'title': c.title,
-            'description': c.description,
-            'detail': 'Şans Çarkı ödülü.',
-            'discountAmount': c.discountAmount,
-            'isPercentage': c.isPercentage,
-            'minPrice': c.minPrice,
-            'expiryDate': c.expiryDate,
-            'color': c.color,
-            'iconColor': c.iconColor,
-          },
-        )
-        .toList();
-
-    return [...wonMapped, ..._guestActiveCoupons];
   }
 
-  List<Map<String, dynamic>> get _allExpiredCoupons {
-    final appState = Provider.of<AppState>(context, listen: false);
-    final isGuestUser = UserIdentity.isGuest(appState.currentUser);
+  List<Map<String, dynamic>> get _allActiveCoupons => _activeCoupons;
 
-    if (!isGuestUser) {
-      return []; // Empty for real users initially
-    }
-    return _guestExpiredCoupons;
-  }
+  List<Map<String, dynamic>> get _allExpiredCoupons => _expiredCoupons;
 
   @override
   Widget build(BuildContext context) {
@@ -277,6 +246,28 @@ class _CouponsPageState extends State<CouponsPage>
         elevation: 0,
         centerTitle: true,
         iconTheme: const IconThemeData(color: Colors.black),
+        actions: [
+          IconButton(
+            tooltip: 'Kuponları Keşfet',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CouponDiscoverPage()),
+              ).then((_) => _loadCoupons());
+            },
+            icon: const Icon(Icons.travel_explore_outlined),
+          ),
+          IconButton(
+            tooltip: 'Hediye Çarkı',
+            onPressed: () {
+              RewardWheelFloatingButton.open(
+                context,
+                onSpinComplete: _loadCoupons,
+              );
+            },
+            icon: const Icon(Icons.casino_outlined),
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           labelColor: AppColors.primary,

@@ -65,6 +65,7 @@ class _IbulOpportunityShortcutsSectionState
           (icon: Icons.checkroom, title: 'Moda'),
           (icon: Icons.sports_soccer, title: 'Spor'),
           (icon: Icons.auto_stories, title: 'Kitap'),
+          (icon: Icons.directions_car_outlined, title: 'Araç'),
         ];
     }
   }

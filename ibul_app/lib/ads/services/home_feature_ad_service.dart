@@ -163,20 +163,16 @@ class HomeFeatureAdService {
     try {
       if (!includeExpired) {
         final fromView = await _fetchApprovedFromActiveView();
-        if (fromView.isNotEmpty) {
-          if (kDebugMode) {
-            debugPrint(
-              'HomeFeatureAdService.getApprovedHomeFeatureAds: '
-              'active_home_feature_ads count=${fromView.length}',
-            );
-          }
+        if (kDebugMode) {
           debugPrint(
-            '[HomeAds] source=active_home_feature_ads rows=${fromView.length}',
+            'HomeFeatureAdService.getApprovedHomeFeatureAds: '
+            'active_home_feature_ads count=${fromView.length}',
           );
-          return fromView;
         }
-        // View boş → campaigns tablosuna fallback (D.2).
-        debugPrint('[HomeAds] hidden reason=view_empty fallback=campaigns');
+        debugPrint(
+          '[HomeAds] source=active_home_feature_ads rows=${fromView.length}',
+        );
+        return fromView;
       }
 
       var query = _client

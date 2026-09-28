@@ -13,6 +13,8 @@ enum SellerModule {
   reviews,
   support,
   downloadApp,
+  vehicles,
+  contracts,
 }
 
 enum SellerDashboardRangePreset {

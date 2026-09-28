@@ -40,6 +40,12 @@ import '../services/waiter_order_request_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../features/seller/achievements/helpers/seller_badge_public_display.dart';
 import '../features/seller/achievements/widgets/seller_badge_widgets.dart';
+import '../features/seller/domain/store_vertical.dart';
+import '../features/seller/storefront/storefront_catalog.dart';
+import '../features/seller/storefront/storefront_copy.dart';
+import '../features/seller/storefront/storefront_vehicle_grid.dart';
+import '../features/vehicle/models/vehicle_listing.dart';
+import '../features/vehicle/models/vehicle_enums.dart';
 import 'chat_page.dart';
 import 'list_detail_page.dart';
 import '../utils/table_labels.dart';
@@ -139,6 +145,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
   late List<String> _categories;
   late List<Product> _allProducts;
+  List<VehicleListing> _vehicleListings = const [];
 
   /// Completer that resolves once [_fetchStoreProducts] finishes (or fails).
   /// Passed to [_FoodOrderDialog] so it can await the SAME in-flight request
@@ -147,6 +154,29 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
   String _normalize(String s) {
     return TextNormalizer.normalize(s);
+  }
+
+  StoreVertical get _storeVertical =>
+      resolveStoreVertical(storeRecordCategory(widget.business));
+
+  bool get _isGalleryStorefront =>
+      StorefrontCatalog.usesVehicleCatalog(_storeVertical);
+
+  StorefrontCopy get _storefrontCopy => StorefrontCopy.of(_storeVertical);
+
+  List<VehicleListing> get _filteredVehicles {
+    final copy = _storefrontCopy;
+    final selected = (_selectedCategoryIndex >= 0 &&
+            _selectedCategoryIndex < _categories.length)
+        ? _categories[_selectedCategoryIndex]
+        : 'Tümü';
+    return StorefrontCatalog.filterVehicles(
+      _vehicleListings,
+      query: _debouncedStoreSearchQuery,
+      category: selected,
+      saleLabel: copy.saleSection,
+      rentalLabel: copy.rentalSection,
+    );
   }
 
   String _productListsSignature(Iterable<ProductList> lists) {
@@ -381,6 +411,39 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     }
   }
 
+  Future<void> _fetchStoreVehicles() async {
+    setState(() => _isLoadingProducts = true);
+    try {
+      var sellerId =
+          widget.business['seller_id']?.toString().trim() ??
+          widget.business['id']?.toString().trim() ??
+          '';
+      final uuid = RegExp(
+        r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+      );
+      if (!uuid.hasMatch(sellerId)) {
+        final name = widget.business['name']?.toString() ?? '';
+        sellerId =
+            (await StoreService().getSellerIdByBusinessName(name))?.trim() ??
+            '';
+      }
+      final listings = sellerId.isEmpty
+          ? const <VehicleListing>[]
+          : await StorefrontCatalog.loadVehicles(sellerId);
+      if (!mounted) return;
+      setState(() {
+        _vehicleListings = listings;
+        _categories = _extractCategories();
+        _isLoadingProducts = false;
+      });
+      if (!_productCompleter.isCompleted) _productCompleter.complete([]);
+    } catch (error) {
+      debugPrint('Error fetching store vehicles: $error');
+      if (!_productCompleter.isCompleted) _productCompleter.complete([]);
+      if (mounted) setState(() => _isLoadingProducts = false);
+    }
+  }
+
   List<Product> get _filteredProducts {
     if (_debouncedStoreSearchQuery.isEmpty) return _allProducts;
     final query = _debouncedStoreSearchQuery.toLowerCase();
@@ -438,8 +501,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     }
     _categories = _extractCategories();
     unawaited(_loadStoreFollowState());
-    _fetchStoreProducts();
-    _loadStoreTables();
+    if (_isGalleryStorefront) {
+      unawaited(_fetchStoreVehicles());
+    } else {
+      _fetchStoreProducts();
+      _loadStoreTables();
+    }
     _loadStorePublicInfo();
 
     if (widget.fromQr) {
@@ -1157,10 +1224,31 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
   Future<void> _loadStorePublicInfo() async {
     final name = widget.business['name']?.toString();
-    if (name == null || name.isEmpty) return;
     try {
-      final info = await StoreService().getStorePublicInfoByBusinessName(name);
-      if (mounted) setState(() => _storePublicInfo = info);
+      Map<String, dynamic>? info;
+      if (name != null && name.isNotEmpty && name != 'Galeri') {
+        info = await StoreService().getStorePublicInfoByBusinessName(name);
+      } else {
+        final sellerId =
+            widget.business['seller_id']?.toString() ??
+            widget.business['id']?.toString();
+        if (sellerId != null && sellerId.isNotEmpty) {
+          info = await StoreService().getStorePublicInfoById(sellerId);
+        }
+      }
+      if (!mounted || info == null) return;
+      final publicInfo = info;
+      final resolvedName =
+          publicInfo['businessName']?.toString() ??
+          publicInfo['business_name']?.toString();
+      final logo = publicInfo['logoUrl'] ?? publicInfo['logo_url'];
+      setState(() {
+        _storePublicInfo = publicInfo;
+        if (resolvedName != null && resolvedName.isNotEmpty) {
+          widget.business['name'] = resolvedName;
+        }
+        if (logo != null) widget.business['logo_url'] = logo;
+      });
     } catch (_) {}
   }
 
@@ -1695,6 +1783,13 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   }
 
   List<String> _extractCategories() {
+    if (_isGalleryStorefront) {
+      return StorefrontCatalog.vehicleCategories(
+        items: _vehicleListings,
+        saleLabel: _storefrontCopy.saleSection,
+        rentalLabel: _storefrontCopy.rentalSection,
+      );
+    }
     final categorySet = <String>{};
 
     // "Tümü" her zaman ilk sırada
@@ -1978,7 +2073,9 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                                 child: TextField(
                                   onChanged: _handleStoreSearchChanged,
                                   decoration: InputDecoration(
-                                    hintText: 'Mağazada Ara',
+                                    hintText: _isGalleryStorefront
+                                        ? _storefrontCopy.searchHint
+                                        : 'Mağazada Ara',
                                     hintStyle: TextStyle(
                                       color: Colors.grey[500],
                                       fontSize: 13,
@@ -2069,11 +2166,11 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                         fontSize: 14,
                       ),
                       dividerColor: Colors.transparent,
-                      tabs: const [
-                        Tab(text: 'Ana Sayfa'),
-                        Tab(text: 'Tüm Ürünler'),
-                        Tab(text: 'Listeler'),
-                        Tab(text: 'Satıcı'),
+                      tabs: [
+                        const Tab(text: 'Ana Sayfa'),
+                        Tab(text: _storefrontCopy.catalogTab),
+                        const Tab(text: 'Listeler'),
+                        const Tab(text: 'Satıcı'),
                       ],
                     ),
                   ),
@@ -2295,7 +2392,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                         },
                       ),
                       _buildWebNavLink(
-                        'Tüm Ürünler',
+                        _storefrontCopy.catalogTab,
                         _activeWebTab == 'Tüm Ürünler',
                         onTap: () {
                           setState(() => _activeWebTab = 'Tüm Ürünler');
@@ -2347,14 +2444,16 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: TextField(
-                          decoration: const InputDecoration(
-                            hintText: 'Mağazada ara',
-                            prefixIcon: Icon(
+                          decoration: InputDecoration(
+                            hintText: _isGalleryStorefront
+                                ? _storefrontCopy.searchHint
+                                : 'Mağazada ara',
+                            prefixIcon: const Icon(
                               Icons.search,
                               color: Colors.grey,
                             ), // Sola eklendi, screenshotta sağda ama standart UI
                             border: InputBorder.none,
-                            contentPadding: EdgeInsets.symmetric(vertical: 8),
+                            contentPadding: const EdgeInsets.symmetric(vertical: 8),
                           ),
                           onChanged: _handleStoreSearchChanged,
                         ),
@@ -2417,7 +2516,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
                             // Öne Çıkan Ürünler Grid
                             Text(
-                              'Öne Çıkan Ürünler',
+                              _storefrontCopy.featuredSection,
                               key: _allProductsKey,
                               style: const TextStyle(
                                 fontSize: 20,
@@ -2428,11 +2527,16 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                             // _buildCategoryList(), // Removed as requested
                             // const SizedBox(height: 24),
                             _buildProductGrid(), // Reusing existing grid, responsive logic inside handles sizing
+                            if (_isGalleryStorefront) ...[
+                              ..._galleryHomeExtraSections(web: true),
+                            ],
                             const SizedBox(height: 40),
 
                             // Footer Features Banner
-                            _buildWebFeaturesBanner(),
-                            const SizedBox(height: 40),
+                            if (!_isGalleryStorefront) ...[
+                              _buildWebFeaturesBanner(),
+                              const SizedBox(height: 40),
+                            ],
                           ],
                         ),
                       ),
@@ -2857,7 +2961,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  "${_allProducts.length}+ Ürün",
+                  "${(_isGalleryStorefront ? _vehicleListings.length : _allProducts.length)}+ ${_storefrontCopy.catalogCountLabel}",
                   style: TextStyle(
                     fontSize: 14,
                     color: Colors.grey[600],
@@ -3217,8 +3321,83 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     );
   }
 
+  Widget _storefrontSectionTitle(String title, {Key? key, bool web = false}) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: web ? 0 : 16),
+      child: Text(
+        title,
+        key: key,
+        style: TextStyle(
+          fontSize: web ? 20 : 16,
+          fontWeight: FontWeight.bold,
+          color: Colors.black87,
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _galleryHomeExtraSections({required bool web}) {
+    final copy = _storefrontCopy;
+    final sale = _filteredVehicles
+        .where((row) => row.listingType.allowsSale)
+        .toList();
+    final rental = _filteredVehicles
+        .where((row) => row.listingType.allowsRental)
+        .toList();
+    return [
+      if (sale.isNotEmpty) ...[
+        SizedBox(height: web ? 32 : 24),
+        _storefrontSectionTitle(copy.saleSection, web: web),
+        SizedBox(height: web ? 16 : 12),
+        StorefrontVehicleGrid(
+          items: sale,
+          copy: copy,
+          loading: false,
+          catalogEmpty: false,
+        ),
+      ],
+      if (rental.isNotEmpty) ...[
+        SizedBox(height: web ? 32 : 24),
+        _storefrontSectionTitle(copy.rentalSection, web: web),
+        SizedBox(height: web ? 16 : 12),
+        StorefrontVehicleGrid(
+          items: rental,
+          copy: copy,
+          loading: false,
+          catalogEmpty: false,
+        ),
+      ],
+    ];
+  }
+
+  Widget _buildGalleryHomeTab() {
+    final copy = _storefrontCopy;
+    final featured = _filteredVehicles.take(8).toList();
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 16),
+          _buildAnnouncementBanners(),
+          const SizedBox(height: 20),
+          _storefrontSectionTitle(copy.featuredSection),
+          const SizedBox(height: 12),
+          StorefrontVehicleGrid(
+            items: featured,
+            copy: copy,
+            loading: _isLoadingProducts,
+            catalogEmpty: _vehicleListings.isEmpty,
+          ),
+          ..._galleryHomeExtraSections(web: false),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
   // ANA SAYFA TAB
   Widget _buildAnaSayfaTab() {
+    if (_isGalleryStorefront) return _buildGalleryHomeTab();
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3691,6 +3870,15 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
   // Product Grid Widget — delegate/props aligned with SearchResultsPage grids.
   Widget _buildProductGrid({double? aspectRatioOverride}) {
+    if (_isGalleryStorefront) {
+      return StorefrontVehicleGrid(
+        items: _filteredVehicles,
+        copy: _storefrontCopy,
+        loading: _isLoadingProducts,
+        catalogEmpty: _vehicleListings.isEmpty,
+        aspectRatioOverride: aspectRatioOverride,
+      );
+    }
     if (_isLoadingProducts) {
       return const Center(
         child: Padding(

@@ -29,13 +29,7 @@ class WebHomeShell extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                 children: const [
-                  SkeletonLoading(width: double.infinity, height: 44, borderRadius: 12),
-                  SizedBox(height: 12),
-                  SkeletonLoading(width: double.infinity, height: 72, borderRadius: 12),
-                  SizedBox(height: 12),
-                  SkeletonLoading(width: double.infinity, height: 160, borderRadius: 12),
-                  SizedBox(height: 12),
-                  SkeletonLoading(width: double.infinity, height: 220, borderRadius: 12),
+                  HomeStorefrontSkeleton(),
                 ],
               ),
             ),

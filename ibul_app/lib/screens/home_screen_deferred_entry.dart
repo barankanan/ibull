@@ -8,10 +8,12 @@ import 'home_screen_core.dart';
 Widget buildDeferredHomeScreen({
   int initialIndex = 0,
   String? initialCategory,
+  String? initialSearchQuery,
 }) {
   return ResponsiveHomeScreen(
     initialIndex: initialIndex,
     initialCategory: initialCategory,
+    initialSearchQuery: initialSearchQuery,
   );
 }
 
@@ -20,10 +22,12 @@ class ResponsiveHomeScreen extends StatelessWidget {
     super.key,
     this.initialIndex = 0,
     this.initialCategory,
+    this.initialSearchQuery,
   });
 
   final int initialIndex;
   final String? initialCategory;
+  final String? initialSearchQuery;
 
   static const double desktopBreakpoint = IbulChrome.web;
 
@@ -44,6 +48,7 @@ class ResponsiveHomeScreen extends StatelessWidget {
     return HomeScreenCore(
       initialIndex: initialIndex,
       initialCategory: initialCategory,
+      initialSearchQuery: initialSearchQuery,
     );
   }
 }

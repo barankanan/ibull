@@ -69,11 +69,20 @@ void main() {
 
     final pdp = File('lib/screens/product_detail_page.dart').readAsStringSync();
     expect(pdp, contains('_webProductBackButton'));
+    expect(pdp, contains('topLeftOverlay: _webProductBackButton(context)'));
     expect(pdp, isNot(contains('showBackButton: true')));
     expect(pdp, contains('color: AppColors.primary'));
     expect(pdp, contains('color: Colors.white'));
     expect(pdp, contains('SizedBox(width: 32)'));
     expect(pdp, contains('IbulChrome.contentConstraints'));
+
+    final slider =
+        File('lib/widgets/product_detail/product_image_slider.dart')
+            .readAsStringSync();
+    expect(slider, contains('topLeftOverlay'));
+    expect(slider, contains('left: 10'));
+    expect(slider, contains('top: 10'));
+    expect(slider, contains('_buildVideoPill(context, viewModel)'));
 
     final cartBar =
         File('lib/widgets/product_detail/product_bottom_bar.dart').readAsStringSync();
@@ -101,7 +110,7 @@ void main() {
     expect(find.text('iBul'), findsOneWidget);
     expect(find.byTooltip('Harita'), findsOneWidget);
     expect(find.byTooltip('Favorilerim'), findsOneWidget);
-    expect(find.bySemanticsLabel('iBul ana sayfa'), findsOneWidget);
+    expect(find.bySemanticsLabel('Ana sayfaya git'), findsOneWidget);
     expect(find.bySemanticsLabel('Kamera'), findsOneWidget);
     expect(find.bySemanticsLabel('Ara'), findsOneWidget);
     expect(tester.takeException(), isNull);

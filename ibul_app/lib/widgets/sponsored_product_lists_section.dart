@@ -199,6 +199,54 @@ class _SponsoredProductListsSectionState
       return const _SponsoredListsSectionSkeleton();
     }
 
+    if (_loadState.shouldShowError) {
+      HomeSkeletonDiagnostics.hide(
+        source: 'sponsored_lists',
+        reason: 'error',
+      );
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.red.shade50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.red.shade100),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Sponsorlu listeler şu an yüklenemedi.',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.red.shade900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ElevatedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _loadState = SectionLoadState.beginLoading();
+                    _skeletonTimedOut = false;
+                  });
+                  unawaited(_loadLists());
+                },
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Tekrar Dene'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade100,
+                  foregroundColor: Colors.red.shade900,
+                  elevation: 0,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (_lists.isEmpty) {
       HomeSkeletonDiagnostics.hide(
         source: 'sponsored_lists',
@@ -206,17 +254,6 @@ class _SponsoredProductListsSectionState
       );
       return const SizedBox.shrink();
     }
-
-    if (_loadState.shouldShowError) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Text(
-          'Sponsorlu listeler şu an yüklenemedi.',
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-        ),
-      );
-    }
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

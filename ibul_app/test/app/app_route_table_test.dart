@@ -24,7 +24,7 @@ void main() {
     expect(full, contains('IbulMaterialApp'));
     expect(full, contains('includeAuthRoutes: false'));
     expect(root, contains('IbulMaterialApp'));
-    expect(root, contains('includeAuthRoutes: false'));
+    expect(root, contains('includeAuthRoutes: true'));
     final shell = File('lib/app/ibul_material_app.dart').readAsStringSync();
     expect(shell, contains('MaterialApp.router'));
     expect(shell, contains('createIbulGoRouter'));

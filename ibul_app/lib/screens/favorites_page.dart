@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
@@ -9,14 +11,17 @@ import '../models/product_model.dart';
 import '../models/product_list_model.dart';
 import '../responsive/breakpoints.dart';
 import '../core/home_navigation.dart';
+import 'home_lazy_routes.dart';
 import 'list_detail_page.dart';
-import 'product_detail_page.dart';
 import 'login_page.dart';
 import '../widgets/account_search_filter_row.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/product_card.dart';
 import '../widgets/premium_interactions.dart';
+import '../features/vehicle/models/vehicle_listing.dart';
+import '../features/vehicle/services/vehicle_service.dart';
+import '../features/vehicle/widgets/vehicle_card.dart';
 import '../widgets/restaurant_order/product_quick_view_dialog.dart';
 import '../widgets/account_sidebar.dart';
 import '../widgets/ibul_page_state.dart';
@@ -34,6 +39,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
   final List<String> _tabs = ['Beğeniler', 'Listelerim', 'Öneriler'];
   final AppState _appState = AppState();
   final FavoriteState _favoriteState = FavoriteState();
+  List<VehicleListing> _vehicleFavorites = [];
 
   void _showLoginRequiredDialog(BuildContext context) {
     showDialog(
@@ -63,12 +69,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
   void _openProductDetail(Product product) {
     InteractionFeedback.lightImpact(channel: 'favorites_product_open');
-    Navigator.push(
-      context,
-      buildAppPageRoute<void>(
-        builder: (context) => ProductDetailPage(product: product),
-      ),
-    );
+    HomeLazyRoutes.openProductDetail(context, product);
   }
 
   void _showProductQuickView(Product product) {
@@ -90,6 +91,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
     _appState.addListener(_onAppStateChanged);
     _favoriteState.addListener(_onAppStateChanged);
     _appState.refreshCommunityLists();
+    unawaited(_loadVehicleFavorites());
   }
 
   @override
@@ -103,6 +105,35 @@ class _FavoritesPageState extends State<FavoritesPage> {
     if (mounted) {
       setState(() {});
     }
+  }
+
+  Future<void> _loadVehicleFavorites() async {
+    if (!_appState.isLoggedIn) return;
+    try {
+      final list = await VehicleService.instance.favorites.listListings();
+      if (!mounted) return;
+      setState(() => _vehicleFavorites = list);
+    } catch (_) {}
+  }
+
+  bool get _hasFavoriteItems =>
+      _appState.favorites.isNotEmpty || _vehicleFavorites.isNotEmpty;
+
+  int get _favoriteItemCount =>
+      _appState.favorites.length + _vehicleFavorites.length;
+
+  Widget _buildFavoriteGridItem(int index, {required bool web}) {
+    final products = _appState.favorites;
+    if (index < products.length) {
+      return web
+          ? ProductCard(product: products[index], margin: EdgeInsets.zero)
+          : _buildProductCard(products[index]);
+    }
+    return VehicleCard(
+      listing: _vehicleFavorites[index - products.length],
+      storefront: true,
+      margin: EdgeInsets.zero,
+    );
   }
 
   void _showCreateListDialog() {
@@ -421,9 +452,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
   }
 
   Widget _buildWebFavoritesGrid() {
-    final favorites = _appState.favorites;
-
-    if (favorites.isEmpty) {
+    if (!_hasFavoriteItems) {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(60),
@@ -471,11 +500,9 @@ class _FavoritesPageState extends State<FavoritesPage> {
         crossAxisSpacing: 16, // Match Home Page spacing
         mainAxisSpacing: 16, // Match Home Page spacing
       ),
-      itemCount: favorites.length,
+      itemCount: _favoriteItemCount,
       itemBuilder: (context, index) {
-        final product = favorites[index];
-        // Use ProductCard widget with zero margin to match Home Page
-        return ProductCard(product: product, margin: EdgeInsets.zero);
+        return _buildFavoriteGridItem(index, web: true);
       },
     );
   }
@@ -910,9 +937,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
   }
 
   Widget _buildFavoritesGrid() {
-    final favorites = _appState.favorites;
-
-    if (favorites.isEmpty) {
+    if (!_hasFavoriteItems) {
       return const IbulPageState.empty(
         icon: Icons.favorite_border,
         title: 'Henüz beğenilen ürün yok',
@@ -936,10 +961,9 @@ class _FavoritesPageState extends State<FavoritesPage> {
             crossAxisSpacing: 10,
             mainAxisSpacing: 12,
           ),
-          itemCount: favorites.length,
+          itemCount: _favoriteItemCount,
           itemBuilder: (context, index) {
-            final product = favorites[index];
-            return _buildProductCard(product);
+            return _buildFavoriteGridItem(index, web: false);
           },
         );
       },

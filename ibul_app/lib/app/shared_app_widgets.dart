@@ -7,7 +7,8 @@ import '../core/providers/connectivity_provider.dart';
 import '../core/qr_initial_params.dart';
 import '../core/web_seo.dart';
 import '../features/investor/investor_route_paths.dart';
-import '../screens/qr_entry_screen.dart';
+import '../screens/qr_entry_screen.dart' deferred as qr_entry;
+import '../widgets/deferred_module_screen.dart';
 import 'app_bootstrap.dart';
 import 'seller_routes.dart';
 
@@ -62,6 +63,7 @@ Widget buildSafeHome({
   Object? arguments,
   int initialIndex = 0,
   String? initialCategory,
+  String? initialSearchQuery,
 }) {
   final homeArgs = HomeRouteArgs.from(arguments);
   debugPrint(
@@ -74,6 +76,7 @@ Widget buildSafeHome({
           ? homeArgs.initialIndex
           : initialIndex,
       initialCategory: homeArgs.initialCategory ?? initialCategory,
+      initialSearchQuery: homeArgs.initialSearchQuery ?? initialSearchQuery,
     ),
   );
 }
@@ -82,7 +85,11 @@ Widget buildQrEntry({required String source}) {
   debugPrint(
     '[Routing] QR route opened — source=$source ${QrInitialParams.debugState}',
   );
-  return const QrEntryScreen();
+  return DeferredModuleScreen(
+    moduleName: 'qr_entry',
+    loadLibrary: qr_entry.loadLibrary,
+    builder: () => qr_entry.QrEntryScreen(),
+  );
 }
 
 /// Initial [MaterialApp.home] for all three shells.
@@ -143,6 +150,38 @@ class SeoRouteObserver extends NavigatorObserver {
 
   _SeoRouteConfig _seoForRoute(String? routeName) {
     final path = (routeName ?? '').split('?').first;
+    if (path.startsWith('/urun/')) {
+      return _SeoRouteConfig(
+        title: 'Ürün | İBUL',
+        description: 'İBUL ürün detayı.',
+        path: path,
+      );
+    }
+    if (path.startsWith('/arac/')) {
+      return _SeoRouteConfig(
+        title: 'Araç | İBUL',
+        description: 'İBUL araç ilanı.',
+        path: path,
+      );
+    }
+    if (path.startsWith('/magaza/')) {
+      return _SeoRouteConfig(
+        title: 'Mağaza | İBUL',
+        description: 'İBUL mağaza sayfası.',
+        path: path,
+      );
+    }
+    if (path == '/hesabim' || path.startsWith('/hesabim/')) {
+      return _SeoRouteConfig(
+        title: path.contains('kiralama')
+            ? 'Kiralamalarım | İBUL'
+            : path.contains('siparis')
+            ? 'Siparişlerim | İBUL'
+            : 'Hesabım | İBUL',
+        description: 'İBUL hesap yönetimi.',
+        path: path,
+      );
+    }
     if (path.startsWith('/ihiz/track/')) {
       return const _SeoRouteConfig(
         title: 'İHIZ Teslimat Takibi',

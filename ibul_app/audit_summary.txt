@@ -1,0 +1,212 @@
+=== RLS STATUS ===
+addresses: RLS=true, Force=false
+admin_finance_settings: RLS=true, Force=false
+campaigns: RLS=true, Force=false
+finance_cash_accounts: RLS=true, Force=false
+finance_cash_movements: RLS=true, Force=false
+finance_company_settings: RLS=true, Force=false
+finance_debt_payments: RLS=true, Force=false
+finance_debts: RLS=true, Force=false
+finance_employees: RLS=true, Force=false
+finance_expenses: RLS=true, Force=false
+finance_income_records: RLS=true, Force=false
+finance_reconciliation_notes: RLS=true, Force=false
+finance_salary_payments: RLS=true, Force=false
+finance_salary_records: RLS=true, Force=false
+finance_suppliers: RLS=true, Force=false
+order_items: RLS=true, Force=false
+orders: RLS=true, Force=false
+print_job_items: RLS=true, Force=false
+print_jobs: RLS=true, Force=false
+printers: RLS=true, Force=false
+products: RLS=true, Force=false
+restaurant_daily_order_counters: RLS=true, Force=false
+restaurant_print_station_configs: RLS=true, Force=false
+station_printers: RLS=true, Force=false
+store_sub_admins: RLS=true, Force=false
+stores: RLS=true, Force=false
+users: RLS=true, Force=false
+vehicle_kyc_documents: RLS=true, Force=false
+vehicle_listings: RLS=true, Force=false
+vehicle_reservations: RLS=true, Force=false
+
+=== ORDER POLICIES ===
+- orders_courier_select (SELECT): roles=authenticated, qual=(is_ihiz_courier_user(auth.uid()) AND (lower(COALESCE(delivery_type, ''::text)) ~~ '%ihiz%'::text))
+- orders_courier_update (UPDATE): roles=authenticated, qual=(is_ihiz_courier_user(auth.uid()) AND (lower(COALESCE(delivery_type, ''::text)) ~~ '%ihiz%'::text))
+- orders_restaurant_insert (INSERT): roles=authenticated, qual=null
+- orders_restaurant_select (SELECT): roles=authenticated, qual=(auth.uid() = restaurant_id)
+- orders_restaurant_update (UPDATE): roles=authenticated, qual=(auth.uid() = restaurant_id)
+- orders_seller_select (SELECT): roles=authenticated, qual=can_access_order_as_seller(id, auth.uid())
+- orders_seller_update (UPDATE): roles=authenticated, qual=can_access_order_as_seller(id, auth.uid())
+- orders_user_insert (INSERT): roles=authenticated, qual=null
+- orders_user_select (SELECT): roles=authenticated, qual=(auth.uid() = user_id)
+
+=== VEHICLE KYC POLICIES ===
+- vehicle_kyc_owner_insert (INSERT): roles=public, qual=null
+- vehicle_kyc_owner_select (SELECT): roles=public, qual=((auth.uid() = customer_id) OR vehicle_is_admin())
+- vehicle_kyc_seller_select (SELECT): roles=public, qual=(EXISTS ( SELECT 1
+   FROM vehicle_reservations r
+  WHERE ((r.id = vehicle_kyc_documents.reservation_id) AND (r.seller_id = auth.uid()))))
+
+=== USERS PRIVILEGED GUARD TRIGGER ===
+FOUND: users_protect_privileged_columns on users
+
+=== STORAGE BUCKETS ===
+seller-documents: public=false
+store-images: public=true
+product-images: public=true
+product_videos: public=true
+campaign_images: public=true
+categories: public=true
+return-evidence: public=true
+ihiz-courier-documents: public=true
+vehicle-documents: public=false
+vehicle-media: public=true
+store-contracts: public=false
+
+=== SECURITY DEFINER FUNCTIONS ===
+_waiter_req_product_row: config=search_path=public
+_waiter_req_simple_unit_price: config=search_path=public
+accept_store_contract_for_rental: config=search_path=public
+accept_vehicle_rental_terms: config=search_path=public
+activate_ihiz_business_account: config=search_path=public
+active_store_contract: config=search_path=public
+admin_approve_seller_application: config=search_path=public
+admin_can_manage_users: config=search_path=public
+admin_can_write_finance: config=search_path=public
+admin_finance_order_items_snapshot: config=search_path=public
+admin_general_cleanup: config=search_path=public
+admin_insert_expense: config=search_path=public
+admin_insert_revenue: config=search_path=public
+admin_issue_store_recovery_codes: config=search_path=public, extensions
+admin_list_vehicle_listings: config=search_path=public
+admin_save_finance_commission_config: config=search_path=public
+advance_ihiz_delivery_task: config=search_path=public
+apply_ihiz_business_account: config=search_path=public
+approve_waiter_order_request: config=search_path=public
+can_access_order_as_seller: config=search_path=public,row_security=off
+can_access_order_as_seller: config=search_path=public
+can_bypass_home_feature_status_guard: config=search_path=public
+cancel_vehicle_rental_reservation: config=search_path=public
+claim_ihiz_delivery_task: config=search_path=public
+close_restaurant_orders_for_table: config=search_path=public
+close_table_orders: config=search_path=public
+close_table_orders_v2: config=search_path=public
+close_table_with_history: config=search_path=public
+complete_vehicle_handover: config=search_path=public
+complete_vehicle_return: config=search_path=public
+confirm_vehicle_rental_payment: config=search_path=public, extensions, pg_catalog
+coupon_apply_to_order: config=search_path=public
+coupon_claim: config=search_path=public
+coupon_moderate_campaign: config=search_path=public
+coupon_product_in_scope: config=search_path=public
+coupon_protect_campaign_row: config=search_path=public
+coupon_quote: config=search_path=public
+coupon_record_view: config=search_path=public
+coupon_replace_scopes: config=search_path=public
+coupon_seller_owns_store: config=search_path=public
+coupon_upsert_campaign: config=search_path=public
+create_adisyon_print_job: config=search_path=public
+create_adisyon_reprint_print_job: config=search_path=public
+create_ihiz_package_delivery: config=search_path=public
+create_kitchen_reprint_print_job: config=search_path=public
+create_order_from_cart: config=search_path=public
+create_store_notification: config=search_path=public
+create_table_order_with_print_jobs: config=search_path=public
+create_table_order_with_print_jobs_impl: config=search_path=public
+create_vehicle_rental_reservation: config=search_path=public, extensions, pg_catalog
+current_admin_can_access_finance: config=search_path=public
+current_admin_has_module: config=search_path=public
+current_user_role: config=search_path=public
+debug_admin_finance_access: config=search_path=public
+delivery_is_admin: config=search_path=public
+diagnose_ad_linked_products: config=search_path=public
+enforce_home_feature_campaign_status: config=search_path=public
+enqueue_active_kitchen_reprint_clone: config=search_path=public
+ensure_ihiz_delivery_task_for_order: config=search_path=public
+ensure_store_business_serial_no: config=search_path=public
+expire_unpaid_vehicle_rentals: config=search_path=public
+fetch_active_home_sponsored_collections: config=search_path=public
+finance_get_monthly_trend: config=search_path=public
+finance_get_overview: config=search_path=public
+flatten_waiter_items_for_kitchen_print: config=search_path=public
+follow_store: config=search_path=public
+get_active_ihiz_pricing_config: config=search_path=public
+get_ad_linked_products_by_ids: config=search_path=public
+get_ad_linked_products_by_ids: config=search_path=public
+get_ad_linked_products_by_ids_core: config=search_path=public
+get_ihiz_public_tracking: config=search_path=public
+get_product_recommendations: config=search_path=public
+get_reward_wheel_for_user: config=search_path=public
+get_store_follow_state: config=search_path=public
+get_vehicle_unavailable_ranges: config=search_path=public
+get_waiter_performance: config=search_path=public
+handle_new_user: config=null
+hybrid_delivery_branch_search: config=search_path=public
+hybrid_delivery_confirm_option: config=search_path=public
+hybrid_delivery_quote: config=search_path=public
+ihiz_actor_is_admin: config=search_path=public
+ihiz_actor_is_approved_courier: config=search_path=public
+ihiz_actor_owns_store: config=search_path=public
+ihiz_append_delivery_event: config=search_path=public
+ihiz_delivery_task_can_access: config=search_path=public
+increment_home_feature_metric: config=search_path=public
+is_admin_user: config=search_path=public
+is_customer_checkout_eligible_product: config=search_path=public
+is_following_store: config=search_path=public
+is_ihiz_approved_courier: config=search_path=public
+is_ihiz_courier_user: config=search_path=public,row_security=off
+is_order_owner: config=search_path=public,row_security=off
+link_ihiz_business_by_serial: config=search_path=public
+list_ihiz_approved_couriers_directory: config=search_path=public
+list_ihiz_business_ops: config=search_path=public
+lookup_store_by_business_serial: config=search_path=public
+moderate_vehicle_listing: config=search_path=public
+nearby_vehicle_galleries: config=search_path=public
+preview_ad_credit_code: config=search_path=public
+protect_users_privileged_columns: config=search_path=public
+publish_store_contract: config=search_path=public, extensions, pg_catalog
+publish_vehicle_listing: config=search_path=public
+quote_vehicle_delivery_fee: config=search_path=public
+recalculate_waiter_request_items: config=search_path=public
+redeem_ad_credit_code: config=search_path=public
+reject_waiter_order_request: config=search_path=public
+rental_accepted_contract: config=search_path=public
+resolve_admin_effective_role: config=search_path=public
+respond_vehicle_appointment: config=search_path=public
+respond_vehicle_quote: config=search_path=public
+respond_vehicle_rental_reservation: config=search_path=public
+restore_own_admin_role: config=search_path=public
+reward_wheel_admin_stats: config=search_path=public
+reward_wheel_compose_for_user: config=search_path=public
+reward_wheel_save_config: config=search_path=public
+reward_wheel_user_eligibility: config=search_path=public
+search_vehicle_listings: config=search_path=public
+seller_reset_password_with_recovery_code: config=search_path=public, extensions
+set_store_contract_active: config=search_path=public
+spin_reward_wheel: config=search_path=public
+stores_assign_business_serial: config=search_path=public, extensions
+submit_vehicle_listing_for_review: config=search_path=public
+submit_vehicle_rental_for_review: config=search_path=public, extensions, pg_catalog
+submit_waiter_order_request: config=search_path=public
+sync_store_follower_count: config=search_path=public
+toggle_store_notifications: config=search_path=public
+transfer_table_orders: config=search_path=public
+unfollow_store: config=search_path=public
+update_home_feature_sort_order: config=search_path=public
+update_ihiz_courier_location: config=search_path=public
+update_vehicle_rental_draft: config=search_path=public
+user_can_access_restaurant: config=search_path=public
+vehicle_is_admin: config=search_path=public
+vehicle_rental_listing_title: config=search_path=public
+vehicle_rental_log_event: config=search_path=public
+vehicle_rental_notify: config=search_path=public
+vehicle_rental_window_blocked: config=search_path=public
+vehicle_seller_dashboard: config=search_path=public
+wallet_capture_seller_delivery: config=search_path=public
+wallet_capture_seller_delivery_by_reference: config=search_path=public
+wallet_get_seller_balance: config=search_path=public
+wallet_release_seller_delivery: config=search_path=public
+wallet_release_seller_delivery_by_reference: config=search_path=public
+wallet_reserve_seller_delivery: config=search_path=public
+wallet_topup_seller: config=search_path=public

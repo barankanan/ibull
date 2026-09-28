@@ -26,6 +26,14 @@ void main() {
       expect(table, contains('buildSellerLoginPage'));
     });
 
+    test('customer app registers seller forgot-password route', () {
+      final table = File('lib/app/app_route_table.dart').readAsStringSync();
+      final router = File('lib/app/ibul_go_router.dart').readAsStringSync();
+      expect(table, contains("case '/seller-forgot-password':"));
+      expect(table, contains('buildSellerForgotPasswordPage'));
+      expect(router, contains("'/seller-forgot-password'"));
+    });
+
     test('customer app registers lazy seller panel route', () {
       final app = File('lib/app/customer_app.dart').readAsStringSync();
       final table = File('lib/app/app_route_table.dart').readAsStringSync();
@@ -48,6 +56,31 @@ void main() {
       expect(appState, contains('applyCustomerSessionFromSignIn'));
       final login = File('lib/screens/login_page.dart').readAsStringSync();
       expect(login, contains('applyCustomerSessionFromSignIn'));
+      expect(login, contains('CustomerLoginCompletion.finish'));
+      expect(login, isNot(contains("AuthFlowLogger.redirect(target: '/home?tab=4')")));
+    });
+
+    test('pushed login pops instead of overlaying home', () {
+      final completion = File(
+        'lib/core/auth/customer_login_completion.dart',
+      ).readAsStringSync();
+      expect(completion, contains('nav.canPop()'));
+      expect(completion, contains('nav.pop(true)'));
+      expect(completion, contains('[Auth][postLogin]'));
+      expect(completion, isNot(contains('password')));
+      final gate = File(
+        'lib/core/auth/customer_login_gate.dart',
+      ).readAsStringSync();
+      expect(gate, contains('push<bool>'));
+      final vehicle = File(
+        'lib/features/vehicle/widgets/vehicle_card_actions.dart',
+      ).readAsStringSync();
+      expect(vehicle, contains('CustomerLoginGate.open'));
+      expect(vehicle, contains('ensureFavorite'));
+      expect(vehicle, contains('_favoriteAfterLogin'));
+      final sellerLogin =
+          File('lib/screens/seller_login_page.dart').readAsStringSync();
+      expect(sellerLogin, isNot(contains('CustomerLoginCompletion')));
     });
 
     test('seller login resolves profile or shows explicit error', () {
@@ -66,7 +99,7 @@ void main() {
       expect(app, contains('IbulMaterialApp'));
       expect(shell, contains('createIbulGoRouter'));
       expect(router, contains('errorBuilder'));
-      expect(router, contains("source: 'go_router:unknown'"));
+      expect(router, contains('IbulNotFoundPage'));
       expect(table, contains('generateUnknownHomeRoute'));
       expect(table, contains("buildSafeHome(source: 'onUnknownRoute')"));
     });
