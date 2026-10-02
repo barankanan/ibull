@@ -114,3 +114,5 @@ html.write_text(
 PY
   echo "✓ Fingerprinted JS: $HASHED (immutable cache)"
 fi
+
+python3 "$SCRIPT_DIR/prerender_blog.py" "$WEB_DIR"

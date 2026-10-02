@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/qr_initial_params.dart';
 import '../core/route_trace_logger.dart';
+import '../features/blog/blog_paths.dart';
 import '../features/ihiz/delivery/ihiz_route_paths.dart';
 import '../features/investor/investor_route_paths.dart';
 import '../screens/ibul_not_found_page.dart';
@@ -123,6 +124,24 @@ List<RouteBase> _routes(bool includeAuthRoutes) {
     ),
     for (final path in SiteInfoRoutes.paths)
       _pageRoute(path, includeAuthRoutes),
+    _pageRoute(BlogPaths.root, includeAuthRoutes),
+    _pageRoute(BlogPaths.studio, includeAuthRoutes),
+    GoRoute(
+      path: '${BlogPaths.previewRoot}/:id',
+      builder: (context, state) => _pageFor(
+        BlogPaths.preview(state.pathParameters['id'] ?? ''),
+        state,
+        includeAuthRoutes,
+      ),
+    ),
+    GoRoute(
+      path: '${BlogPaths.root}/:slug',
+      builder: (context, state) => _pageFor(
+        BlogPaths.post(state.pathParameters['slug'] ?? ''),
+        state,
+        includeAuthRoutes,
+      ),
+    ),
   ];
   if (includeAuthRoutes) {
     routes.addAll([

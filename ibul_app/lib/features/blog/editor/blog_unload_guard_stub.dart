@@ -1,0 +1,1 @@
+void setBlogUnloadGuard(bool active) {}

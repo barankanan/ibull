@@ -44,6 +44,7 @@ class WebFooter extends StatelessWidget {
                         'Kariyer',
                         'İletişim',
                         'Basın Odası',
+                        'Blog',
                         'Yatırımcı İlişkileri',
                       ]),
                     ),
@@ -80,6 +81,7 @@ class WebFooter extends StatelessWidget {
                         'Kariyer',
                         'İletişim',
                         'Basın Odası',
+                        'Blog',
                         'Yatırımcı İlişkileri',
                       ]),
                     ),
@@ -355,6 +357,10 @@ class WebFooter extends StatelessWidget {
     }
     if (link == 'Yatırımcı İlişkileri') {
       IbulRouter.push(context, '/yatirimci');
+      return;
+    }
+    if (link == 'Blog') {
+      IbulRouter.push(context, '/blog');
       return;
     }
     SiteInfoRoutes.openFooterLabel(context, link);

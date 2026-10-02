@@ -95,6 +95,28 @@ const List<AdminPanelMenuDefinition> ibulAdminMenuDefinitions = [
     groupIcon: Icons.auto_awesome_outlined,
     moduleKey: AdminModules.systemLayout,
   ),
+  // Server-side blog admin check uses the same module (`blog_is_admin`).
+  AdminPanelMenuDefinition(
+    icon: Icons.article_outlined,
+    title: 'Blog Yazıları',
+    groupLabel: 'Blog',
+    groupIcon: Icons.menu_book_outlined,
+    moduleKey: AdminModules.campaignContent,
+  ),
+  AdminPanelMenuDefinition(
+    icon: Icons.label_outline,
+    title: 'Blog Kategorileri & Etiketler',
+    groupLabel: 'Blog',
+    groupIcon: Icons.menu_book_outlined,
+    moduleKey: AdminModules.campaignContent,
+  ),
+  AdminPanelMenuDefinition(
+    icon: Icons.person_outline,
+    title: 'Blog Yazarları',
+    groupLabel: 'Blog',
+    groupIcon: Icons.menu_book_outlined,
+    moduleKey: AdminModules.campaignContent,
+  ),
   AdminPanelMenuDefinition(
     icon: Icons.support_agent,
     title: 'Destek & Şikayet',

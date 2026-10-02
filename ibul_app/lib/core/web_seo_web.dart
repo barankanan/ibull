@@ -7,7 +7,34 @@ void setSeoMeta({
   String? description,
   List<String>? keywords,
   String? canonicalPath,
+  String? imageUrl,
+  String? ogType,
+  bool noIndex = false,
+  String? jsonLd,
 }) {
+  _metaByName('robots').content = noIndex ? 'noindex, nofollow' : 'index, follow';
+  _metaByProperty('og:type').content = ogType ?? 'website';
+  final image = imageUrl?.trim();
+  for (final selector in const [
+    'meta[property="og:image"]',
+    'meta[name="twitter:image"]',
+  ]) {
+    html.document.querySelector(selector)?.remove();
+  }
+  if (image != null && image.isNotEmpty) {
+    _metaByProperty('og:image').content = image;
+    _metaByName('twitter:image').content = image;
+  }
+  html.document.getElementById(_jsonLdId)?.remove();
+  if (jsonLd != null && jsonLd.isNotEmpty) {
+    html.document.head?.append(
+      html.ScriptElement()
+        ..id = _jsonLdId
+        ..type = 'application/ld+json'
+        ..text = jsonLd,
+    );
+  }
+
   final normalizedTitle = title.trim();
   if (normalizedTitle.isNotEmpty) {
     html.document.title = normalizedTitle;
@@ -42,6 +69,8 @@ void setSeoMeta({
     _canonicalLink().href = canonicalUrl;
   }
 }
+
+const _jsonLdId = 'ibul-page-jsonld';
 
 html.MetaElement _metaByName(String name) {
   final existing = html.document.querySelector('meta[name="$name"]');

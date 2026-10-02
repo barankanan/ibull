@@ -86,3 +86,5 @@ html.write_text(
 )
 PY
 fi
+
+python3 "$SCRIPT_DIR/prerender_blog.py" "$WEB_DIR"

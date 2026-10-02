@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../core/qr_initial_params.dart';
 import '../core/route_trace_logger.dart';
+import '../features/blog/blog_paths.dart';
+import '../features/blog/blog_route_pages.dart' deferred as blog_pages;
 import '../features/ihiz/delivery/ihiz_route_paths.dart';
 import '../features/vehicle/screens/vehicle_detail_page.dart'
     deferred as vehicle_detail;
@@ -144,6 +146,14 @@ Widget? pageForAppRoute(
     case '/':
       return buildSafeHome(source: 'onGenerateRoute:/');
     default:
+      if (BlogPaths.isBlogPath(normalizedPath)) {
+        final arguments = settings.arguments;
+        return _deferredRoutePage(
+          moduleName: 'blog_route_pages',
+          loadLibrary: blog_pages.loadLibrary,
+          builder: () => blog_pages.blogPageForPath(normalizedPath, arguments),
+        );
+      }
       final accountSection = AccountSections.fromPath(normalizedPath);
       if (accountSection != null) {
         final section = accountSection;

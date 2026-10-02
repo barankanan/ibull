@@ -8,6 +8,7 @@ import '../../../../screens/admin/general_overview_page.dart';
 import '../../../../screens/admin/ihiz_admin_page.dart';
 import '../../../../screens/admin/ihiz_application_approval_page.dart';
 import '../../../../screens/admin/ihiz_pricing_management_page.dart';
+import '../../../blog/admin/blog_admin_section.dart';
 import '../../../ihiz/business/ihiz_business_admin_page.dart';
 import '../../../../screens/admin/map_admin_page.dart';
 import '../../../../screens/admin/permission_system_page.dart';
@@ -51,6 +52,12 @@ Widget buildAdminPanelContent({
       return const AdminSupportComplaintsPage();
     case 'Kampanya & İçerik':
       return systemLayoutPage;
+    case 'Blog Yazıları':
+      return const BlogAdminSection(view: BlogAdminView.posts);
+    case 'Blog Kategorileri & Etiketler':
+      return const BlogAdminSection(view: BlogAdminView.taxonomy);
+    case 'Blog Yazarları':
+      return const BlogAdminSection(view: BlogAdminView.authors);
     case 'Harita & Arama':
       return const MapAdminPage();
     case 'Finans':
