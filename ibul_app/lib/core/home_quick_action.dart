@@ -424,19 +424,19 @@ class HomeQuickActionChip extends StatelessWidget {
                     ),
                   ],
                 ),
-                child: Column(
+                child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(6),
                       decoration: BoxDecoration(
                         color: AppColors.primary.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Icon(icon, color: AppColors.primary, size: 28),
+                      child: Icon(icon, color: AppColors.primary, size: 20),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(width: 8),
                     Text(
                       title,
                       textAlign: TextAlign.center,

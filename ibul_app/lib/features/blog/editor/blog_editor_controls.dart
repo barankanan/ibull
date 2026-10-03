@@ -185,3 +185,48 @@ class BlogInlineToolbar extends StatelessWidget {
     );
   }
 }
+
+class BlogPlainField extends StatefulWidget {
+  const BlogPlainField({
+    super.key,
+    required this.initial,
+    required this.hint,
+    required this.style,
+    required this.onChanged,
+  });
+
+  final String initial;
+  final String hint;
+  final TextStyle style;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<BlogPlainField> createState() => _BlogPlainFieldState();
+}
+
+class _BlogPlainFieldState extends State<BlogPlainField> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      maxLines: null,
+      style: widget.style,
+      onChanged: widget.onChanged,
+      decoration: InputDecoration(
+        hintText: widget.hint,
+        border: InputBorder.none,
+        hintStyle: widget.style.copyWith(color: BlogTheme.line),
+      ),
+    );
+  }
+}

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:ibul_app/widgets/optimized_image.dart';
 import 'dart:typed_data';
 
 import '../../../../core/mobile_category_catalog.dart';
@@ -12,6 +11,10 @@ import '../widgets/home_card_template_panel.dart';
 import '../widgets/home_feature_sorting_panel.dart';
 import '../widgets/system_layout_editor_card.dart';
 import '../widgets/system_layout_managed_category_widgets.dart';
+import '../widgets/system_layout_section.dart';
+import 'system_layout_brand_tab.dart';
+import 'system_layout_campaign_images_tab.dart';
+import 'system_layout_shortcuts_tab.dart';
 import '../../../coupon/screens/admin/coupon_admin_hub_page.dart';
 import '../../../coupon/screens/admin/reward_wheel_settings_page.dart';
 
@@ -31,80 +34,15 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
   // Hair Care Layouts (Kart Yapısı)
   List<Map<String, dynamic>> _hairCareLayouts = [];
 
-  // Campaign Images
-  List<Map<String, dynamic>> _campaignImages = [];
-  List<Map<String, dynamic>> _appCategories = [];
   List<MobileCategoryNode> _managedCategories = [];
-  final Set<String> _savingCategoryKeys = <String>{};
   final Set<String> _savingManagedCategoryKeys = <String>{};
-  static const int _categoryNameMaxLength = 24;
-
-  static const List<Map<String, String>> _defaultAppCategories = [
-    {'category_key': 'yakin_lokasyon', 'display_name': 'Yakın Lokasyon'},
-    {'category_key': 'urun_listele', 'display_name': 'Ürün Listele'},
-    {'category_key': 'gorsel_zeka', 'display_name': 'Görsel Zeka'},
-    {'category_key': 'urun_parcala', 'display_name': 'Ürün Parçala'},
-    {'category_key': 'ibul_premium', 'display_name': 'İBUL Premium'},
-    {'category_key': 'bana_ozel', 'display_name': 'Bana Özel'},
-    {'category_key': 'hizli_yemek', 'display_name': 'Hızlı Yemek'},
-    {'category_key': 'yapay_zeka', 'display_name': 'Yapay Zeka'},
-  ];
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 6, vsync: this);
+    _tabController = TabController(length: 8, vsync: this);
     _fetchHairCareLayouts();
-    _fetchCampaignImages();
-    _fetchAppCategories();
     _fetchManagedCategories();
-  }
-
-  Future<void> _fetchCampaignImages() async {
-    try {
-      final images = await AdminService().getCampaignImages();
-      if (mounted) {
-        setState(() {
-          _campaignImages = List<Map<String, dynamic>>.from(images);
-        });
-      }
-    } catch (e) {
-      debugPrint('Error fetching campaign images: $e');
-    }
-  }
-
-  Future<void> _fetchAppCategories() async {
-    try {
-      final categories = await AdminService().getAppCategories();
-      if (!mounted) return;
-
-      final byKey = <String, Map<String, dynamic>>{};
-      for (final category in categories) {
-        final key = category['category_key']?.toString();
-        if (key != null && key.isNotEmpty) {
-          byKey[key] = Map<String, dynamic>.from(category);
-        }
-      }
-
-      final merged = _defaultAppCategories.map((seed) {
-        final key = seed['category_key']!;
-        final existing = byKey[key];
-        if (existing != null) return existing;
-        return {
-          'id': null,
-          'category_key': key,
-          'display_name': seed['display_name'],
-          'image_url': null,
-          'is_active': true,
-        };
-      }).toList();
-
-      setState(() {
-        _appCategories = merged;
-      });
-    } catch (e) {
-      debugPrint('Error fetching app categories: $e');
-    }
   }
 
   String _managedCategoryKey(
@@ -320,14 +258,25 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
     }
   }
 
-  void _confirmDeleteManagedCategory(
+  Future<void> _confirmDeleteManagedCategory(
     MobileCategoryNode node, {
     MobileCategoryNode? parent,
-  }) {
-    showManagedCategoryDeleteConfirmDialog(
+  }) async {
+    int? linkedProducts;
+    try {
+      linkedProducts = await AdminService().countProductsForCategory(
+        name: node.name,
+        parentName: parent?.name,
+      );
+    } catch (e) {
+      debugPrint('Category dependency count failed: $e');
+    }
+    if (!mounted) return;
+    await showManagedCategoryDeleteConfirmDialog(
       context: context,
       node: node,
       parent: parent,
+      linkedProductCount: linkedProducts,
       onConfirm: () => _deleteManagedCategory(node, parent: parent),
     );
   }
@@ -356,165 +305,6 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
         newImageBytes: newImageBytes,
       ),
     );
-  }
-
-  Future<void> _saveCategoryItem(
-    Map<String, dynamic> category, {
-    Uint8List? newImageBytes,
-    String? newDisplayName,
-  }) async {
-    final categoryKey = category['category_key']?.toString();
-    if (categoryKey == null || categoryKey.isEmpty) return;
-
-    setState(() {
-      _savingCategoryKeys.add(categoryKey);
-    });
-
-    try {
-      final service = AdminService();
-      String? imageUrl = category['image_url']?.toString();
-      if (newImageBytes != null) {
-        final fileName =
-            'cat_${categoryKey}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        imageUrl = await service.uploadCategoryImage(
-          newImageBytes,
-          fileName,
-          categoryKey: categoryKey,
-        );
-      }
-
-      final displayName =
-          (newDisplayName ?? category['display_name']?.toString() ?? '').trim();
-      final safeDisplayName = displayName.length > _categoryNameMaxLength
-          ? displayName.substring(0, _categoryNameMaxLength)
-          : displayName;
-
-      await service.saveAppCategory({
-        'id': category['id'],
-        'category_key': categoryKey,
-        'display_name': safeDisplayName,
-        'image_url': imageUrl,
-        'is_active': category['is_active'] ?? true,
-      });
-
-      if (!mounted) return;
-      await _fetchAppCategories();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$safeDisplayName kaydedildi.')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Kategori kaydetme hatası: $e')));
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _savingCategoryKeys.remove(categoryKey);
-        });
-      }
-    }
-  }
-
-  void _showCategoryEditDialog(Map<String, dynamic> category) {
-    showAppCategoryEditDialog(
-      context: context,
-      category: category,
-      categoryNameMaxLength: _categoryNameMaxLength,
-      onPickAndCropImage:
-          ({required ratioX, required ratioY, required suggestedWidth}) =>
-              pickAndCropSystemLayoutImageBytes(
-                context: context,
-                ratioX: ratioX,
-                ratioY: ratioY,
-                suggestedWidth: suggestedWidth,
-              ),
-      onSave: ({newImageBytes, newDisplayName}) => _saveCategoryItem(
-        category,
-        newImageBytes: newImageBytes,
-        newDisplayName: newDisplayName,
-      ),
-    );
-  }
-
-  void _showImageDetailsDialog({Map<String, dynamic>? existingImage}) {
-    showCampaignImageDetailsDialog(
-      context: context,
-      existingImage: existingImage,
-      onPickAndCropImage:
-          ({required ratioX, required ratioY, required suggestedWidth}) =>
-              pickAndCropSystemLayoutImageBytes(
-                context: context,
-                ratioX: ratioX,
-                ratioY: ratioY,
-                suggestedWidth: suggestedWidth,
-              ),
-      onSave: (request) async {
-        try {
-          final service = AdminService();
-          var desktopImagePath = request.desktopImagePath;
-          var mobileImagePath = request.mobileImagePath;
-
-          if (request.newDesktopBytes != null) {
-            final fileName =
-                'desktop_${DateTime.now().millisecondsSinceEpoch}.jpg';
-            desktopImagePath = await service.uploadCampaignImage(
-              request.newDesktopBytes!,
-              fileName,
-            );
-          }
-
-          if (request.newMobileBytes != null) {
-            final fileName =
-                'mobile_${DateTime.now().millisecondsSinceEpoch}.jpg';
-            mobileImagePath = await service.uploadCampaignImage(
-              request.newMobileBytes!,
-              fileName,
-            );
-          }
-
-          if (desktopImagePath == null || desktopImagePath.isEmpty) {
-            throw Exception('Görsel yüklenemedi');
-          }
-
-          final imageData = {
-            'id': request.existingImage?['id'],
-            'image_path': desktopImagePath,
-            'mobile_image_path': mobileImagePath,
-            'title': request.title,
-            'alt_text': request.altText,
-            'link_url': request.linkUrl,
-            'is_active': request.isActive,
-          };
-
-          await service.saveCampaignImage(imageData);
-          return true;
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Kaydetme hatası: $e')));
-          }
-          return false;
-        }
-      },
-      onSaved: () {
-        _fetchCampaignImages();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Kampanya görseli başarıyla kaydedildi.'),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _deleteCampaignImage(int id) async {
-    await AdminService().deleteCampaignImage(id);
-    _fetchCampaignImages();
   }
 
   @override
@@ -716,77 +506,84 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
       children: [
         Container(
           decoration: const BoxDecoration(
-            color: Colors.white,
+            color: SystemLayoutColors.surface,
             border: Border(
-              bottom: BorderSide(color: Color(0xFFEDE9F6), width: 1.5),
+              bottom: BorderSide(color: SystemLayoutColors.border),
             ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(28, 20, 28, 0),
+                padding: const EdgeInsets.fromLTRB(24, 18, 24, 4),
                 child: Row(
                   children: [
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF3F0FF),
+                        color: SystemLayoutColors.accentSoft,
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: const Icon(
-                        Icons.grid_view_rounded,
-                        color: Color(0xFF8B5CF6),
+                        Icons.dashboard_customize_outlined,
+                        color: SystemLayoutColors.accent,
                         size: 20,
                       ),
                     ),
                     const SizedBox(width: 12),
-                    const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Sistem Düzeni',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF1F1035),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Sistem Düzeni',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: SystemLayoutColors.title,
+                            ),
                           ),
-                        ),
-                        Text(
-                          'Ana sayfa kartları, görseller ve kategori yönetimi',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF9CA3AF),
+                          Text(
+                            'Ana sayfa içerikleri, kategoriler, kuponlar ve hediye çarkı',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: SystemLayoutColors.muted,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
               TabBar(
                 controller: _tabController,
-                labelColor: const Color(0xFF8B5CF6),
-                unselectedLabelColor: const Color(0xFF9CA3AF),
-                indicatorColor: const Color(0xFF8B5CF6),
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                labelColor: SystemLayoutColors.accent,
+                unselectedLabelColor: SystemLayoutColors.muted,
+                indicatorColor: SystemLayoutColors.accent,
                 indicatorWeight: 2.5,
                 indicatorSize: TabBarIndicatorSize.label,
+                dividerColor: Colors.transparent,
                 labelStyle: const TextStyle(
                   fontWeight: FontWeight.w600,
-                  fontSize: 14,
+                  fontSize: 13.5,
                 ),
                 unselectedLabelStyle: const TextStyle(
                   fontWeight: FontWeight.w500,
-                  fontSize: 14,
+                  fontSize: 13.5,
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                isScrollable: true,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 tabs: const [
-                  Tab(text: 'Kart Şablonları'),
-                  Tab(text: 'Ana Sayfa Sıralaması'),
-                  Tab(text: 'Görseller'),
-                  Tab(text: 'Kategoriler'),
+                  Tab(text: 'Genel Görünüm ve Logolar'),
+                  Tab(text: 'Kampanya Görselleri'),
+                  Tab(text: 'Kategoriler ve Alt Kategoriler'),
+                  Tab(text: 'Ana Sayfa Kısayolları'),
+                  Tab(text: 'Kart Şablonları ve Bölüm Başlıkları'),
+                  Tab(text: 'Ana Sayfa ve Reklam Sıralaması'),
                   Tab(text: 'Kuponlar'),
                   Tab(text: 'Hediye Çarkı'),
                 ],
@@ -795,16 +592,21 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
           ),
         ),
         Expanded(
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              const HomeCardTemplatePanel(),
-              const HomeFeatureSortingPanel(),
-              _buildImagesTab(),
-              _buildManagedCategoriesTab(),
-              const CouponAdminHubPage(),
-              const RewardWheelSettingsPage(),
-            ],
+          child: ColoredBox(
+            color: SystemLayoutColors.background,
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                const SystemLayoutBrandTab(),
+                const SystemLayoutCampaignImagesTab(),
+                _buildManagedCategoriesTab(),
+                const SystemLayoutShortcutsTab(),
+                const HomeCardTemplatePanel(),
+                const HomeFeatureSortingPanel(),
+                const CouponAdminHubPage(),
+                const RewardWheelSettingsPage(),
+              ],
+            ),
           ),
         ),
       ],
@@ -940,504 +742,6 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
     );
   }
 
-  Widget _buildImagesTab() {
-    final bool isDesktop = MediaQuery.of(context).size.width > 1100;
-    final int categoryGridCount = isDesktop ? 4 : 2;
-
-    return Column(
-      children: [
-        Container(
-          color: const Color(0xFFFAF9FF),
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Kampanya Görselleri',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF1F1035),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${_campaignImages.length} görsel • Sürükleyerek sırala',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF9CA3AF),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              FilledButton.icon(
-                onPressed: () => _showImageDetailsDialog(),
-                icon: const Icon(Icons.add_photo_alternate_rounded, size: 18),
-                label: const Text('Yeni Görsel'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF8B5CF6),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const Divider(height: 1, color: Color(0xFFEDE9F6)),
-        Expanded(
-          child: Column(
-            children: [
-              Expanded(
-                flex: 5,
-                child: _campaignImages.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(20),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF3F0FF),
-                                borderRadius: BorderRadius.circular(60),
-                              ),
-                              child: const Icon(
-                                Icons.photo_library_outlined,
-                                size: 40,
-                                color: Color(0xFF8B5CF6),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            const Text(
-                              'Henüz kampanya görseli eklenmemiş',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF374151),
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            const Text(
-                              'Ana sayfada görünecek kampanya bannerlarını buradan yönetebilirsiniz.',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Color(0xFF9CA3AF),
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      )
-                    : ReorderableListView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                        itemCount: _campaignImages.length,
-                        onReorder: (oldIndex, newIndex) async {
-                          setState(() {
-                            if (newIndex > oldIndex) newIndex -= 1;
-                            final item = _campaignImages.removeAt(oldIndex);
-                            _campaignImages.insert(newIndex, item);
-                          });
-                          await AdminService().updateCampaignImagesOrder(
-                            _campaignImages,
-                          );
-                        },
-                        itemBuilder: (context, index) {
-                          final image = _campaignImages[index];
-                          final isActive = image['is_active'] ?? true;
-                          return Container(
-                            key: ValueKey(image['id'] ?? index),
-                            margin: const EdgeInsets.only(bottom: 10),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                color: isActive
-                                    ? const Color(0xFFDDD6FF)
-                                    : const Color(0xFFE5E7EB),
-                              ),
-                              boxShadow: const [
-                                BoxShadow(
-                                  color: Color(0x08000000),
-                                  blurRadius: 8,
-                                  offset: Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.drag_handle_rounded,
-                                    color: Colors.grey.shade400,
-                                    size: 18,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: Container(
-                                      width: 100,
-                                      height: 56,
-                                      color: Colors.grey.shade100,
-                                      child: OptimizedImage(imageUrlOrPath: 
-                                        image['image_path'] ?? '',
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, error, stackTrace) =>
-                                            const Icon(
-                                              Icons.broken_image_outlined,
-                                              color: Colors.grey,
-                                            ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 14),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          image['title'] ?? 'Başlıksız',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 13,
-                                            color: Color(0xFF1F1035),
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 3),
-                                        Text(
-                                          image['link_url'] ?? '',
-                                          style: const TextStyle(
-                                            fontSize: 11,
-                                            color: Color(0xFF9CA3AF),
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: isActive
-                                              ? const Color(0xFFEEFDF6)
-                                              : const Color(0xFFF3F4F6),
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            Text(
-                                              isActive ? 'Aktif' : 'Pasif',
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w600,
-                                                color: isActive
-                                                    ? const Color(0xFF059669)
-                                                    : Colors.grey,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Switch(
-                                              value: isActive,
-                                              activeTrackColor: const Color(
-                                                0xFF8B5CF6,
-                                              ),
-                                              activeThumbColor: Colors.white,
-                                              materialTapTargetSize:
-                                                  MaterialTapTargetSize
-                                                      .shrinkWrap,
-                                              onChanged: (val) async {
-                                                final updatedImage = {
-                                                  ...image,
-                                                  'is_active': val,
-                                                };
-                                                setState(() {
-                                                  _campaignImages[index] =
-                                                      updatedImage;
-                                                });
-                                                await AdminService()
-                                                    .saveCampaignImage(
-                                                      updatedImage,
-                                                    );
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.edit_rounded,
-                                          size: 18,
-                                          color: Color(0xFF8B5CF6),
-                                        ),
-                                        onPressed: () =>
-                                            _showImageDetailsDialog(
-                                              existingImage: image,
-                                            ),
-                                        tooltip: 'Düzenle',
-                                      ),
-                                      IconButton(
-                                        icon: Icon(
-                                          Icons.delete_outline_rounded,
-                                          size: 18,
-                                          color: Colors.red.shade400,
-                                        ),
-                                        onPressed: () {
-                                          showCampaignImageDeleteConfirmDialog(
-                                            context: context,
-                                            onConfirm: () =>
-                                                _deleteCampaignImage(
-                                                  image['id'],
-                                                ),
-                                          );
-                                        },
-                                        tooltip: 'Sil',
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-              Container(
-                margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF5F3FF),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFD9CCFF)),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFEDE9F6),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(
-                        Icons.category_outlined,
-                        color: Color(0xFF8B5CF6),
-                        size: 18,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Kategori Görselleri',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF8B5CF6),
-                            ),
-                          ),
-                          SizedBox(height: 2),
-                          Text(
-                            'Önerilen görsel: 512×512 px (1:1), JPG/PNG, maksimum 1 MB',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFF6B7280),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                flex: 4,
-                child: GridView.builder(
-                  padding: const EdgeInsets.all(16),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: categoryGridCount,
-                    childAspectRatio: categoryGridCount == 4 ? 3.6 : 4.0,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                  ),
-                  itemCount: _appCategories.length,
-                  itemBuilder: (context, index) {
-                    final category = _appCategories[index];
-                    final categoryKey =
-                        category['category_key']?.toString() ?? '';
-                    final isSaving = _savingCategoryKeys.contains(categoryKey);
-                    final imageUrl = category['image_url']?.toString();
-                    final isActive = category['is_active'] ?? true;
-
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: isActive
-                              ? const Color(0xFFDDD6FF)
-                              : const Color(0xFFE5E7EB),
-                        ),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x06000000),
-                            blurRadius: 6,
-                            offset: Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
-                        child: Row(
-                          children: [
-                            Stack(
-                              children: [
-                                Container(
-                                  width: 52,
-                                  height: 52,
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(10),
-                                    color: const Color(0xFFF3F0FF),
-                                  ),
-                                  clipBehavior: Clip.antiAlias,
-                                  child:
-                                      (imageUrl != null && imageUrl.isNotEmpty)
-                                      ? OptimizedImage(imageUrlOrPath: 
-                                          imageUrl,
-                                          fit: BoxFit.cover,
-                                        )
-                                      : const Icon(
-                                          Icons.image_outlined,
-                                          color: Color(0xFF8B5CF6),
-                                          size: 22,
-                                        ),
-                                ),
-                                if (!isActive)
-                                  Positioned.fill(
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: Colors.white.withValues(
-                                          alpha: 0.6,
-                                        ),
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    category['display_name']?.toString() ?? '-',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 12,
-                                      color: isActive
-                                          ? const Color(0xFF1F1035)
-                                          : Colors.grey,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  const SizedBox(height: 5),
-                                  OutlinedButton.icon(
-                                    onPressed: isSaving
-                                        ? null
-                                        : () =>
-                                              _showCategoryEditDialog(category),
-                                    icon: const Icon(
-                                      Icons.edit_outlined,
-                                      size: 13,
-                                    ),
-                                    label: Text(
-                                      isSaving ? 'Kaydediliyor...' : 'Düzenle',
-                                      style: const TextStyle(fontSize: 11),
-                                    ),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: const Color(0xFF8B5CF6),
-                                      side: const BorderSide(
-                                        color: Color(0xFF8B5CF6),
-                                      ),
-                                      visualDensity: VisualDensity.compact,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Switch(
-                                  value: isActive,
-                                  activeTrackColor: const Color(0xFF8B5CF6),
-                                  activeThumbColor: Colors.white,
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  onChanged: isSaving
-                                      ? null
-                                      : (val) {
-                                          setState(() {
-                                            _appCategories[index] = {
-                                              ...category,
-                                              'is_active': val,
-                                            };
-                                          });
-                                        },
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildManagedCategoriesTab() {
     if (_isLoadingManagedCategories && _managedCategories.isEmpty) {
       return const Center(
@@ -1459,71 +763,29 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
 
     return Column(
       children: [
-        Container(
-          color: const Color(0xFFFAF9FF),
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Mobil Kategoriler',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF1F1035),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${_managedCategories.length} ana kategori • 512×512 px görsel önerilir',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF9CA3AF),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: _fetchManagedCategories,
-                icon: const Icon(Icons.refresh_rounded, size: 16),
-                label: const Text('Yenile'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF8B5CF6),
-                  side: const BorderSide(color: Color(0xFF8B5CF6)),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              FilledButton.icon(
-                onPressed: () => _showManagedCategoryDialog(),
-                icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('Yeni Kategori'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF8B5CF6),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-            ],
+        SystemLayoutSectionHeader(
+          title: 'Kategoriler ve Alt Kategoriler',
+          subtitle:
+              '${_managedCategories.length} ana kategori • Ürünler kategoriye adıyla bağlıdır • 512×512 görsel',
+          liveNote:
+              'Kaydedildiği anda müşteri kategori menüsüne yansır. Pasif kategori menüden kalkar, ürün kayıtları değişmez.',
+          secondaryActions: [
+            OutlinedButton.icon(
+              onPressed: _isLoadingManagedCategories
+                  ? null
+                  : _fetchManagedCategories,
+              icon: const Icon(Icons.refresh_rounded, size: 16),
+              label: const Text('Yenile'),
+              style: systemLayoutSecondaryButtonStyle(),
+            ),
+          ],
+          primaryAction: FilledButton.icon(
+            onPressed: () => _showManagedCategoryDialog(),
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('Yeni Kategori'),
+            style: systemLayoutPrimaryButtonStyle(),
           ),
         ),
-        const Divider(height: 1, color: Color(0xFFEDE9F6)),
         Expanded(
           child: _managedCategories.isEmpty
               ? Center(

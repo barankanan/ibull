@@ -14,29 +14,29 @@ class HomeHeroBannerSection extends StatelessWidget {
     this.isLoading = false,
     this.preferMobile = false,
     this.embedded = false,
+    this.height,
   });
 
   final List<String> bannerImageUrls;
   final bool isLoading;
   final bool preferMobile;
   final bool embedded;
+  final double? height;
 
   List<String> get _effectiveUrls => bannerImageUrls;
 
   @override
   Widget build(BuildContext context) {
+    final bannerHeight = height ?? (embedded ? 264.0 : (preferMobile ? 160.0 : 180.0));
     if (isLoading && bannerImageUrls.isEmpty) {
-      return _buildSkeleton();
+      return _buildSkeleton(bannerHeight);
     }
 
     final urls = _effectiveUrls;
-    final height = embedded
-        ? 412.0
-        : (preferMobile ? 160.0 : 180.0);
 
     if (urls.isEmpty) {
       return HomeHeroSlotPlaceholder(
-        height: height,
+        height: bannerHeight,
         preferMobile: preferMobile,
         embedded: embedded,
       );
@@ -46,7 +46,7 @@ class HomeHeroBannerSection extends StatelessWidget {
 
     final carousel = CarouselSlider(
       options: CarouselOptions(
-        height: height,
+        height: bannerHeight,
         viewportFraction: 1,
         autoPlay: urls.length > 1,
         autoPlayInterval: const Duration(seconds: 6),
@@ -60,7 +60,7 @@ class HomeHeroBannerSection extends StatelessWidget {
     if (embedded) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(16),
-        child: SizedBox(height: height, child: carousel),
+        child: SizedBox(height: bannerHeight, child: carousel),
       );
     }
 
@@ -68,23 +68,23 @@ class HomeHeroBannerSection extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: SizedBox(height: height, child: carousel),
+        child: SizedBox(height: bannerHeight, child: carousel),
       ),
     );
   }
 
-  Widget _buildSkeleton() {
+  Widget _buildSkeleton(double height) {
     return embedded
-        ? const SkeletonLoading(
+        ? SkeletonLoading(
             width: double.infinity,
-            height: 412,
+            height: height,
             borderRadius: 16,
           )
-        : const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        : Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: SkeletonLoading(
               width: double.infinity,
-              height: 160,
+              height: height,
               borderRadius: 12,
             ),
           );
@@ -175,7 +175,7 @@ class _BannerSlide extends StatelessWidget {
     }
     return OptimizedImage(
       imageUrlOrPath: AppImageCdn.buildUrl(source, AppImageVariant.hero),
-      fit: BoxFit.cover,
+      fit: BoxFit.contain,
       width: double.infinity,
       priority: OptimizedImagePriority.high,
     );
@@ -187,11 +187,13 @@ Widget buildHomeHeroBannerSection({
   bool isLoading = false,
   bool preferMobile = false,
   bool embedded = false,
+  double? height,
 }) {
   return HomeHeroBannerSection(
     bannerImageUrls: bannerImageUrls,
     isLoading: isLoading,
     preferMobile: preferMobile,
     embedded: embedded,
+    height: height,
   );
 }

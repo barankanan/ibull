@@ -13,10 +13,7 @@ import '../../services/location_access_service.dart';
 import 'home_discovery_resolver.dart';
 
 class HomeDiscoverySnapshot {
-  const HomeDiscoverySnapshot({
-    required this.nearby,
-    required this.vehicles,
-  });
+  const HomeDiscoverySnapshot({required this.nearby, required this.vehicles});
 
   final List<HomeDiscoveryItem> nearby;
   final List<VehicleListing> vehicles;
@@ -26,15 +23,11 @@ class HomeDiscoverySnapshot {
 
 abstract final class HomePerfLog {
   static void nearby(String event, [int? ms]) {
-    debugPrint(
-      '[HomePerf][nearby] $event${ms == null ? '' : ' ${ms}ms'}',
-    );
+    debugPrint('[HomePerf][nearby] $event${ms == null ? '' : ' ${ms}ms'}');
   }
 
   static void vehicles(String event, [int? ms]) {
-    debugPrint(
-      '[HomePerf][vehicles] $event${ms == null ? '' : ' ${ms}ms'}',
-    );
+    debugPrint('[HomePerf][vehicles] $event${ms == null ? '' : ' ${ms}ms'}');
   }
 }
 
@@ -60,8 +53,11 @@ abstract final class HomeDiscoveryLoader {
   @visibleForTesting
   static Future<Position?> Function()? debugPositionQuery;
   @visibleForTesting
-  static Future<Map<String, double>> Function(Set<String> sellerIds, Position position)?
-      debugStoreDistancesQuery;
+  static Future<Map<String, double>> Function(
+    Set<String> sellerIds,
+    Position position,
+  )?
+  debugStoreDistancesQuery;
 
   static void invalidateVehicles() {
     _vehicleCache.clear();
@@ -88,9 +84,7 @@ abstract final class HomeDiscoveryLoader {
     final cached = _vehicleCache.read('public');
     if (cached != null) {
       HomePerfLog.vehicles('query_ready', 0);
-      return Future.value(
-        HomeDiscoveryResolver.publicVehicles(cached),
-      );
+      return Future.value(HomeDiscoveryResolver.publicVehicles(cached));
     }
     return _vehiclesInFlight ??= _loadVehiclesBody().whenComplete(() {
       _vehiclesInFlight = null;
@@ -109,12 +103,10 @@ abstract final class HomeDiscoveryLoader {
         DateTime.now().difference(started).inMilliseconds,
       );
       return HomeDiscoveryResolver.publicVehicles(vehicles);
-    } catch (e, st) { print("Error loading vehicles: $e"); print(st);
-      HomePerfLog.vehicles(
-        'query_ready',
-        DateTime.now().difference(started).inMilliseconds,
-      );
-      return const [];
+    } catch (error, stack) {
+      debugPrint('[HomeDiscoveryLoader] vehicle query failed: $error');
+      debugPrintStack(stackTrace: stack);
+      rethrow;
     }
   }
 
@@ -132,7 +124,9 @@ abstract final class HomeDiscoveryLoader {
     try {
       final position = debugPositionQuery != null
           ? await debugPositionQuery!()
-          : await LocationAccessService.instance.getBestAvailablePosition().timeout(const Duration(seconds: 4));
+          : await LocationAccessService.instance
+                .getBestAvailablePosition()
+                .timeout(const Duration(seconds: 4));
       if (position != null) {
         _positionCache.write('current', position);
       }
@@ -141,7 +135,9 @@ abstract final class HomeDiscoveryLoader {
         DateTime.now().difference(started).inMilliseconds,
       );
       return position;
-    } catch (e, st) { print("Error loading vehicles: $e"); print(st);
+    } catch (e, st) {
+      print("Error loading vehicles: $e");
+      print(st);
       HomePerfLog.nearby(
         'location_ready',
         DateTime.now().difference(started).inMilliseconds,
@@ -171,7 +167,10 @@ abstract final class HomeDiscoveryLoader {
     if (cached != null) {
       _distanceMem.addAll(cached);
       HomePerfLog.nearby('query_ready', 0);
-      return {for (final id in ids) if (_distanceMem[id] != null) id: _distanceMem[id]!};
+      return {
+        for (final id in ids)
+          if (_distanceMem[id] != null) id: _distanceMem[id]!,
+      };
     }
     try {
       final query = debugStoreDistancesQuery ?? _sellerDistances;
@@ -182,13 +181,21 @@ abstract final class HomeDiscoveryLoader {
         'query_ready',
         DateTime.now().difference(started).inMilliseconds,
       );
-      return {for (final id in ids) if (_distanceMem[id] != null) id: _distanceMem[id]!};
-    } catch (e, st) { print("Error loading vehicles: $e"); print(st);
+      return {
+        for (final id in ids)
+          if (_distanceMem[id] != null) id: _distanceMem[id]!,
+      };
+    } catch (e, st) {
+      print("Error loading vehicles: $e");
+      print(st);
       HomePerfLog.nearby(
         'query_ready',
         DateTime.now().difference(started).inMilliseconds,
       );
-      return {for (final id in ids) if (_distanceMem[id] != null) id: _distanceMem[id]!};
+      return {
+        for (final id in ids)
+          if (_distanceMem[id] != null) id: _distanceMem[id]!,
+      };
     }
   }
 
@@ -207,15 +214,8 @@ abstract final class HomeDiscoveryLoader {
     );
   }
 
-  static Future<List<VehicleListing>> _publicVehicles() async {
-    try {
-      return await VehicleService.instance.listings.getHomeListings(
-        limit: 24,
-      );
-    } catch (e, st) { print("Error loading vehicles: $e"); print(st);
-      return const [];
-    }
-  }
+  static Future<List<VehicleListing>> _publicVehicles() =>
+      VehicleService.instance.listings.getHomeListings(limit: 24);
 
   static Future<Map<String, double>> _sellerDistances(
     Set<String> sellerIds,

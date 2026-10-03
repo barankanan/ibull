@@ -135,9 +135,6 @@ declare
   v_published_at timestamptz;
   v_featured boolean;
 begin
-  if v_title = '' then
-    raise exception 'blog_title_required' using errcode = '22023';
-  end if;
   if not public.blog_content_is_safe(p_payload -> 'content') then
     raise exception 'blog_invalid_content' using errcode = '22023';
   end if;
@@ -148,7 +145,10 @@ begin
   v_slug := left(public.blog_slugify(
     coalesce(nullif(btrim(p_payload ->> 'slug'), ''), v_title)), 120);
   v_slug := btrim(v_slug, '-');
-  if v_slug = '' or v_slug in ('onizleme', 'yazar', 'kategori', 'etiket', 'arama') then
+  -- Taslakta başlık/slug boş olabilir; yayın kontrolü blog_publish_post içindedir.
+  if v_slug = '' then
+    v_slug := 'taslak-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 10);
+  elsif v_slug in ('onizleme', 'yazar', 'kategori', 'etiket', 'arama') then
     raise exception 'blog_invalid_slug' using errcode = '22023';
   end if;
   if exists (
@@ -178,7 +178,10 @@ begin
     v_featured := coalesce(p_existing.is_featured, false);
     v_published_at := p_existing.published_at;
   end if;
-  if v_author is null or not exists (select 1 from public.blog_authors where id = v_author) then
+  -- Yazar imzası taslakta boş kalabilir. Geçersiz bir id yine reddedilir.
+  -- created_by / updated_by oturum kullanıcısıdır; imzayla karışmaz.
+  if v_author is not null
+     and not exists (select 1 from public.blog_authors where id = v_author) then
     raise exception 'blog_author_required' using errcode = '22023';
   end if;
 
@@ -342,6 +345,13 @@ begin
   end if;
   if coalesce(btrim((select title from public.blog_posts where id = p_post_id)), '') = '' then
     raise exception 'blog_title_required' using errcode = '22023';
+  end if;
+  if (select author_id from public.blog_posts where id = p_post_id) is null then
+    raise exception 'blog_author_required' using errcode = '22023';
+  end if;
+  if coalesce(btrim((select cover_url from public.blog_posts where id = p_post_id)), '') <> ''
+     and coalesce(btrim((select cover_alt from public.blog_posts where id = p_post_id)), '') = '' then
+    raise exception 'blog_cover_alt_required' using errcode = '22023';
   end if;
   update public.blog_posts set
     status = 'published',

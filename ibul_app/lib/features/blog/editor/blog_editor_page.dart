@@ -10,6 +10,7 @@ import '../widgets/blog_article_view.dart';
 import '../widgets/blog_inline_text.dart';
 import '../widgets/blog_theme.dart';
 import 'blog_block_editor.dart';
+import 'blog_editor_controls.dart';
 import 'blog_editor_settings_panel.dart';
 import 'blog_unload_guard.dart';
 
@@ -147,6 +148,15 @@ class _BlogEditorPageState extends State<BlogEditorPage> {
     }
   }
 
+  void _offerUndo(VoidCallback undo) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Değişiklik geri alınabilir.'),
+        action: SnackBarAction(label: 'Geri al', onPressed: undo),
+      ),
+    );
+  }
+
   void _onChanged() {
     setState(() {});
     setBlogUnloadGuard(_dirty);
@@ -214,8 +224,19 @@ class _BlogEditorPageState extends State<BlogEditorPage> {
     setBlogUnloadGuard(false);
   }
 
-  Future<void> _workflow(Future<BlogPost> Function(String id) action, String done) async {
+  Future<void> _workflow(
+    Future<BlogPost> Function(String id) action,
+    String done, {
+    bool publishing = false,
+  }) async {
     if (!await _save(quiet: true)) return;
+    if (publishing) {
+      final problem = _draft!.validate(publishing: true);
+      if (problem != null) {
+        _toast(problem, error: true);
+        return;
+      }
+    }
     setState(() => _busy = true);
     try {
       final result = await action(_draft!.id!);
@@ -366,13 +387,19 @@ class _BlogEditorPageState extends State<BlogEditorPage> {
           FilledButton(
             onPressed: _busy
                 ? null
-                : () => _workflow(_repo.submitForReview, 'İncelemeye gönderildi.'),
+                : () => _workflow(
+                    _repo.submitForReview,
+                    'İncelemeye gönderildi.',
+                    publishing: true,
+                  ),
             child: const Text('İncelemeye gönder'),
           ),
         if (admin)
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: BlogTheme.accent),
-            onPressed: _busy ? null : () => _workflow(_repo.publish, 'Yayınlandı.'),
+            onPressed: _busy
+                ? null
+                : () => _workflow(_repo.publish, 'Yayınlandı.', publishing: true),
             child: Text(status == BlogPostStatus.published ? 'Değişiklikleri yayınla' : 'Yayınla'),
           ),
         if (admin && status == BlogPostStatus.published)
@@ -405,7 +432,7 @@ class _BlogEditorPageState extends State<BlogEditorPage> {
             key: ValueKey('canvas$_generation'),
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _PlainField(
+              BlogPlainField(
                 initial: draft.title,
                 hint: 'Başlık',
                 style: BlogTheme.titleStyle(context),
@@ -414,7 +441,7 @@ class _BlogEditorPageState extends State<BlogEditorPage> {
                   _onChanged();
                 },
               ),
-              _PlainField(
+              BlogPlainField(
                 initial: draft.subtitle,
                 hint: 'Alt başlık (isteğe bağlı)',
                 style: BlogTheme.subtitleStyle(context),
@@ -427,6 +454,7 @@ class _BlogEditorPageState extends State<BlogEditorPage> {
               BlogBlockListEditor(
                 blocks: draft.document.blocks,
                 onChanged: _onChanged,
+                onUndo: _offerUndo,
               ),
             ],
           ),
@@ -454,46 +482,3 @@ class _BlogEditorPageState extends State<BlogEditorPage> {
   }
 }
 
-class _PlainField extends StatefulWidget {
-  const _PlainField({
-    required this.initial,
-    required this.hint,
-    required this.style,
-    required this.onChanged,
-  });
-
-  final String initial;
-  final String hint;
-  final TextStyle style;
-  final ValueChanged<String> onChanged;
-
-  @override
-  State<_PlainField> createState() => _PlainFieldState();
-}
-
-class _PlainFieldState extends State<_PlainField> {
-  late final TextEditingController _controller = TextEditingController(
-    text: widget.initial,
-  );
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      controller: _controller,
-      maxLines: null,
-      style: widget.style,
-      onChanged: widget.onChanged,
-      decoration: InputDecoration(
-        hintText: widget.hint,
-        border: InputBorder.none,
-        hintStyle: widget.style.copyWith(color: BlogTheme.line),
-      ),
-    );
-  }
-}

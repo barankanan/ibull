@@ -67,6 +67,34 @@ def inline(source: str, link: str | None = None) -> str:
     return "".join(out)
 
 
+def image_html(b: dict) -> str:
+    """Matches BlogFramedImage: legacy images stay plain; a crop uses the same fractions."""
+    url = b.get("url") or ""
+    if not str(url).strip() or not safe_url(url):
+        return ""
+    img = f'<img src="{esc(url)}" alt="{esc(b.get("alt"))}" loading="lazy">'
+    crop = b.get("crop") if isinstance(b.get("crop"), dict) else None
+    fit = b.get("fit")
+    width = {"narrow": "50%", "medium": "75%"}.get(b.get("width") or "", "100%")
+    align = {"start": "0 auto 0 0", "end": "0 0 0 auto"}.get(b.get("align") or "", "0 auto")
+    if not crop or fit == "contain":
+        return f'<div style="width:{width};margin:{align}">{img}</div>'
+    try:
+        x, y, w, h = (float(crop[k]) for k in ("x", "y", "w", "h"))
+    except (KeyError, TypeError, ValueError):
+        return img
+    if w <= 0 or h <= 0:
+        return img
+    aspect = crop.get("aspect")
+    ratio = f"aspect-ratio:{float(aspect)};" if isinstance(aspect, (int, float)) and aspect else ""
+    return (
+        f'<div class="crop" style="width:{width};margin:{align};position:relative;overflow:hidden;{ratio}">'
+        f'<img src="{esc(url)}" alt="{esc(b.get("alt"))}" loading="lazy" '
+        f'style="position:absolute;max-width:none;width:{100 / w:.4f}%;height:{100 / h:.4f}%;'
+        f'left:{-100 * x / w:.4f}%;top:{-100 * y / h:.4f}%"></div>'
+    )
+
+
 def figure(inner: str, caption: str) -> str:
     cap = f"<figcaption>{inline(caption)}</figcaption>" if caption.strip() else ""
     return f"<figure>{inner}{cap}</figure>"
@@ -89,13 +117,8 @@ def block_html(b: dict, nested: bool = False) -> str:
         cite_html = f"<footer>— {esc(cite)}</footer>" if cite.strip() else ""
         return f"<blockquote><p>{inline(b.get('text') or '')}</p>{cite_html}</blockquote>"
     if t == "image":
-        url = b.get("url") or ""
-        if not url.strip() or not safe_url(url):
-            return ""
-        return figure(
-            f'<img src="{esc(url)}" alt="{esc(b.get("alt"))}" loading="lazy">',
-            b.get("caption") or "",
-        )
+        inner = image_html(b)
+        return figure(inner, b.get("caption") or "") if inner else ""
     if t == "video":
         url = (b.get("url") or "").strip()
         if not url or not safe_url(url):

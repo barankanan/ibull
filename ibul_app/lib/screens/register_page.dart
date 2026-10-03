@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import '../app/ibul_router.dart';
 import '../core/constants.dart';
 import '../services/auth_service.dart';
 
@@ -16,6 +18,7 @@ class _RegisterPageState extends State<RegisterPage> {
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmController = TextEditingController();
   final AuthService _authService = AuthService();
   bool _isLoading = false;
   bool _obscurePassword = true;
@@ -27,6 +30,7 @@ class _RegisterPageState extends State<RegisterPage> {
     _emailController.dispose();
     _phoneController.dispose();
     _passwordController.dispose();
+    _confirmController.dispose();
     super.dispose();
   }
 
@@ -54,16 +58,11 @@ class _RegisterPageState extends State<RegisterPage> {
         }
         
         if (!mounted) return;
-        
-        // Registration successful
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Hesabınız başarıyla oluşturuldu!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        
-        // Navigate back to root (Home) since auth state change will handle the rest
+        final next = GoRouter.maybeOf(context)?.state.uri.queryParameters['next'];
+        if (next != null && next.startsWith('/') && !next.startsWith('//')) {
+          IbulRouter.go(context, next);
+          return;
+        }
         Navigator.of(context).popUntil((route) => route.isFirst);
         
       } catch (e) {
@@ -322,6 +321,26 @@ class _RegisterPageState extends State<RegisterPage> {
                           }
                           if (value.length < 6) {
                             return 'Şifre en az 6 karakter olmalıdır';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _confirmController,
+                        obscureText: _obscurePassword,
+                        decoration: InputDecoration(
+                          labelText: 'Şifre tekrar',
+                          filled: true,
+                          fillColor: Colors.grey.shade50,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                        validator: (value) {
+                          if (value != _passwordController.text) {
+                            return 'Şifreler eşleşmiyor';
                           }
                           return null;
                         },

@@ -5483,6 +5483,24 @@ class AdminService {
     }
   }
 
+  /// Ürünler kategoriye ad ile bağlıdır (`products.main_category` / `sub_category`).
+  Future<int> countProductsForCategory({
+    required String name,
+    String? parentName,
+  }) async {
+    if (parentName == null) {
+      return _supabase
+          .from('products')
+          .count(CountOption.exact)
+          .eq('main_category', name);
+    }
+    return _supabase
+        .from('products')
+        .count(CountOption.exact)
+        .eq('main_category', parentName)
+        .eq('sub_category', name);
+  }
+
   Future<void> saveAppCategory(Map<String, dynamic> category) async {
     final data = Map<String, dynamic>.from(category);
     if (data['id'] == null) {

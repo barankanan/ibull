@@ -11,7 +11,7 @@ class HomeVehicleRailSection extends StatefulWidget {
     super.key,
     required this.listings,
     this.isLoading = false,
-    this.title = 'Otomobil & Araçlar',
+    this.title = 'Araç İlanları',
     this.errorMessage,
     this.onRetry,
   });
@@ -54,12 +54,12 @@ class _HomeVehicleRailSectionState extends State<HomeVehicleRailSection> {
     }
     if (widget.errorMessage != null && widget.listings.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(10, 16, 10, 8),
+        padding: const EdgeInsets.fromLTRB(0, 16, 0, 8),
         child: Row(
           children: [
             const Expanded(
               child: Text(
-                'Otomobil & Araçlar yüklenemedi',
+                'Araç ilanları yüklenemedi',
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
@@ -75,12 +75,17 @@ class _HomeVehicleRailSectionState extends State<HomeVehicleRailSection> {
         ),
       );
     }
-    if (widget.listings.isEmpty) return const SizedBox.shrink();
+    if (widget.listings.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Text('Şu anda yayında araç ilanı bulunmuyor.'),
+      );
+    }
     final showArrows =
         widget.listings.length > 3 && MediaQuery.sizeOf(context).width >= 700;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 16, 10, 8),
+      padding: const EdgeInsets.fromLTRB(0, 16, 0, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

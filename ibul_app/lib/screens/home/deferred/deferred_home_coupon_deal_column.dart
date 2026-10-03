@@ -85,7 +85,7 @@ class _DeferredHomeCouponDealColumnState
           ),
         ),
         SizedBox(height: 12),
-        SkeletonLoading(width: double.infinity, height: 150, borderRadius: 16),
+        SkeletonLoading(width: double.infinity, height: 108, borderRadius: 16),
       ],
     );
 

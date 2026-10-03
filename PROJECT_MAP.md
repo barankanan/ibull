@@ -674,7 +674,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `ibul_app/lib/widgets/skeleton_loading.dart`
   - `SkeletonLoading` shimmer primitive + `ProductCardSkeleton`; arama/ana sayfa grid loading kartları. `tight` modu arama sonuç grid'i ile hizalı constraint-aware layout kullanır.
 - `ibul_app/lib/widgets/web_sticky_footer_scroll_view.dart`
-  - Web hesap/checkout/sepet/home sayfalarında paylaşılan scroll + sticky footer layout. `footerReserve` yalnız ölçülen footer slot yüksekliği (gap çift sayılmaz); body `minHeight = viewport − footerReserve`; `WebStickyFooterBodyScope` ile alt içerik alanına body yüksekliği iletilir.
+  - Tek web footer kabuğu: `MarketplaceWebPageShell` ve `WebStickyFooterScrollView` / `WebStickyFooterEndSliver`. Sayfalar `WebFooter` kurmaz. Aralık yalnız `IbulChrome.footerGap`: kısa sayfada desktop 200 / tablet 140 / mobil 80, uzun sayfada içeriğin sonunda 64/48. Footer fixed/absolute değildir.
 - `ibul_app/lib/core/store_logo_helper.dart`
   - store logo çözümleme.
 

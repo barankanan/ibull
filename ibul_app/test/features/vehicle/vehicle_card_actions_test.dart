@@ -133,4 +133,49 @@ void main() {
     expect(VehicleCompareStore.instance.contains('listing-2'), isTrue);
     expect(find.text('Araç Karşılaştırma'), findsWidgets);
   });
+
+  testWidgets('cta follows listingType, not the title', (tester) async {
+    Future<void> pump(VehicleListing listing) {
+      return tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(child: VehicleListingCta(listing: listing)),
+          ),
+        ),
+      );
+    }
+
+    await pump(
+      _listing(
+        id: 'rent-1',
+        type: VehicleListingType.rental,
+        title: 'Toyota Corolla',
+        salePrice: null,
+      ),
+    );
+    expect(find.text('Kirala'), findsOneWidget);
+    expect(find.text('İletişime Geç'), findsNothing);
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('vehicle-cta-rent-rent-1')))
+          .height,
+      inInclusiveRange(38, 42),
+    );
+
+    await pump(
+      _listing(
+        id: 'sale-1',
+        type: VehicleListingType.sale,
+        title: 'reno clio kiralık',
+      ),
+    );
+    expect(find.text('İletişime Geç'), findsOneWidget);
+    expect(find.text('Kirala'), findsNothing);
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('vehicle-cta-contact-sale-1')))
+          .height,
+      inInclusiveRange(38, 42),
+    );
+  });
 }

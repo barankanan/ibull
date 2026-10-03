@@ -70,91 +70,107 @@ class _CouponDiscoverPageState extends State<CouponDiscoverPage> {
     }
   }
 
+  Widget _status(Widget child) {
+    return Padding(
+      padding: const EdgeInsets.all(32),
+      child: child,
+    );
+  }
+
+  Widget _couponCard(CouponCampaign item) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFFE082)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(item.name, style: const TextStyle(fontWeight: FontWeight.w800)),
+                Text(
+                  '${item.discountLabel} • ${item.code}',
+                  style: const TextStyle(color: AppColors.primary),
+                ),
+                Text(
+                  [
+                    CouponStatusLabels.source(item.sourceType),
+                    if ((item.storeName ?? '').isNotEmpty) item.storeName!,
+                    CouponStatusLabels.scope(item.scopeType),
+                  ].join(' • '),
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                ),
+              ],
+            ),
+          ),
+          FilledButton(
+            onPressed: () => _claim(item),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+            child: const Text('Al'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _list({required bool scroll}) {
+    if (_loading) {
+      return _status(const CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return _status(
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_error!),
+            OutlinedButton(onPressed: _load, child: const Text('Tekrar dene')),
+          ],
+        ),
+      );
+    }
+    if (_items.isEmpty) {
+      return _status(const Text('Şu anda keşfedilecek kupon yok.'));
+    }
+    if (!scroll) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            for (var index = 0; index < _items.length; index++) ...[
+              if (index > 0) const SizedBox(height: 10),
+              _couponCard(_items[index]),
+            ],
+          ],
+        ),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.all(16),
+      itemCount: _items.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
+      itemBuilder: (context, index) => _couponCard(_items[index]),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isWeb = MediaQuery.of(context).size.width >= 800;
-    final body = _loading
-        ? const Center(child: CircularProgressIndicator())
-        : _error != null
-        ? Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(_error!),
-                OutlinedButton(onPressed: _load, child: const Text('Tekrar dene')),
-              ],
-            ),
-          )
-        : _items.isEmpty
-        ? const Center(child: Text('Şu anda keşfedilecek kupon yok.'))
-        : ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: _items.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (context, index) {
-              final item = _items[index];
-              return Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFFFE082)),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item.name,
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                          Text(
-                            '${item.discountLabel} • ${item.code}',
-                            style: const TextStyle(color: AppColors.primary),
-                          ),
-                          Text(
-                            [
-                              CouponStatusLabels.source(item.sourceType),
-                              if ((item.storeName ?? '').isNotEmpty) item.storeName!,
-                              CouponStatusLabels.scope(item.scopeType),
-                            ].join(' • '),
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFF6B7280),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    FilledButton(
-                      onPressed: () => _claim(item),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                      ),
-                      child: const Text('Al'),
-                    ),
-                  ],
-                ),
-              );
-            },
-          );
-
     if (!isWeb) {
       return Scaffold(
         appBar: AppBar(title: const Text('Kuponları Keşfet')),
-        body: body,
+        body: _loading || _error != null || _items.isEmpty
+            ? Center(child: _list(scroll: false))
+            : _list(scroll: true),
       );
     }
-    return Scaffold(
+    return MarketplaceWebPageShell(
       backgroundColor: const Color(0xFFF9FAFB),
-      body: Column(
-        children: [
-          WebHeader(onSearch: (q) {}),
-          Expanded(child: WebStickyFooterScrollView(child: SizedBox(height: 800, child: body))),
-        ],
-      ),
+      header: WebHeader(onSearch: (q) {}),
+      child: _list(scroll: false),
     );
   }
 }

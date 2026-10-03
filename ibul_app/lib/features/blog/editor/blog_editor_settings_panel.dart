@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../data/blog_media_service.dart';
+import '../models/blog_image_frame.dart';
 import '../models/blog_models.dart';
 import '../models/blog_post_draft.dart';
+import '../widgets/blog_framed_image.dart';
 import '../widgets/blog_theme.dart';
+import 'blog_image_adjust_dialog.dart';
 
 class BlogEditorLookups {
   const BlogEditorLookups({
@@ -90,6 +93,17 @@ class _BlogEditorSettingsPanelState extends State<BlogEditorSettingsPanel> {
     );
   }
 
+  Future<void> _editCover() async {
+    final next = await showBlogImageAdjustDialog(
+      context: context,
+      url: _d.coverUrl,
+      initial: _d.document.coverFrame ?? const BlogImageFrame(),
+    );
+    if (next == null || !mounted) return;
+    setState(() => _d.document.coverFrame = next.isLegacy ? null : next);
+    widget.onChanged();
+  }
+
   Future<void> _uploadCover() async {
     setState(() {
       _coverProgress = 0;
@@ -104,6 +118,7 @@ class _BlogEditorSettingsPanelState extends State<BlogEditorSettingsPanel> {
       );
       if (url != null) {
         _d.coverUrl = url;
+        _d.document.coverFrame = null;
         _controllers['cover_url']?.text = url;
         widget.onChanged();
       }
@@ -170,19 +185,33 @@ class _BlogEditorSettingsPanelState extends State<BlogEditorSettingsPanel> {
         if (_d.coverUrl.trim().isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: AspectRatio(
-                aspectRatio: BlogTheme.coverAspect,
-                child: BlogImage(url: _d.coverUrl),
+            child: InkWell(
+              onTap: _editCover,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: BlogFramedImage(
+                  url: _d.coverUrl,
+                  frame: _d.document.coverFrame ?? const BlogImageFrame(),
+                ),
               ),
             ),
           ),
         _text('cover_url', _d.coverUrl, (v) => _d.coverUrl = v, 'Kapak görseli adresi'),
-        OutlinedButton.icon(
-          onPressed: _coverProgress != null ? null : _uploadCover,
-          icon: const Icon(Icons.upload_outlined),
-          label: const Text('Kapak yükle'),
+        Wrap(
+          spacing: 8,
+          children: [
+            OutlinedButton.icon(
+              onPressed: _coverProgress != null ? null : _uploadCover,
+              icon: const Icon(Icons.upload_outlined),
+              label: const Text('Kapak yükle'),
+            ),
+            if (_d.coverUrl.trim().isNotEmpty)
+              OutlinedButton.icon(
+                onPressed: _editCover,
+                icon: const Icon(Icons.crop),
+                label: const Text('Kapağı düzenle'),
+              ),
+          ],
         ),
         if (_coverProgress != null)
           Padding(

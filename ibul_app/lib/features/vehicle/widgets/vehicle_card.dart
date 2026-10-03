@@ -44,6 +44,7 @@ class _HubVehicleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final listing = card.listing;
+    final imageUrl = listing.primaryImageUrl;
     return SizedBox(
       width: card.width ?? 180,
       child: Stack(
@@ -70,8 +71,7 @@ class _HubVehicleCard extends StatelessWidget {
                     ),
                     child: AspectRatio(
                       aspectRatio: 4 / 3,
-                      child:
-                          listing.coverUrl == null || listing.coverUrl!.isEmpty
+                      child: imageUrl == null || imageUrl.isEmpty
                           ? ColoredBox(
                               color: AppColors.surfaceMuted,
                               child: Icon(
@@ -80,7 +80,10 @@ class _HubVehicleCard extends StatelessWidget {
                               ),
                             )
                           : OptimizedImage(
-                              imageUrlOrPath: AppImageCdn.buildUrl(listing.coverUrl!, AppImageVariant.card),
+                              imageUrlOrPath: AppImageCdn.buildUrl(
+                                imageUrl,
+                                AppImageVariant.card,
+                              ),
                               fit: BoxFit.cover,
                               cacheWidth: 600,
                               cacheHeight: 600,
@@ -121,6 +124,8 @@ class _HubVehicleCard extends StatelessWidget {
                             fontSize: 13,
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        VehicleListingCta(listing: listing),
                       ],
                     ),
                   ),
@@ -143,6 +148,7 @@ class _StorefrontVehicleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final listing = card.listing;
+    final imageUrl = listing.primaryImageUrl;
     final padding = card.tight ? 4.0 : 8.0;
     return SizedBox(
       width: card.width,
@@ -170,10 +176,10 @@ class _StorefrontVehicleCard extends StatelessWidget {
                   onTap:
                       card.onTap ??
                       () => VehicleRoutes.openDetail(
-                    context,
-                    listing.id,
-                    slug: listing.title,
-                  ),
+                        context,
+                        listing.id,
+                        slug: listing.title,
+                      ),
                   child: Padding(
                     padding: EdgeInsets.all(padding),
                     child: Column(
@@ -186,9 +192,7 @@ class _StorefrontVehicleCard extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(12),
                                 child: ColoredBox(
                                   color: const Color(0xFFF7F7F8),
-                                  child:
-                                      listing.coverUrl == null ||
-                                          listing.coverUrl!.isEmpty
+                                  child: imageUrl == null || imageUrl.isEmpty
                                       ? const Center(
                                           child: Icon(
                                             Icons.directions_car_outlined,
@@ -197,7 +201,10 @@ class _StorefrontVehicleCard extends StatelessWidget {
                                           ),
                                         )
                                       : OptimizedImage(
-                                          imageUrlOrPath: AppImageCdn.buildUrl(listing.coverUrl!, AppImageVariant.card),
+                                          imageUrlOrPath: AppImageCdn.buildUrl(
+                                            imageUrl,
+                                            AppImageVariant.card,
+                                          ),
                                           width: double.infinity,
                                           height: double.infinity,
                                           fit: BoxFit.cover,
@@ -247,6 +254,8 @@ class _StorefrontVehicleCard extends StatelessWidget {
                             fontSize: 14,
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        VehicleListingCta(listing: listing),
                       ],
                     ),
                   ),
@@ -282,6 +291,76 @@ class _StorefrontVehicleCard extends StatelessWidget {
           color: Color(0xFF2F2A16),
         ),
       ),
+    );
+  }
+}
+
+class VehicleListingCta extends StatelessWidget {
+  const VehicleListingCta({super.key, required this.listing});
+
+  final VehicleListing listing;
+
+  static const double height = 40;
+
+  bool get _rentOnly => listing.listingType == VehicleListingType.rental;
+
+  @override
+  Widget build(BuildContext context) {
+    final rent = _rentOnly;
+    return SizedBox(
+      width: double.infinity,
+      height: height,
+      child: rent
+          ? ElevatedButton(
+              key: ValueKey('vehicle-cta-rent-${listing.id}'),
+              onPressed: () =>
+                  VehicleRoutes.openRental(context, listingId: listing.id),
+              style: ElevatedButton.styleFrom(
+                elevation: 0,
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                minimumSize: const Size(0, height),
+                maximumSize: const Size(double.infinity, height),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                'Kirala',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            )
+          : OutlinedButton(
+              key: ValueKey('vehicle-cta-contact-${listing.id}'),
+              onPressed: () => VehicleRoutes.openDetail(
+                context,
+                listing.id,
+                slug: listing.title,
+                focusContact: true,
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                backgroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                minimumSize: const Size(0, height),
+                maximumSize: const Size(double.infinity, height),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                side: const BorderSide(color: AppColors.primary, width: 1.4),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                'İletişime Geç',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ),
     );
   }
 }

@@ -34,7 +34,8 @@ class CouponRepository {
       'not authorized': 'Bu işlem için yetkiniz yok.',
       'not authenticated': 'Devam etmek için giriş yapın.',
       'probability total': 'Kazanma oranları toplamı %100 olmalıdır.',
-      'wheel item must reference': 'Çarka yalnızca onaylı kuponlar eklenebilir.',
+      'wheel item must reference':
+          'Çarka yalnızca onaylı kuponlar eklenebilir.',
       'wheel items required': 'En az bir ödül ekleyin.',
       'wheel config not found':
           'Hediye çarkı ayarı bulunamadı. Sayfayı yenileyip tekrar deneyin.',
@@ -85,7 +86,9 @@ class CouponRepository {
     }
   }
 
-  Future<CouponAdminSummary> adminSummary(List<CouponCampaign> campaigns) async {
+  Future<CouponAdminSummary> adminSummary(
+    List<CouponCampaign> campaigns,
+  ) async {
     var active = 0;
     var pending = 0;
     var scheduled = 0;
@@ -170,7 +173,9 @@ class CouponRepository {
         'coupon_upsert_campaign',
         params: {'p_payload': campaign.toUpsertPayload()},
       );
-      final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+      final map = raw is Map
+          ? Map<String, dynamic>.from(raw)
+          : <String, dynamic>{};
       final id = map['id']?.toString() ?? campaign.id;
       return campaign.id == id
           ? campaign
@@ -288,11 +293,15 @@ class CouponRepository {
           .map(
             (row) => DailyDealProduct.fromMap(Map<String, dynamic>.from(row)),
           )
-          .where((item) => item.discountPrice > 0 && item.discountPrice < item.price)
+          .where(
+            (item) => item.price > 0 && item.discountPrice > item.price,
+          )
           .toList(growable: false);
     } catch (error) {
       debugPrint('[CouponRepository] listDailyDeals error: $error');
-      throw CouponRepositoryException('Günün fırsatları yüklenemedi: ${_publicMessage(error)}');
+      throw CouponRepositoryException(
+        'Günün fırsatları yüklenemedi. Lütfen tekrar deneyin.',
+      );
     }
   }
 
@@ -318,7 +327,9 @@ class CouponRepository {
         .where((item) => item.isActive)
         .fold<int>(0, (sum, item) => sum + item.probabilityBps);
     if (activeBps != 10000) {
-      throw CouponRepositoryException('Kazanma oranları toplamı %100 olmalıdır.');
+      throw CouponRepositoryException(
+        'Kazanma oranları toplamı %100 olmalıdır.',
+      );
     }
     try {
       await _client.rpc(

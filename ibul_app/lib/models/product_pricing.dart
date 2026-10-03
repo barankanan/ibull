@@ -255,6 +255,21 @@ class ProductSizeOption {
   }
 }
 
+class ResolvedSellerPrice {
+  const ResolvedSellerPrice({
+    required this.current,
+    this.original,
+    this.saleColumn,
+  });
+
+  final double current;
+  final double? original;
+  final double? saleColumn;
+
+  bool get hasDiscount =>
+      original != null && current > 0 && original! > current;
+}
+
 class ProductPriceCalculator {
   const ProductPriceCalculator._();
 
@@ -474,6 +489,35 @@ class ProductPriceCalculator {
       return 0;
     }
     return value;
+  }
+
+  /// Seller panel source of truth.
+  /// `products.price` is the list/original amount.
+  /// `products.discount_price` is the current sale amount when it is > 0.
+  static ResolvedSellerPrice resolveSellerPrice({
+    required double listPrice,
+    double? discountPrice,
+  }) {
+    final list = listPrice.isNaN || listPrice.isInfinite || listPrice < 0
+        ? 0.0
+        : listPrice;
+    final sale = sanitizePrice(discountPrice);
+    final current = sale > 0 ? sale : list;
+    final original = sale > 0 && list > sale ? list : null;
+    return ResolvedSellerPrice(
+      current: current,
+      original: original,
+      saleColumn: sale > 0 ? sale : null,
+    );
+  }
+
+  static String formatCatalogAmount(double amount) {
+    if (amount.isNaN || amount.isInfinite || amount <= 0) return '0 TL';
+    final hasFraction = (amount - amount.roundToDouble()).abs() >= 0.01;
+    final text = hasFraction
+        ? amount.toStringAsFixed(2)
+        : amount.toStringAsFixed(0);
+    return '$text TL';
   }
 
   static double sanitizeAmount(double? value) {

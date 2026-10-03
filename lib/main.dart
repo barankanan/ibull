@@ -8,6 +8,9 @@ import 'package:ibul_app/app/ibul_app_boot.dart';
 import 'package:ibul_app/app/ibul_boot_controller.dart';
 import 'package:ibul_app/app/ibul_boot_shell_app.dart';
 import 'package:ibul_app/app/ibul_material_app.dart';
+import 'package:ibul_app/app/shared_app_widgets.dart';
+import 'package:ibul_app/app/web_path_url_strategy_stub.dart'
+    if (dart.library.html) 'package:ibul_app/app/web_path_url_strategy_web.dart';
 import 'package:ibul_app/app/ibul_safe_boot_app.dart';
 import 'package:ibul_app/core/config/runtime_config.dart';
 import 'package:ibul_app/core/ibul_boot_stage.dart';
@@ -23,6 +26,7 @@ final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  enableIbulPathUrlStrategy();
   WebBootLogger.log('main', detail: 'entered');
   WebBootStepProfiler.done('widgets_binding');
 
@@ -103,8 +107,8 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return IbulMaterialApp(
       navigatorKey: rootNavigatorKey,
-      includeAuthRoutes: false,
-      navigatorObservers: [routeObserver],
+      includeAuthRoutes: true,
+      navigatorObservers: [routeObserver, SeoRouteObserver()],
     );
   }
 }

@@ -86,7 +86,10 @@ class _DeferredHomeFullRailSectionState
   }
 
   void _retry() {
-    setState(() => _loadFuture = _loadLibrary());
+    _loadFuture = _loadLibrary();
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _logRenderStartedOnce() {

@@ -18,6 +18,18 @@ abstract final class IbulChrome {
 
   static const Color footerInk = Color(0xFF1A1A2E);
 
+  /// Uzun sayfada içerik ile footer arasındaki nefes.
+  static const double footerLongSpacingDesktop = 64;
+  static const double footerLongSpacingCompact = 48;
+
+  /// Kısa sayfada footer'dan önceki minimum boşluk.
+  static const double footerShortClearanceDesktop = 200;
+  static const double footerShortClearanceTablet = 140;
+  static const double footerShortClearanceMobile = 80;
+
+  /// Kısa sayfada belgenin viewport altına taşacağı minimum miktar.
+  static const double footerShortOverflow = 72;
+
   static bool isWeb(double width) => width >= web;
 
   static bool isWebOf(BuildContext context) =>
@@ -51,4 +63,40 @@ abstract final class IbulChrome {
   static const BoxConstraints contentConstraints = BoxConstraints(
     maxWidth: maxContentWidth,
   );
+
+  /// Desktop >= 1100, tablet, mobil. Tek kaynak: kısa sayfa footer boşluğu.
+  static double footerShortClearanceForWidth(double width) {
+    if (width >= web) return footerShortClearanceDesktop;
+    if (width > ScreenBreakpoints.mobile) return footerShortClearanceTablet;
+    return footerShortClearanceMobile;
+  }
+
+  static double footerLongSpacingForWidth(double width) {
+    return width >= web ? footerLongSpacingDesktop : footerLongSpacingCompact;
+  }
+
+  /// İçerik viewport'a sığıyorsa kısa clearance, taşarsa uzun sayfa aralığı.
+  /// Kısa sayfada footer'ın tamamı ilk ekrana sığmasın diye gerekirse boşluk büyür.
+  static double footerGap({
+    required double width,
+    required double contentHeight,
+    required double footerHeight,
+    required double viewportHeight,
+    double trailingPadding = 0,
+  }) {
+    if (!viewportHeight.isFinite || viewportHeight <= 0) {
+      return footerLongSpacingForWidth(width);
+    }
+    if (contentHeight > viewportHeight) {
+      return footerLongSpacingForWidth(width);
+    }
+    final short = footerShortClearanceForWidth(width);
+    if (footerHeight <= 0) return short;
+    final footerBlock = footerHeight + trailingPadding;
+    final minExtent = viewportHeight + footerShortOverflow;
+    final extent = contentHeight + short + footerBlock;
+    if (extent >= minExtent) return short;
+    final grown = minExtent - contentHeight - footerBlock;
+    return grown > short ? grown : short;
+  }
 }

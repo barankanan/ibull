@@ -7,6 +7,7 @@ extension _AppStateCartFavoritesDomain on AppState {
     final payload = favorites.map((p) => p.toJson()).toList();
     unawaited(_persistUserCollection('favorites', payload));
     _syncPushInterests();
+    notifyListeners();
   }
 
   Future<String?> addToCartValidated(
@@ -38,12 +39,14 @@ extension _AppStateCartFavoritesDomain on AppState {
       productId: (product.productId ?? '').trim().isEmpty
           ? null
           : product.productId,
+      cartQuantity: product.cartQuantity ?? 1,
     );
     _cartState.addOrReplace(resolvedProduct);
     _selectedCartTabIndex = CartState.tabIndexForProduct(resolvedProduct);
     _clearCartAttention(resolvedProduct);
     unawaited(_persistCartState());
     _syncPushInterests();
+    notifyListeners();
   }
 
   void _removeFromCartImpl(Product product) {
@@ -51,5 +54,6 @@ extension _AppStateCartFavoritesDomain on AppState {
     _clearCartAttention(product);
     unawaited(_persistCartState());
     _syncPushInterests();
+    notifyListeners();
   }
 }

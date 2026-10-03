@@ -154,11 +154,13 @@ class HomeWrapper extends StatefulWidget {
     super.key,
     this.initialIndex = 0,
     this.initialCategory,
+    this.initialSubCategory,
     this.initialSearchQuery,
   });
 
   final int initialIndex;
   final String? initialCategory;
+  final String? initialSubCategory;
   final String? initialSearchQuery;
 
   @override
@@ -179,6 +181,7 @@ class _HomeWrapperState extends State<HomeWrapper> {
     return HomeScreenGate(
       initialIndex: widget.initialIndex,
       initialCategory: widget.initialCategory,
+      initialSubCategory: widget.initialSubCategory,
       initialSearchQuery: widget.initialSearchQuery,
     );
   }

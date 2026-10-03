@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'blog_content.dart';
 
 DateTime? _date(Object? raw) =>
@@ -287,9 +289,14 @@ class BlogAccess {
   bool get canWrite => isAdmin || authorId != null;
 
   factory BlogAccess.fromJson(Object? raw) {
-    if (raw is! Map) return none;
+    if (raw is String && raw.trim().startsWith('{')) {
+      raw = jsonDecode(raw);
+    }
+    if (raw is! Map) {
+      throw const FormatException('blog_my_access');
+    }
     return BlogAccess(
-      isAdmin: raw['is_admin'] == true,
+      isAdmin: raw['is_admin'] == true || raw['is_admin'] == 'true',
       authorId: _text(raw['author_id']),
       authorName: _text(raw['author_name']),
     );

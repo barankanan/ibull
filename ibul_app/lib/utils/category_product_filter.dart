@@ -22,7 +22,7 @@ class CategoryProductFilter {
     final main = TextNormalizer.normalize(mainCategory);
     final sub = TextNormalizer.normalize(subCategory);
 
-    if (main == TextNormalizer.normalize('Elektronik')) {
+    if (_isElectronicsLabel(main)) {
       if (sub.contains('telefonlar') || sub == 'telefon') {
         return 'sub_category.ilike.*telefon*,'
             'name.ilike.*telefon*,'
@@ -33,7 +33,11 @@ class CategoryProductFilter {
       if (sub.contains('laptop') || sub.contains('tablet')) {
         return 'sub_category.ilike.*bilgisayar*,'
             'sub_category.ilike.*tablet*,'
+            'sub_category.ilike.*ipad*,'
             'name.ilike.*laptop*,'
+            'name.ilike.*tablet*,'
+            'name.ilike.*ipad*,'
+            'name.ilike.*galaxy tab*,'
             'name.ilike.*macbook*,'
             'name.ilike.*bilgisayar*';
       }
@@ -83,17 +87,23 @@ class CategoryProductFilter {
     required String? productSubCategory,
     required String productName,
   }) {
+    final productNameNorm = TextNormalizer.normalize(productName);
     final selectedMain = TextNormalizer.normalize(mainCategory);
     final productMain = TextNormalizer.normalize(productMainCategory ?? '');
-    if (productMain != selectedMain) return false;
+    final productSub = TextNormalizer.normalize(productSubCategory ?? '');
+    final selectedSub = TextNormalizer.normalize(subCategory ?? '');
 
+    if (!_mainCategoryMatches(
+      selected: selectedMain,
+      product: productMain,
+      productSub: productSub,
+      productName: productNameNorm,
+    )) {
+      return false;
+    }
     if (isAllSubCategory(subCategory)) return true;
 
-    final selectedSub = TextNormalizer.normalize(subCategory!);
-    final productSub = TextNormalizer.normalize(productSubCategory ?? '');
-    final productNameNorm = TextNormalizer.normalize(productName);
-
-    if (selectedMain == TextNormalizer.normalize('Elektronik')) {
+    if (_isElectronicsLabel(selectedMain)) {
       if (selectedSub.contains('telefonlar') || selectedSub == 'telefon') {
         return productSub.contains('telefon') ||
             productNameNorm.contains('telefon') ||
@@ -104,7 +114,11 @@ class CategoryProductFilter {
       if (selectedSub.contains('laptop') || selectedSub.contains('tablet')) {
         return productSub.contains('bilgisayar') ||
             productSub.contains('tablet') ||
+            productSub.contains('ipad') ||
             productNameNorm.contains('laptop') ||
+            productNameNorm.contains('tablet') ||
+            productNameNorm.contains('ipad') ||
+            productNameNorm.contains('galaxy tab') ||
             productNameNorm.contains('macbook') ||
             productNameNorm.contains('bilgisayar');
       }
@@ -147,4 +161,41 @@ class CategoryProductFilter {
 
     return productSub.isNotEmpty && productSub == selectedSub;
   }
+
+  static bool _mainCategoryMatches({
+    required String selected,
+    required String product,
+    required String productSub,
+    required String productName,
+  }) {
+    if (selected == product) return true;
+    if (selected.isEmpty || product.isEmpty) return false;
+
+    final selectedIsElectronics = _isElectronicsLabel(selected);
+    final productIsElectronics = _isElectronicsLabel(
+      '$product $productSub $productName',
+    );
+    if (selectedIsElectronics && productIsElectronics) return true;
+
+    final selectedIsHome = _isHomeLabel(selected);
+    final productIsHome = _isHomeLabel('$product $productSub');
+    if (selectedIsHome && productIsHome) return true;
+
+    return product.contains(selected) || selected.contains(product);
+  }
+
+  static bool _isElectronicsLabel(String value) =>
+      value.contains('elektronik') ||
+      value.contains('teknoloji') ||
+      value.contains('bilgisayar') ||
+      value.contains('telefon') ||
+      value.contains('tablet') ||
+      value.contains('laptop');
+
+  static bool _isHomeLabel(String value) =>
+      value.contains('ev') &&
+      (value.contains('yasam') ||
+          value.contains('mobilya') ||
+          value.contains('mutfak') ||
+          value.contains('dekorasyon'));
 }

@@ -7,7 +7,7 @@ import '../core/auth/user_identity.dart';
 import '../core/constants.dart';
 import '../core/runtime_diagnostic_logger.dart';
 import '../widgets/web_header.dart';
-import '../widgets/web_footer.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/address_edit_sheet.dart';
 import '../services/order_service.dart';
 import '../features/saved_payment_cards/helpers/checkout_payment_integration.dart';
@@ -63,6 +63,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
   ];
 
   int _selectedAddressIndex = 0;
+  bool _billingSameAsDelivery = true;
+  int _selectedBillingAddressIndex = 0;
   bool _isPlacingOrder = false;
   late final String _checkoutIdempotencyKey =
       'checkout-${DateTime.now().microsecondsSinceEpoch}';
@@ -365,6 +367,21 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final selectedAddress = Map<String, dynamic>.from(
       appState.deliveryAddresses[safeIndex],
     );
+    
+    Map<String, dynamic>? billingAddress;
+    if (!_billingSameAsDelivery) {
+      final safeBillingIndex =
+          (_selectedBillingAddressIndex >= 0 &&
+              _selectedBillingAddressIndex < appState.deliveryAddresses.length)
+          ? _selectedBillingAddressIndex
+          : 0;
+      if (appState.deliveryAddresses.isNotEmpty) {
+        billingAddress = Map<String, dynamic>.from(
+          appState.deliveryAddresses[safeBillingIndex],
+        );
+      }
+    }
+    
     final selectedCard = CheckoutPaymentIntegration.resolvePaymentCardPayload(
       savedCards: _savedCards,
       selectedSavedCardId: _selectedSavedCardId,
@@ -409,6 +426,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         selectedProducts: normalizedSelectedProducts,
         totalAmount: widget.totalPrice,
         deliveryAddress: selectedAddress,
+        billingAddress: billingAddress,
         paymentCard: selectedCard,
         deliveryType: _selectedDeliveryType == 0 ? 'fast' : 'standard',
         deliverySlot: _selectedDeliveryType == 0
@@ -941,46 +959,83 @@ class _CheckoutPageState extends State<CheckoutPage> {
                           ),
                         if (hasAddresses)
                           Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 4,
-                            ),
-                            child: Row(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Icon(
-                                  Icons.receipt_outlined,
-                                  size: 16,
-                                  color: Colors.grey,
-                                ),
-                                const SizedBox(width: 6),
-                                const Text(
-                                  'Fatura Bilgilerim ; ',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                InkWell(
-                                  onTap: () {},
-                                  child: Text(
-                                    currentAddress?['title'] ?? 'Adres',
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      color: AppColors.primary,
+                                Row(
+                                  children: [
+                                    Checkbox(
+                                      value: _billingSameAsDelivery,
+                                      onChanged: (v) {
+                                        setState(() {
+                                          _billingSameAsDelivery = v ?? true;
+                                        });
+                                      },
+                                      activeColor: AppColors.primary,
+                                      visualDensity: VisualDensity.compact,
                                     ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                InkWell(
-                                  onTap: () {},
-                                  child: const Text(
-                                    'Düzenle',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: AppColors.primary,
+                                    const Expanded(
+                                      child: Text(
+                                        'Fatura adresim teslimat adresimle aynı olsun',
+                                        style: TextStyle(fontSize: 12),
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 ),
+                                if (!_billingSameAsDelivery) ...[
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                    children: [
+                                      Expanded(
+                                        child: DropdownButtonFormField<int>(
+                                          value: _selectedBillingAddressIndex < appState.deliveryAddresses.length 
+                                              ? _selectedBillingAddressIndex 
+                                              : 0,
+                                          isExpanded: true,
+                                          isDense: true,
+                                          decoration: InputDecoration(
+                                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                            border: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                              borderSide: BorderSide(color: Colors.grey.shade300),
+                                            ),
+                                          ),
+                                          items: appState.deliveryAddresses.asMap().entries.map((entry) {
+                                            return DropdownMenuItem<int>(
+                                              value: entry.key,
+                                              child: Text(
+                                                entry.value['title'] ?? 'Adres',
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(fontSize: 12),
+                                              ),
+                                            );
+                                          }).toList(),
+                                          onChanged: (val) {
+                                            if (val != null) {
+                                              setState(() {
+                                                _selectedBillingAddressIndex = val;
+                                              });
+                                            }
+                                          },
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, size: 20, color: AppColors.primary),
+                                        onPressed: () {
+                                          int safeIndex = _selectedBillingAddressIndex < appState.deliveryAddresses.length 
+                                              ? _selectedBillingAddressIndex 
+                                              : 0;
+                                          if (appState.deliveryAddresses.isNotEmpty) {
+                                            _showEditAddressSheet(appState.deliveryAddresses[safeIndex], safeIndex);
+                                          }
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -1671,8 +1726,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             color: Colors.transparent,
                             borderRadius: BorderRadius.circular(16),
                           ),
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.only(bottom: 40),
+                          child: WebStickyFooterScrollView(
+                            footerBottomPadding: 40,
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -1713,8 +1768,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                 _buildWebPaymentSection(),
                                 const SizedBox(height: 24),
                                 _buildWebBottomAgreements(),
-                                const SizedBox(height: 40),
-                                const WebFooter(),
                               ],
                             ),
                           ),
@@ -2054,14 +2107,81 @@ class _CheckoutPageState extends State<CheckoutPage> {
           const SizedBox(height: 16),
           // Billing Address Option
           if (hasAddresses)
-            Row(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Checkbox(
-                  value: true,
-                  onChanged: (v) {},
-                  activeColor: AppColors.primary,
+                Row(
+                  children: [
+                    Checkbox(
+                      value: _billingSameAsDelivery,
+                      onChanged: (v) {
+                        setState(() {
+                          _billingSameAsDelivery = v ?? true;
+                        });
+                      },
+                      activeColor: AppColors.primary,
+                    ),
+                    const Expanded(child: Text('Fatura adresim teslimat adresimle aynı olsun')),
+                  ],
                 ),
-                const Text('Fatura adresim teslimat adresimle aynı olsun'),
+                if (!_billingSameAsDelivery) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Fatura Adresi Seçin',
+                        style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                      ),
+                      TextButton.icon(
+                        icon: const Icon(Icons.edit, size: 16),
+                        label: const Text('Fatura Adresini Düzenle'),
+                        onPressed: () {
+                          int safeIndex = _selectedBillingAddressIndex < appState.deliveryAddresses.length 
+                              ? _selectedBillingAddressIndex 
+                              : 0;
+                          if (appState.deliveryAddresses.isNotEmpty) {
+                            _showEditAddressSheet(appState.deliveryAddresses[safeIndex], safeIndex);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<int>(
+                    value: _selectedBillingAddressIndex < appState.deliveryAddresses.length 
+                        ? _selectedBillingAddressIndex 
+                        : 0,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                    ),
+                    items: appState.deliveryAddresses.asMap().entries.map((entry) {
+                      return DropdownMenuItem<int>(
+                        value: entry.key,
+                        child: Text(
+                          entry.value['title'] ?? 'Adres',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() {
+                          _selectedBillingAddressIndex = val;
+                        });
+                      }
+                    },
+                  ),
+                ],
               ],
             ),
         ],

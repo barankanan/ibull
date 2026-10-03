@@ -72,6 +72,7 @@ class Product {
   final int? stock;
   final double? catalogDiscountPrice;
   final DateTime? catalogUpdatedAt;
+  final int? cartQuantity;
 
   Product({
     this.productId,
@@ -136,6 +137,7 @@ class Product {
     this.stock,
     this.catalogDiscountPrice,
     this.catalogUpdatedAt,
+    this.cartQuantity,
   });
 
   /// Sepete ekle hızlı doğrulama map'i (checkout yerine geçmez).
@@ -223,6 +225,7 @@ class Product {
     int? stock,
     double? catalogDiscountPrice,
     DateTime? catalogUpdatedAt,
+    int? cartQuantity,
   }) {
     return Product(
       productId: productId ?? this.productId,
@@ -287,6 +290,7 @@ class Product {
       stock: stock ?? this.stock,
       catalogDiscountPrice: catalogDiscountPrice ?? this.catalogDiscountPrice,
       catalogUpdatedAt: catalogUpdatedAt ?? this.catalogUpdatedAt,
+      cartQuantity: cartQuantity ?? this.cartQuantity,
     );
   }
 
@@ -351,6 +355,7 @@ class Product {
       'variants': variants,
       'additional_info': additionalInfo,
       'faq': faq,
+      'cartQuantity': cartQuantity,
       // selectedParts complex object, skipping for basic persistence or need recursive toJson
     };
   }
@@ -477,6 +482,7 @@ class Product {
       variants: json['variants'],
       additionalInfo: readNullableString(json['additional_info']),
       faq: _parseFaqList(json['faq']),
+      cartQuantity: (json['cartQuantity'] as num?)?.toInt(),
     );
   }
 
@@ -1065,6 +1071,31 @@ class Product {
             (dbProduct as dynamic).catalogUpdatedAt as DateTime?;
       }
     } catch (_) {}
+
+    final listAmount = ProductPriceCalculator.parsePriceValue(price);
+    double? saleAmount;
+    if (dbProduct is Map) {
+      if (dbProduct.containsKey('discount_price') ||
+          dbProduct.containsKey('discountPrice')) {
+        saleAmount = ProductPriceCalculator.parsePriceValue(
+          dbProduct['discount_price'] ?? dbProduct['discountPrice'],
+        );
+      }
+    } else {
+      // DBProduct.oldPrice is filled from products.discount_price.
+      saleAmount = ProductPriceCalculator.parsePriceValue(oldPrice);
+    }
+    final resolved = ProductPriceCalculator.resolveSellerPrice(
+      listPrice: listAmount,
+      discountPrice: saleAmount,
+    );
+    if (resolved.current > 0) {
+      price = ProductPriceCalculator.formatCatalogAmount(resolved.current);
+    }
+    oldPrice = resolved.hasDiscount
+        ? ProductPriceCalculator.formatCatalogAmount(resolved.original!)
+        : null;
+    catalogDiscountPrice = resolved.saleColumn;
 
     final resolvedPricingType = ProductPricingType.fromValue(pricingType);
     final fallbackPrice = ProductPriceCalculator.parsePriceValue(price);

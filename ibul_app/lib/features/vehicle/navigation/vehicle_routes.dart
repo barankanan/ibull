@@ -49,6 +49,7 @@ abstract final class VehicleRoutes {
     String listingId, {
     bool preview = false,
     String? slug,
+    bool focusContact = false,
   }) async {
     if (preview) {
       await vehicle_detail.loadLibrary();
@@ -58,23 +59,25 @@ abstract final class VehicleRoutes {
           builder: (_) => vehicle_detail.VehicleDetailPage(
             listingId: listingId,
             previewMode: true,
+            focusContact: focusContact,
           ),
         ),
       );
       return;
     }
     if (IbulRouter.usesRootRouter) {
-      await IbulRouter.push(
-        context,
-        MarketplacePaths.vehicle(listingId, slug: slug),
-      );
+      final path = MarketplacePaths.vehicle(listingId, slug: slug);
+      await IbulRouter.push(context, focusContact ? '$path?iletisim=1' : path);
       return;
     }
     await vehicle_detail.loadLibrary();
     if (!context.mounted) return;
     await Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
-        builder: (_) => vehicle_detail.VehicleDetailPage(listingId: listingId),
+        builder: (_) => vehicle_detail.VehicleDetailPage(
+          listingId: listingId,
+          focusContact: focusContact,
+        ),
       ),
     );
   }
@@ -103,9 +106,7 @@ abstract final class VehicleRoutes {
     await vehicle_gallery.loadLibrary();
     if (!context.mounted) return;
     await Navigator.of(context, rootNavigator: true).push(
-      MaterialPageRoute<void>(
-        builder: (_) => vehicle_gallery.VehicleMapPage(),
-      ),
+      MaterialPageRoute<void>(builder: (_) => vehicle_gallery.VehicleMapPage()),
     );
   }
 
@@ -117,7 +118,8 @@ abstract final class VehicleRoutes {
     if (!context.mounted) return null;
     return Navigator.of(context, rootNavigator: true).push<bool>(
       MaterialPageRoute<bool>(
-        builder: (_) => vehicle_wizard.VehicleAddWizardPage(listingId: listingId),
+        builder: (_) =>
+            vehicle_wizard.VehicleAddWizardPage(listingId: listingId),
       ),
     );
   }

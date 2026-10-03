@@ -8,6 +8,7 @@ import '../core/app_state.dart';
 import '../core/cart_state.dart';
 import '../core/store_logo_helper.dart';
 import '../features/coupon/data/coupon_repository.dart';
+import '../features/coupon/domain/coupon_models.dart';
 import '../features/coupon/domain/coupon_enums.dart';
 import '../models/product_model.dart';
 import '../models/product_pricing.dart';
@@ -22,7 +23,12 @@ import '../widgets/ibul_page_state.dart';
 import 'cart/cart_premium_banner.dart';
 
 class CartPage extends StatefulWidget {
-  const CartPage({super.key});
+  /// [usedAsTab] = true: embedded in a root shell IndexedStack tab — the root
+  /// shell already owns the BottomNavigationBar, so CartPage must NOT render
+  /// its own Scaffold bottomNavigationBar to avoid a double-bar layout.
+  const CartPage({super.key, this.usedAsTab = false});
+
+  final bool usedAsTab;
 
   @override
   State<CartPage> createState() => _CartPageState();
@@ -41,6 +47,8 @@ class _CartPageState extends State<CartPage>
 
   // Kupon değişkenleri
   final Map<int, Map<String, dynamic>> _appliedCoupons = {};
+  CouponQuote? _appliedGlobalCoupon;
+  final CouponRepository _couponRepository = CouponRepository();
 
   final List<Map<String, dynamic>> _availableCoupons = [];
 
@@ -316,6 +324,102 @@ class _CartPageState extends State<CartPage>
           ),
         );
       },
+    );
+  }
+
+  void _showCouponInputDialog() {
+    final TextEditingController codeController = TextEditingController();
+    bool isLoading = false;
+    String? errorMessage;
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateDialog) => AlertDialog(
+          title: const Text('İndirim Kodu'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: codeController,
+                decoration: InputDecoration(
+                  hintText: 'Kupon kodunu girin',
+                  border: const OutlineInputBorder(),
+                  errorText: errorMessage,
+                ),
+              ),
+              if (isLoading) const Padding(
+                padding: EdgeInsets.only(top: 16),
+                child: CircularProgressIndicator(),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: isLoading ? null : () => Navigator.pop(ctx),
+              child: const Text('İptal'),
+            ),
+            if (_appliedGlobalCoupon != null)
+              TextButton(
+                onPressed: isLoading ? null : () {
+                  setState(() {
+                    _appliedGlobalCoupon = null;
+                  });
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Kupon kaldırıldı')),
+                  );
+                },
+                child: const Text('Kaldır', style: TextStyle(color: Colors.red)),
+              ),
+            ElevatedButton(
+              onPressed: isLoading
+                  ? null
+                  : () async {
+                      final code = codeController.text.trim();
+                      if (code.isEmpty) return;
+                      setStateDialog(() {
+                        isLoading = true;
+                        errorMessage = null;
+                      });
+                      
+                      try {
+                        final effectiveCart = _effectiveCartProducts();
+                        final items = effectiveCart.map((p) => p.toCartValidationMap()).toList();
+                        
+                        final quote = await _couponRepository.quote(
+                          code: code,
+                          items: items,
+                        );
+                        
+                        if (quote.ok) {
+                          setState(() {
+                             _appliedGlobalCoupon = quote;
+                          });
+                          if (mounted) Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Kupon başarıyla uygulandı')),
+                          );
+                        } else {
+                          setStateDialog(() {
+                            errorMessage = quote.error ?? 'Geçersiz kupon';
+                          });
+                        }
+                      } catch (e) {
+                        setStateDialog(() {
+                          errorMessage = 'Bir hata oluştu';
+                        });
+                      } finally {
+                        setStateDialog(() {
+                          isLoading = false;
+                        });
+                      }
+                    },
+              child: const Text('Uygula'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -640,7 +744,10 @@ class _CartPageState extends State<CartPage>
         total += itemTotal > 0 ? itemTotal : 0;
       }
     }
-    return total;
+    if (_appliedGlobalCoupon != null && _appliedGlobalCoupon!.ok) {
+      total -= _appliedGlobalCoupon!.discountAmount;
+    }
+    return total > 0 ? total : 0;
   }
 
   double _parseProductPrice(Product product) {
@@ -755,8 +862,10 @@ class _CartPageState extends State<CartPage>
   Map<String, dynamic> _mapProductToStoreItem(Product product) {
     final productPrice = _parseProductPrice(product);
     final metadata = _extractProductMetadata(product);
-
-    final int quantity = _dynamicQuantities[product.hashCode] ?? 1;
+    final int quantity = _dynamicQuantities[product.hashCode] ?? product.cartQuantity ?? 1;
+    if (!_dynamicQuantities.containsKey(product.hashCode)) {
+      _dynamicQuantities[product.hashCode] = quantity;
+    }
 
     // Hızlı kargo bilgisini services listesine ekle
     List<String> displayServices = List.from(product.selectedServices);
@@ -1105,9 +1214,17 @@ class _CartPageState extends State<CartPage>
         if (productMap['isDynamic'] == true &&
             productMap['productKey'] is int) {
           _dynamicQuantities[productMap['productKey'] as int] = newQuantity;
+          
+          if (productMap['productObject'] != null) {
+            _appState.updateProductQuantity(productMap['productObject'], newQuantity);
+            // Replace the productObject in the map with the updated one
+            productMap['productObject'] = (productMap['productObject'] as Product).copyWith(cartQuantity: newQuantity);
+          }
         }
       }
     });
+    
+    _revalidateCoupon();
   }
 
   void _deleteProduct(
@@ -1130,6 +1247,47 @@ class _CartPageState extends State<CartPage>
         items.removeAt(storeIndex);
       }
     });
+    
+    _revalidateCoupon();
+  }
+  
+  Future<void> _revalidateCoupon() async {
+    if (_appliedGlobalCoupon == null) return;
+    
+    final effectiveCart = _effectiveCartProducts();
+    if (effectiveCart.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _appliedGlobalCoupon = null;
+        });
+      }
+      return;
+    }
+    
+    try {
+      final code = _appliedGlobalCoupon?.code ?? '';
+      if (code.isEmpty) return;
+      
+      final items = effectiveCart.map((p) => p.toCartValidationMap()).toList();
+      final quote = await _couponRepository.quote(
+        code: code,
+        items: items,
+      );
+      
+      if (!mounted) return;
+      setState(() {
+        if (quote.ok) {
+          _appliedGlobalCoupon = quote;
+        } else {
+          _appliedGlobalCoupon = null;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Sepet içeriği değiştiği için kupon iptal edildi: ${quote.error ?? "Geçersiz"}')),
+          );
+        }
+      });
+    } catch (_) {
+      // Ignored
+    }
   }
 
   void _showDeliveryInfo(BuildContext context) {
@@ -1444,8 +1602,17 @@ class _CartPageState extends State<CartPage>
 
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
-      body: SafeArea(child: _buildMobileLayout()),
-      bottomNavigationBar: _buildMobileBottomBar(),
+      body: SafeArea(
+        child: widget.usedAsTab
+            ? Column(
+                children: [
+                  Expanded(child: _buildMobileLayout()),
+                  _buildMobileBottomBar(),
+                ],
+              )
+            : _buildMobileLayout(),
+      ),
+      bottomNavigationBar: widget.usedAsTab ? null : _buildMobileBottomBar(),
     );
   }
 
@@ -2677,17 +2844,20 @@ class _CartPageState extends State<CartPage>
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: const [
-            Text(
+          children: [
+            const Text(
               'Sepet Özeti',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
             ),
-            Text(
-              'İndirim Kodu Ekle',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: AppColors.primary,
+            GestureDetector(
+              onTap: _showCouponInputDialog,
+              child: const Text(
+                'İndirim Kodu Ekle',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primary,
+                ),
               ),
             ),
           ],
@@ -4065,7 +4235,7 @@ class _CartPageState extends State<CartPage>
           ),
           const SizedBox(height: 24),
           OutlinedButton(
-            onPressed: () {},
+            onPressed: _showCouponInputDialog,
             style: OutlinedButton.styleFrom(
               minimumSize: const Size(double.infinity, 48),
               side: const BorderSide(color: AppColors.primary),
@@ -4073,14 +4243,16 @@ class _CartPageState extends State<CartPage>
                 borderRadius: BorderRadius.circular(8),
               ),
             ),
-            child: const Row(
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.add, size: 16, color: AppColors.primary),
-                SizedBox(width: 8),
+                const Icon(Icons.add, size: 16, color: AppColors.primary),
+                const SizedBox(width: 8),
                 Text(
-                  'İndirim Kodu Gir',
-                  style: TextStyle(color: AppColors.primary),
+                  _appliedGlobalCoupon != null && _appliedGlobalCoupon!.ok 
+                      ? 'Kupon Uygulandı (-${_formatPrice(_appliedGlobalCoupon!.discountAmount)})'
+                      : 'İndirim Kodu Gir',
+                  style: const TextStyle(color: AppColors.primary),
                 ),
               ],
             ),

@@ -36,8 +36,10 @@ vehicle_media (id, slot, url, sort_order, is_cover, object_path)
 
   static const homeListingSelect = '''
 id, seller_id, listing_type, status, sale_price, city, district, cover_url,
+published_at, created_at, ai_payload,
 vehicle_specs (brand, model, version, year, mileage_km, mileage_verified),
-vehicle_galleries (id, name, avatar_url, slug)
+vehicle_rental_settings (daily_price),
+vehicle_media (id, slot, url, sort_order, is_cover, object_path)
 ''';
 
   Future<List<VehicleListing>> search(VehicleSearchQuery query) async {

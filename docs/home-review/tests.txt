@@ -1,0 +1,122 @@
+00:00 +0: loading /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart
+00:00 +0: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_discovery_loader_test.dart: vehicle and location queries start in parallel
+[HomePerf][vehicles] start
+[HomePerf][nearby] start
+[HomePerf][vehicles] query_ready 46ms
+[HomePerf][nearby] location_ready 45ms
+00:00 +1: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: (setUpAll)
+00:00 +1: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_discovery_loader_test.dart: cached vehicle query does not hit the network twice
+[HomePerf][vehicles] start
+[HomePerf][vehicles] query_ready 2ms
+[HomePerf][vehicles] query_ready 0ms
+00:00 +2: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: (setUpAll)
+supabase.supabase_flutter: INFO: ***** Supabase init completed ***** 
+[WebBootStep] step=app_state_init start
+[WebBootStep] step=auth_listener_start start
+00:00 +2: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: header uses the remaining search width at 1440.0
+00:00 +2: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: (setUpAll)
+[SecureLocalStore] read failed key=ibul_active_auth_context error=MissingPluginException(No implementation found for method read on channel plugins.it_nomads.com/flutter_secure_storage) (falling back to SharedPreferences where applicable)
+[SecureLocalStore] read failed key=device_cache_addresses_v1 error=MissingPluginException(No implementation found for method read on channel plugins.it_nomads.com/flutter_secure_storage) (falling back to SharedPreferences where applicable)
+00:01 +3: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: header uses the remaining search width at 1440.0
+00:01 +4: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: header uses the remaining search width at 1440.0
+00:01 +5: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: (setUpAll)
+[SecureLocalStore] read failed key=device_cache_saved_cards_v1 error=MissingPluginException(No implementation found for method read on channel plugins.it_nomads.com/flutter_secure_storage) (falling back to SharedPreferences where applicable)
+00:01 +5: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: header uses the remaining search width at 1024.0
+00:01 +5: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: (setUpAll)
+[SecureLocalStore] read failed key=device_cache_current_delivery_address_v1 error=MissingPluginException(No implementation found for method read on channel plugins.it_nomads.com/flutter_secure_storage) (falling back to SharedPreferences where applicable)
+00:01 +6: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: parent and actual child remain above the address at 390px
+00:01 +7: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: mounted deferred section receives new filter props
+[Phase17] Section code_prefetch_trigger
+[Phase17] Section data_prefetch_trigger
+[Phase17] Section loadLibrary_complete in 1ms
+00:02 +8: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: home route arguments retain the parent and subcategory
+00:02 +9: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: vehicle errors propagate and a failed request can retry
+[HomePerf][vehicles] start
+[HomeDiscoveryLoader] vehicle query failed: Bad state: query failed
+#0      main.<anonymous closure>.<anonymous closure> (file:///Users/barankananogullari/Desktop/ibul2026%20kopyas%C4%B1%209/ibul_app/test/home/home_web_layout_test.dart:187:25)
+#1      HomeDiscoveryLoader._loadVehiclesBody (package:ibul_app/screens/home/home_discovery_loader.dart:99:35)
+#2      HomeDiscoveryLoader.loadVehicles (package:ibul_app/screens/home/home_discovery_loader.dart:89:34)
+#3      main.<anonymous closure> (file:///Users/barankananogullari/Desktop/ibul2026%20kopyas%C4%B1%209/ibul_app/test/home/home_web_layout_test.dart:190:43)
+#4      Declarer.test.<anonymous closure>.<anonymous closure> (package:test_api/src/backend/declarer.dart:253:25)
+<asynchronous suspension>
+#5      Declarer.test.<anonymous closure> (package:test_api/src/backend/declarer.dart:250:11)
+<asynchronous suspension>
+#6      Invoker._waitForOutstandingCallbacks.<anonymous closure> (package:test_api/src/backend/invoker.dart:318:9)
+<asynchronous suspension>
+[HomePerf][vehicles] start
+[HomePerf][vehicles] query_ready 1ms
+00:02 +10: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: home vehicle query keeps moderation and rental data without gallery embed
+00:02 +11: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: vehicle loading, empty, error and populated states stay distinct
+00:02 +12: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: daily deal errors are compact and retry recovers to empty
+[Home] [HomeSection] state=loading section=daily_deals count=0
+[Home] [HomeSection] state=loading section=daily_deals count=0
+[CouponRepository] listDailyDeals error: PostgrestException(message: private technical details, code: PGRST202, details: null, hint: null)
+[HomeCouponDealColumn] daily deals failed: Günün fırsatları yüklenemedi. Lütfen tekrar deneyin.
+#0      CouponRepository.listDailyDeals (package:ibul_app/features/coupon/data/coupon_repository.dart:302:7)
+<asynchronous suspension>
+<asynchronous suspension>
+#2      _HomeCouponDealColumnState._loadDeals (package:ibul_app/screens/home/sections/home_section_coupon_deal_column.dart:49:21)
+<asynchronous suspension>
+<asynchronous suspension>
+(elided 2 frames from dart:async)
+[Home] [HomeSection] state=error section=daily_deals count=0
+[Home] [HomeSection] state=error section=daily_deals count=0
+[Home] [HomeSection] state=loading section=daily_deals count=0
+[Home] [HomeSection] state=loading section=daily_deals count=0
+[Home] [HomeSection] state=empty section=daily_deals count=0
+[Home] [HomeSection] state=empty section=daily_deals count=0
+00:02 +13: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_web_layout_test.dart: (tearDownAll)
+00:04 +13: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_viewport_section_test.dart: section outside viewport does not trigger loadLibrary
+00:05 +14: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_viewport_section_test.dart: scrolling into proximity triggers loadLibrary exactly once and renders child
+[Phase17] Section code_prefetch_trigger
+[Phase17] Section data_prefetch_trigger
+[Phase17] Section loadLibrary_complete in 1ms
+00:05 +15: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_viewport_section_test.dart: disposed section before load completes does not crash on completion
+[Phase17] Section code_prefetch_trigger
+[Phase17] Section data_prefetch_trigger
+00:07 +16: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_quick_actions_test.dart: HomeQuickActionRegistry Ana sayfa kısayolları eşlenir
+00:07 +17: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_quick_actions_test.dart: HomeQuickActionRegistry Süper Fırsat deals filter tipindedir
+00:07 +18: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_quick_actions_test.dart: HomeQuickActionRegistry Elektronik kategori aksiyonudur
+00:07 +19: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_quick_actions_test.dart: HomeQuickActionRegistry Moda Giyim & Aksesuar kategorisine map edilir
+00:07 +20: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_quick_actions_test.dart: HomeQuickActionRegistry Araç vehicle aksiyonudur
+00:07 +21: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_quick_actions_test.dart: HomeQuickActionFilter İndirimler discounted ürünleri seçer
+00:07 +22: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_quick_actions_test.dart: HomeQuickActionFilter Çok Satanlar reviewCount sıralaması
+00:07 +23: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_quick_actions_test.dart: HomeQuickActionFilter inactive ürünler filtrelenir
+00:07 +24: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_quick_actions_test.dart: HomeQuickActionChip render edilir ve tıklanabilir
+00:08 +25: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_quick_actions_test.dart: HomeQuickActionChip web pointer click cursor içerir
+00:08 +26: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/home/home_quick_actions_test.dart: HomeQuickActionChip Semantics etiketi title içerir
+00:09 +27: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: Araç shortcut is registered without replacing existing chips
+00:09 +28: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: gallery sellers see Araçlar module, food sellers do not
+00:09 +29: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: vehicle SQL keeps reservations insert-blocked
+00:09 +30: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: public listing select stays status-gated in RLS
+00:09 +31: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: gallery photos do not use product-video StorageUploadService jpeg-name gate
+00:09 +32: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: publish RPC rejects empty specs and missing photos
+00:09 +33: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: later moderation migration submits for review instead of publishing
+00:09 +34: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: handover RPC hashes the code and does not store plaintext
+00:09 +35: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: create reservation checks overlap server-side
+00:09 +36: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: vehicle queries do not select missing stores brand-badge columns
+00:09 +37: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: wizard blocks empty-form overwrite and shows retry copy
+00:09 +38: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: wizard UI submits for review and keeps live preview
+00:09 +39: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: rental flow never stubs payment capture
+00:09 +40: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: rental SQL keeps overlap + private docs + seller kyc scoped
+00:09 +41: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: delivery quote distinguishes missing coords from out of zone
+00:09 +42: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_security_contract_test.dart: web vehicle detail hides sticky contact bar
+00:10 +43: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_compare_store_test.dart: compare store is vehicle-only and capped at 4
+00:10 +44: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/features/vehicle/vehicle_compare_store_test.dart: compare fields expose brand model price location
+00:11 +45: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/widgets/home_design_regression_test.dart: Home design regression deferred entry loads lean HomeScreenCore with staged sections
+00:11 +46: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/widgets/home_design_regression_test.dart: Home design regression CustomHeader source keeps bell, search and camera layout
+00:11 +47: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/widgets/home_design_regression_test.dart: Home design regression legacy web home uses bounded max width layout
+00:11 +48: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/widgets/home_design_regression_test.dart: Home design regression HomeProductPreviewCard shows quick view eye icon
+00:12 +49: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/widgets/home_design_regression_test.dart: Home design regression HomeProductPreviewCard shows quick view eye icon
+00:12 +50: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/widgets/home_design_regression_test.dart: Home design regression HomeProductPreviewCard shows quick view eye icon
+00:12 +51: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/widgets/home_design_regression_test.dart: Home design regression HomeProductPreviewCard shows quick view eye icon
+00:12 +52: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/widgets/home_design_regression_test.dart: Home design regression HomeProductPreviewCard shows quick view eye icon
+00:12 +53: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/widgets/home_design_regression_test.dart: Home design regression HomeProductPreviewCard shows quick view eye icon
+00:12 +54: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/widgets/home_design_regression_test.dart: Home design regression HomeProductPreviewCard shows quick view eye icon
+[WebPerfTrace][first_product_card_rendered] 0ms
+00:12 +55: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/widgets/home_design_regression_test.dart: Home design regression HomeProductPreviewCard quick view opens sheet
+00:13 +56: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/services/categories_grouping_test.dart: getCategoriesWithSubs grouping (F-04) each sub-category ends up under the correct parent
+00:13 +57: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/services/categories_grouping_test.dart: getCategoriesWithSubs grouping (F-04) main category with no subs gets empty list, not null
+00:13 +58: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/services/categories_grouping_test.dart: getCategoriesWithSubs grouping (F-04) orphaned sub-categories (unknown parent_id) are silently ignored
+00:13 +59: /Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/test/services/categories_grouping_test.dart: getCategoriesWithSubs grouping (F-04) empty mains returns empty result
+00:13 +60: All tests passed!

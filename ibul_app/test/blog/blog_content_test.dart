@@ -2,8 +2,11 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/features/blog/blog_paths.dart';
+import 'package:ibul_app/features/blog/editor/blog_block_ops.dart';
 import 'package:ibul_app/features/blog/models/blog_content.dart';
+import 'package:ibul_app/features/blog/models/blog_image_frame.dart';
 import 'package:ibul_app/features/blog/models/blog_post_draft.dart';
+import 'package:ibul_app/features/blog/models/blog_models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Map<String, dynamic> sampleContent() => {
@@ -50,8 +53,9 @@ void main() {
       expect(one({'id': 'x', 'type': 'button', 'label': 'a', 'url': 'javascript:alert(1)'}).validate(), isNotNull);
       expect(one({'id': 'x', 'type': 'button', 'label': 'a', 'url': '//evil.com'}).validate(), isNotNull);
       expect(one({'id': 'x', 'type': 'paragraph', 'text': '[a](javascript:x)'}).validate(), isNotNull);
-      expect(one({'id': 'x', 'type': 'image', 'url': 'https://a/b.jpg', 'alt': ''}).validate(), isNotNull);
-      expect(one({'id': 'x', 'type': 'video', 'source': 'youtube', 'url': 'https://evil.com/v'}).validate(), isNotNull);
+      expect(one({'id': 'x', 'type': 'image', 'url': 'https://a/b.jpg', 'alt': ''}).validate(), isNull);
+      expect(one({'id': 'x', 'type': 'image', 'url': 'https://a/b.jpg', 'alt': ''}).validate(publishing: true), isNotNull);
+      expect(one({'id': 'x', 'type': 'video', 'source': 'youtube', 'url': 'https://evil.com/v'}).validate(publishing: true), isNotNull);
       expect(BlogDocument.fromJson({'blocks': [{'id': 'x', 'type': 'script'}]}).blocks, isEmpty);
     });
 
@@ -94,6 +98,83 @@ void main() {
     });
   });
 
+  group('BlogAccess', () {
+    test('reads the admin flag and does not treat a bad payload as denial', () {
+      expect(
+        BlogAccess.fromJson({'is_admin': true, 'author_id': null}).isAdmin,
+        isTrue,
+      );
+      expect(
+        BlogAccess.fromJson('{"is_admin":"true","author_name":"Ada"}').canWrite,
+        isTrue,
+      );
+      expect(
+        BlogAccess.fromJson({'is_admin': false, 'author_id': 'a1'}).canWrite,
+        isTrue,
+      );
+      expect(() => BlogAccess.fromJson('nope'), throwsFormatException);
+      expect(BlogAccess.none.canWrite, isFalse);
+    });
+  });
+
+  group('block editing', () {
+    test('list and paragraph keep line order both ways', () {
+      final list = BlogBlock(
+        id: 'l',
+        type: BlogBlockType.list,
+        items: ['**bir**', 'iki [bağ](/blog)'],
+      );
+      final paragraph = convertBlock(list, BlogBlockType.paragraph);
+      expect(paragraph.text, '**bir**\niki [bağ](/blog)');
+      final back = convertBlock(paragraph, BlogBlockType.list);
+      expect(back.items, ['**bir**', 'iki [bağ](/blog)']);
+      expect(back.id, 'l');
+    });
+
+    test('shrinking columns keeps every block', () {
+      final section = BlogBlock.create(BlogBlockType.columns, columnCount: 3);
+      section.columns[0].blocks.add(BlogBlock(id: 'a', type: BlogBlockType.paragraph, text: 'A'));
+      section.columns[2].blocks.add(BlogBlock(id: 'c', type: BlogBlockType.image, url: 'https://x/a.jpg', alt: 'A'));
+      final removed = section.columns.removeLast();
+      section.columns.last.blocks.addAll(removed.blocks);
+      final texts = section.columns.expand((c) => c.blocks).map((b) => b.id);
+      expect(texts, containsAll(['a', 'c']));
+      expect(section.columns, hasLength(2));
+    });
+
+    test('image crop metadata round-trips and legacy images stay plain', () {
+      final frame = const BlogImageFrame(x: 0.1, y: 0.2, w: 0.5, h: 0.4, aspect: 1.6, fit: 'cover');
+      final again = BlogImageFrame.fromJson(frame.toJson());
+      expect(again.x, 0.1);
+      expect(again.fit, 'cover');
+      expect(again.aspect, 1.6);
+      final legacy = BlogBlock.fromJson({
+        'id': 'i',
+        'type': 'image',
+        'url': 'https://x/a.jpg',
+        'alt': 'Eski',
+      })!;
+      expect(legacy.frame.isLegacy, isTrue);
+      expect(legacy.toJson().containsKey('crop'), isFalse);
+    });
+
+    test('a locked ratio stays inside the image', () {
+      final frame = const BlogImageFrame(x: 0, y: 0, w: 1, h: 1)
+          .withRatio(16 / 9, imageAspect: 1);
+      expect(frame.w, lessThanOrEqualTo(1));
+      expect(frame.h, lessThanOrEqualTo(1));
+      expect(frame.aspect, closeTo(16 / 9, 0.02));
+    });
+
+    test('a draft can be saved before a title or author is chosen', () {
+      final draft = BlogPostDraft(document: BlogDocument());
+      expect(draft.validate(), isNull);
+      expect(draft.validate(publishing: true), contains('başlık'));
+      draft.title = 'Yayın';
+      expect(draft.validate(publishing: true), contains('yazar'));
+    });
+  });
+
   group('BlogPostDraft', () {
     test('payload carries the block document and derived slug', () {
       final draft = BlogPostDraft(title: 'Yeni Ürün Rehberi', document: BlogDocument.fromJson(sampleContent()));
@@ -101,7 +182,8 @@ void main() {
       expect(payload['slug'], 'yeni-urun-rehberi');
       expect((payload['content'] as Map)['version'], 1);
       expect(draft.validate(), isNull);
-      expect((draft..coverUrl = 'https://a/b.jpg').validate(), contains('alternatif'));
+      draft.authorId = 'a1';
+      expect((draft..coverUrl = 'https://a/b.jpg').validate(publishing: true), contains('alternatif'));
     });
 
     test('local backup survives and restores', () async {

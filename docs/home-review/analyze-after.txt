@@ -1,0 +1,138 @@
+Analyzing ibul2026 kopyası 9...                                 
+
+   info • 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead • ibul_app/lib/core/ad_product_trace_web.dart:2:1 • deprecated_member_use
+   info • Don't use web-only libraries outside Flutter web plugins • ibul_app/lib/core/ad_product_trace_web.dart:2:1 • avoid_web_libraries_in_flutter
+   info • The import of 'package:flutter/foundation.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart' • ibul_app/lib/core/home_above_fold_precache.dart:1:8 • unnecessary_import
+   info • 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead • ibul_app/lib/core/perf_debug_config_web.dart:1:1 • deprecated_member_use
+   info • Don't use web-only libraries outside Flutter web plugins • ibul_app/lib/core/perf_debug_config_web.dart:1:1 • avoid_web_libraries_in_flutter
+   info • 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead • ibul_app/lib/core/product_load_trace_web.dart:2:1 • deprecated_member_use
+   info • Don't use web-only libraries outside Flutter web plugins • ibul_app/lib/core/product_load_trace_web.dart:2:1 • avoid_web_libraries_in_flutter
+   info • 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead • ibul_app/lib/core/web_boot_error_store_web.dart:2:1 • deprecated_member_use
+   info • Don't use web-only libraries outside Flutter web plugins • ibul_app/lib/core/web_boot_error_store_web.dart:2:1 • avoid_web_libraries_in_flutter
+   info • 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead • ibul_app/lib/core/web_boot_loader_web.dart:1:1 • deprecated_member_use
+   info • Don't use web-only libraries outside Flutter web plugins • ibul_app/lib/core/web_boot_loader_web.dart:1:1 • avoid_web_libraries_in_flutter
+   info • 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead • ibul_app/lib/core/web_page_reload_web.dart:1:1 • deprecated_member_use
+   info • Don't use web-only libraries outside Flutter web plugins • ibul_app/lib/core/web_page_reload_web.dart:1:1 • avoid_web_libraries_in_flutter
+   info • 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead • ibul_app/lib/core/web_perf_trace_web.dart:2:1 • deprecated_member_use
+   info • Don't use web-only libraries outside Flutter web plugins • ibul_app/lib/core/web_perf_trace_web.dart:2:1 • avoid_web_libraries_in_flutter
+   info • Use the null-aware marker '?' rather than a null check via an 'if' • ibul_app/lib/features/coupon/data/coupon_repository.dart:241:13 • use_null_aware_elements
+   info • Use the null-aware marker '?' rather than a null check via an 'if' • ibul_app/lib/features/coupon/data/coupon_repository.dart:242:13 • use_null_aware_elements
+   info • Use the null-aware marker '?' rather than a null check via an 'if' • ibul_app/lib/features/coupon/data/coupon_repository.dart:244:13 • use_null_aware_elements
+   info • Use the null-aware marker '?' rather than a null check via an 'if' • ibul_app/lib/features/coupon/data/coupon_repository.dart:270:13 • use_null_aware_elements
+   info • Use the null-aware marker '?' rather than a null check via an 'if' • ibul_app/lib/features/coupon/data/coupon_repository.dart:271:13 • use_null_aware_elements
+   info • Unnecessary use of multiple underscores • ibul_app/lib/features/coupon/screens/customer/coupon_discover_page.dart:93:35 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • ibul_app/lib/features/coupon/screens/customer/daily_deals_page.dart:119:53 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • ibul_app/lib/features/coupon/screens/customer/daily_deals_page.dart:119:57 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • ibul_app/lib/features/coupon/screens/seller/seller_coupon_ad_hub_page.dart:119:37 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • ibul_app/lib/features/coupon/widgets/reward_wheel_add_reward_sheet.dart:134:47 • unnecessary_underscores
+   info • 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/ihiz/business/ihiz_business_apply_page.dart:186:29 • deprecated_member_use
+   info • 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/ihiz/business/ihiz_business_apply_page.dart:187:29 • deprecated_member_use
+warning • The declaration '_ApplySecondaryButton' isn't referenced • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_buttons.dart:24:7 • unused_element
+warning • A value for optional parameter 'keyboardType' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:9:10 • unused_element_parameter
+warning • A value for optional parameter 'inputFormatters' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:10:10 • unused_element_parameter
+warning • A value for optional parameter 'maxLength' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:11:10 • unused_element_parameter
+warning • A value for optional parameter 'readOnly' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:12:10 • unused_element_parameter
+warning • A value for optional parameter 'onTap' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:13:10 • unused_element_parameter
+warning • A value for optional parameter 'suffixIcon' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:14:10 • unused_element_parameter
+warning • A value for optional parameter 'obscureText' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:15:10 • unused_element_parameter
+warning • A value for optional parameter 'hasError' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:16:10 • unused_element_parameter
+warning • A value for optional parameter 'errorText' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:17:10 • unused_element_parameter
+warning • A value for optional parameter 'onChanged' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:18:10 • unused_element_parameter
+warning • A value for optional parameter 'hasError' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:126:10 • unused_element_parameter
+warning • A value for optional parameter 'errorText' isn't ever given • ibul_app/lib/features/ihiz/courier/dashboard/ihiz_courier_apply_fields.dart:127:10 • unused_element_parameter
+warning • The diagnostic 'unused_element' doesn't need to be ignored here because it's already being ignored • ibul_app/lib/features/ihiz/courier/ihiz_courier_dashboard_page.dart:6005:14 • duplicate_ignore
+warning • A value for optional parameter 'showPackageBadge' isn't ever given • ibul_app/lib/features/ihiz/courier/ihiz_courier_dashboard_page.dart:7793:10 • unused_element_parameter
+warning • A value for optional parameter 'obscure' isn't ever given • ibul_app/lib/features/ihiz/courier/ihiz_courier_dashboard_page.dart:9180:10 • unused_element_parameter
+warning • A value for optional parameter 'controller' isn't ever given • ibul_app/lib/features/ihiz/courier/ihiz_courier_dashboard_page.dart:9181:10 • unused_element_parameter
+warning • A value for optional parameter 'keyboardType' isn't ever given • ibul_app/lib/features/ihiz/courier/ihiz_courier_dashboard_page.dart:9182:10 • unused_element_parameter
+warning • A value for optional parameter 'textInputAction' isn't ever given • ibul_app/lib/features/ihiz/courier/ihiz_courier_dashboard_page.dart:9183:10 • unused_element_parameter
+warning • A value for optional parameter 'onSubmitted' isn't ever given • ibul_app/lib/features/ihiz/courier/ihiz_courier_dashboard_page.dart:9184:10 • unused_element_parameter
+   info • 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/seller/vehicle_seller_rental_requests_tab.dart:261:21 • deprecated_member_use
+   info • 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/seller/vehicle_seller_rental_requests_tab.dart:262:21 • deprecated_member_use
+   info • The import of 'package:flutter/foundation.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart' • ibul_app/lib/features/vehicle/screens/vehicle_detail_page.dart:1:8 • unnecessary_import
+   info • 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:253:17 • deprecated_member_use
+   info • 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:254:17 • deprecated_member_use
+   info • 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:260:19 • deprecated_member_use
+   info • 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:261:19 • deprecated_member_use
+   info • 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:267:19 • deprecated_member_use
+   info • 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:268:19 • deprecated_member_use
+   info • 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:383:17 • deprecated_member_use
+   info • 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:384:17 • deprecated_member_use
+   info • 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:389:17 • deprecated_member_use
+   info • 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:390:17 • deprecated_member_use
+   info • 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:411:17 • deprecated_member_use
+   info • 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:412:17 • deprecated_member_use
+   info • 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:417:17 • deprecated_member_use
+   info • 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:418:17 • deprecated_member_use
+   info • 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:423:17 • deprecated_member_use
+   info • 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre • ibul_app/lib/features/vehicle/screens/vehicle_rental_flow_steps.dart:424:17 • deprecated_member_use
+   info • Use the null-aware marker '?' rather than a null check via an 'if' • ibul_app/lib/models/home_products_fetch_report.dart:58:7 • use_null_aware_elements
+   info • Use a function declaration rather than a variable assignment to bind a function to a name • ibul_app/lib/perf/phase10_r3_customer_main.dart:11:23 • prefer_function_declarations_over_variables
+warning • Unused import: '../features/vehicle/screens/vehicle_detail_page.dart' • ibul_app/lib/perf/phase10_r4_vehicle_main.dart:5:8 • unused_import
+warning • Unused import: '../features/vehicle/screens/vehicle_hub_page.dart' • ibul_app/lib/perf/phase10_r4_vehicle_main.dart:7:8 • unused_import
+warning • Unused import: '../features/vehicle/screens/vehicle_search_page.dart' • ibul_app/lib/perf/phase10_r4_vehicle_main.dart:8:8 • unused_import
+warning • Unused import: '../features/vehicle/screens/vehicle_detail_page.dart' • ibul_app/lib/perf/phase10_r5_site_main.dart:6:8 • unused_import
+warning • Unused import: '../features/vehicle/screens/vehicle_hub_page.dart' • ibul_app/lib/perf/phase10_r5_site_main.dart:8:8 • unused_import
+warning • Unused import: '../features/vehicle/screens/vehicle_search_page.dart' • ibul_app/lib/perf/phase10_r5_site_main.dart:9:8 • unused_import
+warning • Unused import: '../features/vehicle/screens/vehicle_detail_page.dart' • ibul_app/lib/perf/phase10_r6_seller_main.dart:7:8 • unused_import
+warning • Unused import: '../features/vehicle/screens/vehicle_hub_page.dart' • ibul_app/lib/perf/phase10_r6_seller_main.dart:9:8 • unused_import
+warning • Unused import: '../features/vehicle/screens/vehicle_search_page.dart' • ibul_app/lib/perf/phase10_r6_seller_main.dart:10:8 • unused_import
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase10_r7_router_main.dart:2:8 • unused_import
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase11_a_router_main.dart:2:8 • unused_import
+   info • 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead • ibul_app/lib/perf/phase11_b_router_init_main.dart:1:1 • deprecated_member_use
+   info • Don't use web-only libraries outside Flutter web plugins • ibul_app/lib/perf/phase11_b_router_init_main.dart:1:1 • avoid_web_libraries_in_flutter
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase11_b_router_init_main.dart:4:8 • unused_import
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase11_c_tearoff_main.dart:2:8 • unused_import
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase12_auth_main.dart:2:8 • unused_import
+   info • The imported package 'gotrue' isn't a dependency of the importing package • ibul_app/lib/perf/phase12_auth_main.dart:3:8 • depend_on_referenced_packages
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase12_d_direct_client_main.dart:2:8 • unused_import
+   info • The imported package 'supabase' isn't a dependency of the importing package • ibul_app/lib/perf/phase12_d_direct_client_main.dart:3:8 • depend_on_referenced_packages
+   info • The imported package 'functions_client' isn't a dependency of the importing package • ibul_app/lib/perf/phase12_functions_main.dart:2:8 • depend_on_referenced_packages
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase12_functions_main.dart:3:8 • unused_import
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase12_postgrest_main.dart:2:8 • unused_import
+   info • The imported package 'postgrest' isn't a dependency of the importing package • ibul_app/lib/perf/phase12_postgrest_main.dart:3:8 • depend_on_referenced_packages
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase12_realtime_main.dart:2:8 • unused_import
+   info • The imported package 'realtime_client' isn't a dependency of the importing package • ibul_app/lib/perf/phase12_realtime_main.dart:3:8 • depend_on_referenced_packages
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase12_storage_main.dart:2:8 • unused_import
+   info • The imported package 'storage_client' isn't a dependency of the importing package • ibul_app/lib/perf/phase12_storage_main.dart:3:8 • depend_on_referenced_packages
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase12_storage_tearoff_main.dart:2:8 • unused_import
+   info • The imported package 'storage_client' isn't a dependency of the importing package • ibul_app/lib/perf/phase12_storage_tearoff_main.dart:3:8 • depend_on_referenced_packages
+   info • 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead • ibul_app/lib/perf/phase13_boot.dart:2:1 • deprecated_member_use
+   info • Don't use web-only libraries outside Flutter web plugins • ibul_app/lib/perf/phase13_boot.dart:2:1 • avoid_web_libraries_in_flutter
+warning • Unused import: 'package:go_router/go_router.dart' • ibul_app/lib/perf/phase13_boot.dart:5:8 • unused_import
+   info • The imported package 'app_links' isn't a dependency of the importing package • ibul_app/lib/perf/phase13_w7_initial_link_main.dart:1:8 • depend_on_referenced_packages
+warning • Unused import: '../screens/seller_panel_route_args.dart' • ibul_app/lib/perf/phase14_router.dart:23:8 • unused_import
+   info • 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead • ibul_app/lib/perf/phase15_app.dart:1:1 • deprecated_member_use
+   info • Don't use web-only libraries outside Flutter web plugins • ibul_app/lib/perf/phase15_app.dart:1:1 • avoid_web_libraries_in_flutter
+warning • Unused import: 'package:flutter/material.dart' • ibul_app/lib/perf/phase15_h3_main.dart:1:8 • unused_import
+warning • Unused import: 'package:flutter/material.dart' • ibul_app/lib/perf/phase15_h5_main.dart:1:8 • unused_import
+   info • 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead • ibul_app/lib/perf/phase9_04_supabase_init_main.dart:1:1 • deprecated_member_use
+   info • Don't use web-only libraries outside Flutter web plugins • ibul_app/lib/perf/phase9_04_supabase_init_main.dart:1:1 • avoid_web_libraries_in_flutter
+   info • Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check • ibul_app/lib/screens/cart_page.dart:399:54 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • ibul_app/lib/screens/cart_page.dart:400:48 • use_build_context_synchronously
+   info • 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre • ibul_app/lib/screens/checkout_page.dart:993:43 • deprecated_member_use
+   info • 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre • ibul_app/lib/screens/checkout_page.dart:2154:21 • deprecated_member_use
+warning • Unused import: '../core/favorite_state.dart' • ibul_app/lib/screens/compare_products_page.dart:5:8 • unused_import
+warning • The value of the field '_loadingLocation' isn't used • ibul_app/lib/screens/home/entries/home_discovery_entry.dart:24:7 • unused_field
+warning • The value of the field '_position' isn't used • ibul_app/lib/screens/home/entries/home_discovery_entry.dart:29:13 • unused_field
+warning • The operand can't be 'null', so the condition is always 'true' • ibul_app/lib/screens/home/entries/home_discovery_entry.dart:107:51 • unnecessary_null_comparison
+warning • The '!' will have no effect because the receiver can't be null • ibul_app/lib/screens/home/entries/home_discovery_entry.dart:107:70 • unnecessary_non_null_assertion
+warning • Unused import: '../../features/vehicle/models/vehicle_commerce.dart' • ibul_app/lib/screens/home/home_discovery_loader.dart:8:8 • unused_import
+   info • Don't invoke 'print' in production code • ibul_app/lib/screens/home/home_discovery_loader.dart:139:7 • avoid_print
+   info • Don't invoke 'print' in production code • ibul_app/lib/screens/home/home_discovery_loader.dart:140:7 • avoid_print
+   info • Don't invoke 'print' in production code • ibul_app/lib/screens/home/home_discovery_loader.dart:189:7 • avoid_print
+   info • Don't invoke 'print' in production code • ibul_app/lib/screens/home/home_discovery_loader.dart:190:7 • avoid_print
+warning • The declaration '_localPrintStatusColor' isn't referenced • ibul_app/lib/screens/seller_panel_page.dart:13057:9 • unused_element
+warning • The operand can't be 'null', so the condition is always 'false' • ibul_app/lib/services/order_print_job_service.dart:5336:27 • unnecessary_null_comparison
+warning • The value of the field '_homeProductSelectFieldsSansStore' isn't used • ibul_app/lib/services/supabase_service.dart:201:23 • unused_field
+   info • Unnecessary use of multiple underscores • ibul_app/test/app/ibul_router_marketplace_home_test.dart:21:24 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • ibul_app/test/app/ibul_router_marketplace_home_test.dart:25:24 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • ibul_app/test/app/web_click_routing_test.dart:26:24 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • ibul_app/test/app/web_click_routing_test.dart:30:24 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • ibul_app/test/app/web_click_routing_test.dart:34:24 • unnecessary_underscores
+warning • A value for optional parameter 'linked' isn't ever given • ibul_app/test/features/ihiz/ihiz_business_link_test.dart:19:10 • unused_element_parameter
+warning • A value for optional parameter 'ops' isn't ever given • ibul_app/test/features/ihiz/ihiz_business_link_test.dart:20:10 • unused_element_parameter
+   info • Unnecessary use of multiple underscores • ibul_app/test/features/ihiz/ihiz_shell_test.dart:109:30 • unnecessary_underscores
+   info • Unnecessary use of multiple underscores • ibul_app/test/features/ihiz/ihiz_shell_test.dart:109:34 • unnecessary_underscores
+
+134 issues found. (ran in 47.3s)

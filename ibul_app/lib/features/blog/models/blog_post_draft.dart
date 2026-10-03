@@ -97,16 +97,23 @@ class BlogPostDraft {
   /// Stable fingerprint used for the unsaved-changes check.
   String get fingerprint => jsonEncode(toPayload());
 
-  /// Validation problem in Turkish, or null.
-  String? validate() {
-    if (title.trim().isEmpty) return 'Başlık zorunludur.';
-    if (effectiveSlug.isEmpty) return 'Geçerli bir URL adresi (slug) girin.';
+  /// Draft save rejects only unsafe URLs. [publishing] also requires a title,
+  /// a real slug, a byline and finished blocks. The signed-in user is not the byline.
+  String? validate({bool publishing = false}) {
+    final urlProblem = BlogUrlPolicy.problem(coverUrl);
+    if (urlProblem != null) return urlProblem;
+    if (!publishing) return document.validate();
+    if (title.trim().isEmpty) return 'Yayınlamak için başlık girin.';
+    if (effectiveSlug.isEmpty || effectiveSlug.startsWith('taslak-')) {
+      return 'Yayınlamak için bir URL adresi (slug) girin.';
+    }
+    if (authorId == null || authorId!.trim().isEmpty) {
+      return 'Yayınlamak için bir yazar seçin.';
+    }
     if (coverUrl.trim().isNotEmpty && coverAlt.trim().isEmpty) {
       return 'Kapak görseli için alternatif metin girin.';
     }
-    final urlProblem = BlogUrlPolicy.problem(coverUrl);
-    if (urlProblem != null) return urlProblem;
-    return document.validate();
+    return document.validate(publishing: true);
   }
 
   /// In-memory article for the preview, rendered by the reader widget.

@@ -17,6 +17,7 @@ class DeferredHomeHeroSection extends StatefulWidget {
     this.isLoading = false,
     this.preferMobile = false,
     this.embedded = false,
+    this.height,
     this.suppressSkeleton = false,
     this.maxSkeletonDuration = const Duration(seconds: 4),
   });
@@ -26,6 +27,7 @@ class DeferredHomeHeroSection extends StatefulWidget {
   final bool isLoading;
   final bool preferMobile;
   final bool embedded;
+  final double? height;
   final bool suppressSkeleton;
   final Duration maxSkeletonDuration;
 
@@ -67,7 +69,8 @@ class _DeferredHomeHeroSectionState extends State<DeferredHomeHeroSection> {
       await Future<void>.delayed(effectiveDelay);
     }
     if (!mounted) return;
-    setState(() => _loadFuture = _loadLibrary());
+    _loadFuture = _loadLibrary();
+    setState(() {});
   }
 
   Future<void> _loadLibrary() async {
@@ -76,7 +79,10 @@ class _DeferredHomeHeroSectionState extends State<DeferredHomeHeroSection> {
   }
 
   void _retry() {
-    setState(() => _loadFuture = _loadLibrary());
+    _loadFuture = _loadLibrary();
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   bool get _shouldHideEntireSection => false;
@@ -100,11 +106,11 @@ class _DeferredHomeHeroSectionState extends State<DeferredHomeHeroSection> {
             height: double.infinity,
             borderRadius: 16,
           )
-        : const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        : Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: SkeletonLoading(
               width: double.infinity,
-              height: 160,
+                height: widget.height ?? 160,
               borderRadius: 12,
             ),
           );
@@ -146,6 +152,7 @@ class _DeferredHomeHeroSectionState extends State<DeferredHomeHeroSection> {
           isLoading: widget.isLoading,
           preferMobile: widget.preferMobile,
           embedded: widget.embedded,
+          height: widget.height,
         );
       },
     );

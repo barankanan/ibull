@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../app/customer_routes.dart';
+import '../app/marketplace_paths.dart';
 import '../app/seller_routes.dart';
+import '../screens/account/account_menu_navigation.dart';
 import '../app/site_info_routes.dart';
 import '../app/ibul_router.dart';
 import '../core/constants.dart';
 import '../core/ibul_chrome.dart';
 
+/// Marketplace footer.
+///
+/// Sayfalar bunu kendisi kurmaz. Header + içerik + clearance için
+/// [MarketplaceWebPageShell] veya [WebStickyFooterScrollView] kullanılır.
+/// Aralık [IbulChrome.footerGap] içindedir.
 class WebFooter extends StatelessWidget {
   const WebFooter({super.key});
 
@@ -15,6 +22,15 @@ class WebFooter extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isCompact = IbulChrome.isFooterCompact(constraints.maxWidth);
+        final mallLink = AccountMenuNavigation.mallHubTitle;
+        final partnershipLinks = [
+          'Satıcı Ol',
+          mallLink,
+          'İhız',
+          'Reklam Ver',
+          'API Entegrasyonu',
+          'İş Birlikleri',
+        ];
 
         return Container(
           decoration: const BoxDecoration(
@@ -28,6 +44,7 @@ class WebFooter extends StatelessWidget {
             18,
           ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (isCompact) ...[
@@ -60,13 +77,11 @@ class WebFooter extends StatelessWidget {
                     ),
                     SizedBox(
                       width: 180,
-                      child: _buildFooterColumn(context, 'İş Ortaklığı', [
-                        'Satıcı Ol',
-                        'İhız',
-                        'Reklam Ver',
-                        'API Entegrasyonu',
-                        'İş Birlikleri',
-                      ]),
+                      child: _buildFooterColumn(
+                        context,
+                        'İş Ortaklığı',
+                        partnershipLinks,
+                      ),
                     ),
                   ],
                 ),
@@ -95,13 +110,11 @@ class WebFooter extends StatelessWidget {
                       ]),
                     ),
                     Expanded(
-                      child: _buildFooterColumn(context, 'İş Ortaklığı', [
-                        'Satıcı Ol',
-                        'İhız',
-                        'Reklam Ver',
-                        'API Entegrasyonu',
-                        'İş Birlikleri',
-                      ]),
+                      child: _buildFooterColumn(
+                        context,
+                        'İş Ortaklığı',
+                        partnershipLinks,
+                      ),
                     ),
                   ],
                 ),
@@ -287,6 +300,7 @@ class WebFooter extends StatelessWidget {
                 cursor: SystemMouseCursors.click,
                 child: Text(
                   link,
+                  softWrap: true,
                   style: TextStyle(
                     color: link == 'İhız'
                         ? const Color(0xFF7FE3C4)
@@ -345,6 +359,10 @@ class WebFooter extends StatelessWidget {
   void _openFooterLabel(BuildContext context, String link) {
     if (link == 'Satıcı Ol') {
       _openBecomeSeller(context);
+      return;
+    }
+    if (link == AccountMenuNavigation.mallHubTitle) {
+      IbulRouter.push(context, MarketplacePaths.mallHub);
       return;
     }
     if (link == 'Satıcı Girişi') {

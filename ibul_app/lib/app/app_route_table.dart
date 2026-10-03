@@ -7,6 +7,12 @@ import '../features/blog/blog_route_pages.dart' deferred as blog_pages;
 import '../features/ihiz/delivery/ihiz_route_paths.dart';
 import '../features/vehicle/screens/vehicle_detail_page.dart'
     deferred as vehicle_detail;
+import '../features/mall/application/mall_application_page.dart';
+import '../features/mall/application/mall_auth_page.dart';
+import '../features/mall/application/mall_hub_page.dart';
+import '../features/mall/management/mall_management_location.dart';
+import '../features/mall/management/pages/mall_management_page.dart';
+import '../features/mall/public/mall_public_page.dart';
 import '../models/product_model.dart';
 import '../screens/cart_page.dart' deferred as cart_page;
 import '../features/vehicle/screens/vehicle_hub_page.dart'
@@ -119,6 +125,16 @@ Widget? pageForAppRoute(
       return SellerRoutes.buildAdminPanel();
     case '/become-seller':
       return SellerRoutes.buildBecomeSeller();
+    case MarketplacePaths.mallHub:
+      return const MallHubPage();
+    case MarketplacePaths.mallLogin:
+      return const MallAuthPage(register: false);
+    case MarketplacePaths.mallRegister:
+      return const MallApplicationPage();
+    case MarketplacePaths.mallApplication:
+    case MarketplacePaths.legacyMallApplication:
+    case MarketplacePaths.legacyPublicMallApplication:
+      return const MallApplicationPage();
     case '/yatirimci':
       return SellerRoutes.buildInvestorPage();
     case '/ihiz':
@@ -144,14 +160,52 @@ Widget? pageForAppRoute(
         ),
       );
     case '/':
-      return buildSafeHome(source: 'onGenerateRoute:/');
+      return buildSafeHome(
+        source: 'onGenerateRoute:/',
+        arguments: settings.arguments,
+      );
     default:
+      final management = MallManagementLocation.parse(normalizedPath);
+      if (management != null) {
+        final arguments = settings.arguments;
+        return MallManagementPage(
+          location: management,
+          chooseMall: arguments is Map && arguments['sec'] == '1',
+        );
+      }
+      final publicMallId = MarketplacePaths.idFrom(
+        normalizedPath,
+        MarketplacePaths.mallProfileRoot,
+      );
+      if (publicMallId != null) {
+        final args = settings.arguments;
+        return MallPublicPage(
+          mallId: Uri.decodeComponent(publicMallId),
+          floorId: args is Map ? args['kat']?.toString() : null,
+          storeId: args is Map ? args['magaza']?.toString() : null,
+        );
+      }
       if (BlogPaths.isBlogPath(normalizedPath)) {
         final arguments = settings.arguments;
         return _deferredRoutePage(
           moduleName: 'blog_route_pages',
           loadLibrary: blog_pages.loadLibrary,
           builder: () => blog_pages.blogPageForPath(normalizedPath, arguments),
+        );
+      }
+      final categorySegments = normalizedPath.split('/');
+      if (categorySegments.length >= 3 &&
+          categorySegments.length <= 5 &&
+          categorySegments[1] == 'kategori') {
+        return _deferredRoutePage(
+          moduleName: 'marketplace_route_pages',
+          loadLibrary: marketplace_pages.loadLibrary,
+          builder: () => marketplace_pages.CategoryRoutePage(
+            mainCategoryId: categorySegments[2],
+            subCategoryId: categorySegments.length >= 4
+                ? categorySegments[3]
+                : '',
+          ),
         );
       }
       final accountSection = AccountSections.fromPath(normalizedPath);
@@ -202,7 +256,8 @@ Widget? pageForAppRoute(
       }
       if (normalizedPath.startsWith('/arac/') &&
           normalizedPath != '/arac/arama') {
-        final id = MarketplacePaths.idFrom(
+        final id =
+            MarketplacePaths.idFrom(
               normalizedPath,
               MarketplacePaths.vehicleRoot,
             ) ??
@@ -212,7 +267,10 @@ Widget? pageForAppRoute(
           return _deferredRoutePage(
             moduleName: 'vehicle_detail_page',
             loadLibrary: vehicle_detail.loadLibrary,
-            builder: () => vehicle_detail.VehicleDetailPage(listingId: listingId),
+            builder: () => vehicle_detail.VehicleDetailPage(
+              listingId: listingId,
+              focusContact: settings.name?.contains('iletisim=1') ?? false,
+            ),
           );
         }
       }

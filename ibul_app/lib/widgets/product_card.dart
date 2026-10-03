@@ -9,11 +9,13 @@ import '../core/home_navigation.dart';
 import '../core/app_state.dart';
 import '../core/cart_state.dart';
 import '../core/favorite_state.dart';
+import '../core/compare_state.dart';
 import '../core/review_state.dart';
 import '../core/app_motion.dart';
 import '../core/interaction_feedback.dart';
 import '../core/build_profile.dart';
 import '../core/constants.dart';
+import '../models/product_pricing.dart';
 import '../services/supabase_service.dart';
 import 'optimized_image.dart';
 import 'premium_interactions.dart';
@@ -32,6 +34,64 @@ class _CampaignBadgeData {
   });
 }
 
+/// Shared vertical rhythm for every product card.
+/// Discount and plain products reserve the same slots, so rails stay aligned.
+class _ProductCardMetrics {
+  const _ProductCardMetrics({
+    required this.padding,
+    required this.imageGap,
+    required this.badgeInFlow,
+    required this.badgeHeight,
+    required this.badgeGap,
+    required this.titleBlockHeight,
+    required this.titleFontSize,
+    required this.titleLineHeight,
+    required this.metaGap,
+    required this.ratingBlockHeight,
+    required this.priceGap,
+    required this.priceBlockHeight,
+    required this.priceFontSize,
+    required this.oldPriceFontSize,
+    required this.ctaGap,
+    required this.ctaHeight,
+    required this.ctaFontSize,
+  });
+
+  final double padding;
+  final double imageGap;
+  final bool badgeInFlow;
+  final double badgeHeight;
+  final double badgeGap;
+  final double titleBlockHeight;
+  final double titleFontSize;
+  final double titleLineHeight;
+  final double metaGap;
+  final double ratingBlockHeight;
+  final double priceGap;
+  final double priceBlockHeight;
+  final double priceFontSize;
+  final double oldPriceFontSize;
+  final double ctaGap;
+  final double ctaHeight;
+  final double ctaFontSize;
+
+  double get ctaRadius => ctaHeight / 2;
+
+  /// Content under the image, excluding the card's vertical padding.
+  double get contentBelowImage {
+    final badgeSlot = badgeInFlow ? badgeHeight + badgeGap : 0;
+    return imageGap +
+        badgeSlot +
+        titleBlockHeight +
+        metaGap +
+        ratingBlockHeight +
+        priceGap +
+        priceBlockHeight +
+        ctaGap +
+        ctaHeight;
+  }
+}
+
 class ProductCard extends StatefulWidget {
   final Product product;
   final double? width;
@@ -40,6 +100,10 @@ class ProductCard extends StatefulWidget {
   final bool tight;
   final bool forceFoodOrderButton;
   final bool pinActionsBottom;
+  final bool isCatalogMode;
+
+  /// Mobile home rail. Desktop cards leave this false.
+  final bool homeRail;
   final OptimizedImagePriority imagePriority;
 
   const ProductCard({
@@ -51,6 +115,8 @@ class ProductCard extends StatefulWidget {
     this.tight = false,
     this.forceFoodOrderButton = false,
     this.pinActionsBottom = false,
+    this.isCatalogMode = false,
+    this.homeRail = false,
     this.imagePriority = OptimizedImagePriority.lazy,
   });
 
@@ -63,10 +129,51 @@ class _ProductCardState extends State<ProductCard> {
   late _CampaignBadgeData _campaignBadgeData;
   String? _primaryImageUrlOrPath;
 
-  // Purple color from the screenshot
-  static const Color _brandPurple = Color(0xFF7C3AED);
-
   AppState get _appState => context.read<AppState>();
+
+  _ProductCardMetrics _metrics(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isSmallScreen = screenWidth < 360;
+    final homeRail = widget.homeRail;
+    final tight = widget.tight;
+    final compact = widget.compact;
+
+    final titleFontSize = compact
+        ? (isSmallScreen ? 9.0 : 10.0)
+        : (tight ? 10.0 : 10.8);
+    final titleLineHeight = compact ? 1.2 : 1.25;
+    final oldPriceFontSize = compact ? (isSmallScreen ? 8.5 : 9.0) : 12.0;
+    final priceFontSize = compact
+        ? (isSmallScreen ? 11.5 : 12.5)
+        : (homeRail ? 16.0 : 14.0);
+    final chipHeight = compact ? 16.0 : 18.0;
+    final oldLine = scaler.scale(oldPriceFontSize) * 1.1;
+    final currentLine = math.max(
+      scaler.scale(priceFontSize) * 1.15,
+      chipHeight,
+    );
+
+    return _ProductCardMetrics(
+      padding: homeRail ? 6 : (compact ? 8 : (tight ? 4 : 8)),
+      imageGap: homeRail ? 4 : (compact ? 6 : (tight ? 3 : 5)),
+      badgeInFlow: !homeRail,
+      badgeHeight: compact ? 22 : 24,
+      badgeGap: compact ? 5 : (tight ? 3 : 5),
+      titleBlockHeight: scaler.scale(titleFontSize) * titleLineHeight * 2 + 1,
+      titleFontSize: titleFontSize,
+      titleLineHeight: titleLineHeight,
+      metaGap: 2,
+      ratingBlockHeight: scaler.scale(compact ? 14.0 : 16.0),
+      priceGap: homeRail ? 4 : (compact ? 5 : (tight ? 3 : 5)),
+      priceBlockHeight: oldLine + currentLine + 2,
+      priceFontSize: priceFontSize,
+      oldPriceFontSize: oldPriceFontSize,
+      ctaGap: homeRail ? 6 : (compact ? 6 : (tight ? 4 : 6)),
+      ctaHeight: homeRail ? 35 : (compact ? 32 : (tight ? 34 : 40)),
+      ctaFontSize: compact ? 10 : (homeRail ? 13.5 : (tight ? 11 : 12)),
+    );
+  }
 
   _CampaignBadgeData _resolveCampaignBadgeData() {
     if (widget.product.tags.contains('Ücretsiz Kargo')) {
@@ -85,15 +192,27 @@ class _ProductCardState extends State<ProductCard> {
       );
     }
 
-    final discountTag = widget.product.tags.cast<String?>().firstWhere(
-      (tag) => tag != null && tag.contains('indirim'),
-      orElse: () => null,
+    final currentPrice = ProductPriceCalculator.parsePriceValue(
+      widget.product.price,
     );
-    if (discountTag != null) {
+    final oldPrice = ProductPriceCalculator.parsePriceValue(
+      widget.product.oldPrice ?? '',
+    );
+    final hasRealDiscount = oldPrice > currentPrice && currentPrice > 0;
+
+    if (hasRealDiscount) {
+      return _CampaignBadgeData(
+        text: widget.homeRail ? 'Fırsat Ürünü' : 'İndirimli',
+        backgroundColor: const Color(0xFFFFD54F),
+        textColor: widget.homeRail ? const Color(0xFF2F2A16) : Colors.black87,
+      );
+    }
+
+    if (widget.homeRail) {
       return const _CampaignBadgeData(
-        text: 'İndirimli',
-        backgroundColor: Color(0xFFFFD54F),
-        textColor: Colors.black87,
+        text: '',
+        backgroundColor: Colors.transparent,
+        textColor: Colors.transparent,
       );
     }
 
@@ -171,17 +290,22 @@ class _ProductCardState extends State<ProductCard> {
           fallbackReviewCount: widget.product.reviewCount,
         ),
       );
+      final isCompared = context.select<CompareState, bool>(
+        (compareState) => compareState.isCompared(widget.product),
+      );
 
       return RepaintBoundary(
         child: widget.compact
             ? _buildCompactCard(
                 isAddedToCart: isAddedToCart,
                 isFavorite: isFavorite,
+                isCompared: isCompared,
                 ratingData: ratingData,
               )
             : _buildNormalCard(
                 isAddedToCart: isAddedToCart,
                 isFavorite: isFavorite,
+                isCompared: isCompared,
                 ratingData: ratingData,
               ),
       );
@@ -305,15 +429,7 @@ class _ProductCardState extends State<ProductCard> {
     );
   }
 
-  double _resolveFixedBodyHeight() {
-    if (widget.compact) {
-      return 6 + 24 + 6 + 5 + 14 + 2 + 12 + 5 + 34 + 6 + 28;
-    }
-    if (widget.tight) {
-      return 3 + 24 + 3 + 14 + 2 + 12 + 3 + 36 + 4 + 30;
-    }
-    return 5 + 24 + 5 + 14 + 2 + 14 + 5 + 36 + 6 + 34;
-  }
+  double _resolveFixedBodyHeight() => _metrics(context).contentBelowImage;
 
   double _resolveImageHeight(BoxConstraints constraints) {
     final fallbackWidth = widget.width ?? (widget.compact ? 180.0 : 198.0);
@@ -325,9 +441,15 @@ class _ProductCardState extends State<ProductCard> {
         ? 16.0
         : (widget.tight ? 8.0 : 16.0);
     final contentWidth = math.max(0.0, availableWidth - horizontalPadding);
-    final imageRatio = widget.compact ? 0.72 : (widget.tight ? 0.70 : 0.72);
-    final minHeight = widget.compact ? 92.0 : (widget.tight ? 72.0 : 100.0);
-    final maxHeight = widget.compact ? 145.0 : 168.0;
+    final imageRatio = widget.isCatalogMode
+        ? 1.0
+        : (widget.compact ? 0.72 : (widget.tight ? 0.70 : 0.72));
+    final minHeight = widget.isCatalogMode
+        ? 160.0
+        : (widget.compact ? 92.0 : (widget.tight ? 72.0 : 100.0));
+    final maxHeight = widget.isCatalogMode
+        ? 300.0
+        : (widget.compact ? 145.0 : 168.0);
 
     final naturalImageHeight = (contentWidth * imageRatio)
         .clamp(minHeight, maxHeight)
@@ -354,16 +476,18 @@ class _ProductCardState extends State<ProductCard> {
   Widget _buildNormalCard({
     required bool isAddedToCart,
     required bool isFavorite,
+    required bool isCompared,
     required ProductRatingSummary ratingData,
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isTight = widget.tight;
-        final fillCellHeight = constraints.maxHeight.isFinite;
-        final imageHeight = fillCellHeight
-            ? null
-            : _resolveImageHeight(constraints);
-        final padding = isTight ? 4.0 : 8.0;
+        final homeRail = widget.homeRail;
+        final metrics = _metrics(context);
+        final fillCellHeight = !homeRail && constraints.maxHeight.isFinite;
+        final imageHeight = homeRail
+            ? 156.0
+            : (fillCellHeight ? null : _resolveImageHeight(constraints));
+        final padding = metrics.padding;
 
         return SizedBox(
           width: widget.width,
@@ -412,23 +536,27 @@ class _ProductCardState extends State<ProductCard> {
                             Expanded(
                               child: _buildNormalImageSection(
                                 isFavorite: isFavorite,
+                                isCompared: isCompared,
                                 fillAvailable: true,
                               ),
                             )
                           else
                             _buildNormalImageSection(
                               isFavorite: isFavorite,
+                              isCompared: isCompared,
                               imageHeight: imageHeight!,
                             ),
-                          SizedBox(height: isTight ? 3 : 5),
-                          _buildCampaignBadge(),
-                          SizedBox(height: isTight ? 3 : 5),
+                          SizedBox(height: metrics.imageGap),
+                          if (metrics.badgeInFlow) ...[
+                            _buildCampaignBadge(),
+                            SizedBox(height: metrics.badgeGap),
+                          ],
                           _buildTitle(),
-                          const SizedBox(height: 2),
+                          SizedBox(height: metrics.metaGap),
                           _buildRating(ratingData),
-                          SizedBox(height: isTight ? 3 : 5),
+                          SizedBox(height: metrics.priceGap),
                           _buildPrice(),
-                          SizedBox(height: isTight ? 4 : 6),
+                          SizedBox(height: metrics.ctaGap),
                           _buildButton(context, isAddedToCart),
                         ],
                       ),
@@ -447,10 +575,12 @@ class _ProductCardState extends State<ProductCard> {
   Widget _buildCompactCard({
     required bool isAddedToCart,
     required bool isFavorite,
+    required bool isCompared,
     required ProductRatingSummary ratingData,
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final metrics = _metrics(context);
         final imageHeight = _resolveImageHeight(constraints);
         final boundedHeight = constraints.maxHeight.isFinite
             ? constraints.maxHeight
@@ -483,17 +613,20 @@ class _ProductCardState extends State<ProductCard> {
                         children: [
                           _buildImageSection(
                             isFavorite: isFavorite,
+                            isCompared: false,
                             imageHeight: imageHeight,
                           ),
-                          const SizedBox(height: 6),
-                          _buildCampaignBadge(),
-                          const SizedBox(height: 5),
+                          SizedBox(height: metrics.imageGap),
+                          if (metrics.badgeInFlow) ...[
+                            _buildCampaignBadge(),
+                            SizedBox(height: metrics.badgeGap),
+                          ],
                           _buildTitle(),
-                          const SizedBox(height: 2),
+                          SizedBox(height: metrics.metaGap),
                           _buildRating(ratingData),
-                          const SizedBox(height: 5),
+                          SizedBox(height: metrics.priceGap),
                           _buildPrice(),
-                          const SizedBox(height: 6),
+                          SizedBox(height: metrics.ctaGap),
                           _buildButton(context, isAddedToCart),
                         ],
                       ),
@@ -511,6 +644,7 @@ class _ProductCardState extends State<ProductCard> {
   // Normal image section (for home page)
   Widget _buildNormalImageSection({
     required bool isFavorite,
+    required bool isCompared,
     double? imageHeight,
     bool fillAvailable = false,
   }) {
@@ -548,8 +682,8 @@ class _ProductCardState extends State<ProductCard> {
               hoverScale: 1.04,
               hoverLift: 0.5,
               child: Container(
-                width: 28,
-                height: 28,
+                width: widget.homeRail ? 22 : 28,
+                height: widget.homeRail ? 22 : 28,
                 padding: EdgeInsets.zero,
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -565,12 +699,53 @@ class _ProductCardState extends State<ProductCard> {
                 child: Icon(
                   isFavorite ? Icons.favorite : Icons.favorite_border,
                   color: isFavorite ? Colors.red : Colors.grey.shade400,
-                  size: 16,
+                  size: widget.homeRail ? 13 : 16,
                 ),
               ),
             ),
           ),
         ),
+        Positioned(
+          top: widget.homeRail ? 28 : 36,
+          right: 4,
+          child: GestureDetector(
+            onTap: () {
+              _handleCompareTap(context);
+            },
+            child: PremiumPressable(
+              pressedScale: 0.9,
+              hoverScale: 1.04,
+              hoverLift: 0.5,
+              child: Container(
+                width: widget.homeRail ? 22 : 28,
+                height: widget.homeRail ? 22 : 28,
+                padding: EdgeInsets.zero,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.compare_arrows,
+                  color: isCompared ? AppColors.primary : Colors.grey.shade400,
+                  size: widget.homeRail ? 13 : 16,
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (widget.homeRail && _campaignBadgeData.text.isNotEmpty)
+          Positioned(
+            left: 6,
+            bottom: 6,
+            child: _buildCampaignBadge(overlay: true),
+          ),
       ],
     );
   }
@@ -584,6 +759,7 @@ class _ProductCardState extends State<ProductCard> {
   // aspect'ine abone olur — okunan değer ve görsel çıktı birebir aynıdır.
   Widget _buildImageSection({
     required bool isFavorite,
+    required bool isCompared,
     required double imageHeight,
   }) {
     final screenWidth = MediaQuery.sizeOf(context).width;
@@ -645,13 +821,49 @@ class _ProductCardState extends State<ProductCard> {
             ),
           ),
         ),
+        Positioned(
+          top: 36,
+          right: 4,
+          child: GestureDetector(
+            onTap: () {
+              _handleCompareTap(context);
+            },
+            child: PremiumPressable(
+              pressedScale: 0.9,
+              hoverScale: 1.04,
+              hoverLift: 0.5,
+              child: Container(
+                width: 28,
+                height: 28,
+                padding: EdgeInsets.zero,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.compare_arrows,
+                  color: isCompared ? AppColors.primary : Colors.grey.shade400,
+                  size: 16,
+                ),
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildCampaignBadge() {
+  Widget _buildCampaignBadge({bool overlay = false}) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final isMobile = screenWidth < 600;
+    final metrics = _metrics(context);
     final verticalPadding = widget.compact
         ? 4.0
         : (widget.tight ? 4.0 : (isMobile ? 5.0 : 5.5));
@@ -659,63 +871,72 @@ class _ProductCardState extends State<ProductCard> {
         ? 8.5
         : (widget.tight ? 8.2 : (isMobile ? 8.8 : 9.3));
 
-    return SizedBox(
-      width: double.infinity,
-      height: widget.compact ? 22 : 24,
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          vertical: verticalPadding,
-          horizontal: widget.compact ? 6 : 8,
-        ),
-        decoration: BoxDecoration(
-          color: _campaignBadgeData.backgroundColor,
-          borderRadius: BorderRadius.circular(widget.compact ? 10 : 999),
-        ),
-        child: Text(
-          _campaignBadgeData.text,
-          textAlign: TextAlign.center,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: _campaignBadgeData.textColor,
-            fontSize: fontSize,
-            fontWeight: FontWeight.w700,
-          ),
+    final badge = Container(
+      padding: EdgeInsets.symmetric(
+        vertical: overlay ? 3 : verticalPadding,
+        horizontal: widget.compact ? 6 : 8,
+      ),
+      decoration: BoxDecoration(
+        color: _campaignBadgeData.backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        _campaignBadgeData.text,
+        textAlign: TextAlign.center,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: _campaignBadgeData.textColor,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w700,
+          height: 1.1,
         ),
       ),
+    );
+
+    if (overlay) return badge;
+
+    return SizedBox(
+      width: double.infinity,
+      height: metrics.badgeHeight,
+      child: badge,
     );
   }
 
   Widget _buildTitle() {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final isSmallScreen = screenWidth < 360;
-    final fontSize = widget.compact
-        ? (isSmallScreen ? 9.0 : 10.0)
-        : (widget.tight ? 10.0 : 10.8);
+    final metrics = _metrics(context);
+    final fontSize = metrics.titleFontSize;
 
-    return RichText(
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      text: TextSpan(
-        style: TextStyle(
-          fontSize: fontSize,
-          color: Colors.black87,
-          height: widget.compact ? 1.2 : 1.25,
-        ),
-        children: [
-          TextSpan(
-            text: "${widget.product.brand} ",
+    return SizedBox(
+      height: metrics.titleBlockHeight,
+      width: double.infinity,
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: RichText(
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          text: TextSpan(
             style: TextStyle(
-              fontWeight: FontWeight.bold,
               fontSize: fontSize,
-              color: AppColors.primary,
+              color: Colors.black87,
+              height: metrics.titleLineHeight,
             ),
+            children: [
+              TextSpan(
+                text: "${widget.product.brand} ",
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: fontSize,
+                  color: AppColors.primary,
+                ),
+              ),
+              TextSpan(
+                text: widget.product.name,
+                style: TextStyle(fontSize: fontSize, color: Colors.black87),
+              ),
+            ],
           ),
-          TextSpan(
-            text: widget.product.name,
-            style: TextStyle(fontSize: fontSize, color: Colors.black87),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -725,197 +946,169 @@ class _ProductCardState extends State<ProductCard> {
     final isSmallScreen = screenWidth < 360;
     final rating = ratingData.rating;
     final reviewCount = ratingData.reviewCount;
+    final metrics = _metrics(context);
 
     if (widget.compact) {
       // Compact mode: Stars + rating + count
       final starSize = isSmallScreen ? 7.0 : 9.0;
       final fontSize = isSmallScreen ? 8.0 : 9.0;
 
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ...List.generate(5, (index) {
-            if (index < rating.floor()) {
-              return Icon(Icons.star, color: Colors.amber, size: starSize);
-            } else if (index < rating) {
-              return Icon(Icons.star_half, color: Colors.amber, size: starSize);
-            }
-            return Icon(
-              Icons.star_border,
-              color: Colors.grey[300],
-              size: starSize,
-            );
-          }),
-          SizedBox(width: isSmallScreen ? 2 : 3),
-          Flexible(
-            child: Text(
-              '${rating.toStringAsFixed(1)} ($reviewCount)',
-              style: TextStyle(fontSize: fontSize, color: Colors.black87),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+      return SizedBox(
+        height: metrics.ratingBlockHeight,
+        width: double.infinity,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Row(
+            children: [
+              ...List.generate(5, (index) {
+                if (index < rating.floor()) {
+                  return Icon(Icons.star, color: Colors.amber, size: starSize);
+                } else if (index < rating) {
+                  return Icon(
+                    Icons.star_half,
+                    color: Colors.amber,
+                    size: starSize,
+                  );
+                }
+                return Icon(
+                  Icons.star_border,
+                  color: Colors.grey[300],
+                  size: starSize,
+                );
+              }),
+              SizedBox(width: isSmallScreen ? 2 : 3),
+              Flexible(
+                child: Text(
+                  '${rating.toStringAsFixed(1)} ($reviewCount)',
+                  style: TextStyle(fontSize: fontSize, color: Colors.black87),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       );
     }
 
     // Normal mode: Rating like screenshot - stars, number, (count)
-    return Row(
-      children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: List.generate(5, (index) {
-            if (index < rating.floor()) {
-              return const Icon(Icons.star, color: Colors.amber, size: 12);
-            } else if (index < rating) {
-              return const Icon(Icons.star_half, color: Colors.amber, size: 12);
-            }
-            return Icon(Icons.star_border, color: Colors.grey[300], size: 12);
-          }),
-        ),
-        const SizedBox(width: 2),
-        Text(
-          rating.toStringAsFixed(1),
-          style: const TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-          ),
-        ),
-        const SizedBox(width: 1),
-        Icon(Icons.photo_library, size: 12, color: Colors.grey[600]),
-        const SizedBox(width: 1),
-        if (!widget.tight)
-          Flexible(
-            child: Text(
-              '($reviewCount)',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 10,
-                color: Colors.grey[600],
-                fontWeight: FontWeight.w500,
+    return SizedBox(
+      height: metrics.ratingBlockHeight,
+      width: double.infinity,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Row(
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: List.generate(5, (index) {
+                if (index < rating.floor()) {
+                  return const Icon(Icons.star, color: Colors.amber, size: 12);
+                } else if (index < rating) {
+                  return const Icon(
+                    Icons.star_half,
+                    color: Colors.amber,
+                    size: 12,
+                  );
+                }
+                return Icon(
+                  Icons.star_border,
+                  color: Colors.grey[300],
+                  size: 12,
+                );
+              }),
+            ),
+            const SizedBox(width: 2),
+            Text(
+              rating.toStringAsFixed(1),
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
               ),
             ),
-          ),
-      ],
+            const SizedBox(width: 1),
+            Icon(Icons.photo_library, size: 12, color: Colors.grey[600]),
+            const SizedBox(width: 1),
+            if (!widget.tight)
+              Flexible(
+                child: Text(
+                  '($reviewCount)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
   Widget _buildPrice() {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final isSmallScreen = screenWidth < 360;
+    final metrics = _metrics(context);
     final priceText = widget.product.price.contains('TL')
         ? widget.product.price
         : '${widget.product.price} TL';
-    final hasDiscount =
-        widget.product.oldPrice != null && widget.product.oldPrice!.isNotEmpty;
 
-    if (widget.compact) {
-      final oldPriceSlotHeight = isSmallScreen ? 10.0 : 11.0;
-
-      return SizedBox(
-        key: const ValueKey('product-card-price-block'),
-        height: 34,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              height: oldPriceSlotHeight,
-              child: hasDiscount
-                  ? Text(
-                      widget.product.oldPrice!.contains('TL')
-                          ? widget.product.oldPrice!
-                          : '${widget.product.oldPrice!} TL',
-                      style: TextStyle(
-                        fontSize: isSmallScreen ? 8.5 : 9.0,
-                        color: Colors.red,
-                        decoration: TextDecoration.lineThrough,
-                        decorationColor: Colors.red,
-                        decorationThickness: 1.2,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    )
-                  : null,
-            ),
-            const SizedBox(height: 2),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Flexible(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      priceText,
-                      style: TextStyle(
-                        fontSize: isSmallScreen ? 11.5 : 12.5,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                      ),
-                    ),
-                  ),
-                ),
-                if (hasDiscount) ...[
-                  const SizedBox(width: 4),
-                  _buildDiscountChip(compact: true),
-                ],
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-
-    const oldPriceSlotHeight = 12.0;
+    final currentPrice = ProductPriceCalculator.parsePriceValue(
+      widget.product.price,
+    );
+    final oldPrice = ProductPriceCalculator.parsePriceValue(
+      widget.product.oldPrice ?? '',
+    );
+    final hasDiscount = oldPrice > currentPrice && currentPrice > 0;
+    final oldPriceLabel = hasDiscount
+        ? (widget.product.oldPrice!.contains('TL')
+              ? widget.product.oldPrice!
+              : '${widget.product.oldPrice!} TL')
+        : null;
 
     return SizedBox(
       key: const ValueKey('product-card-price-block'),
-      height: 36,
+      height: metrics.priceBlockHeight,
+      width: double.infinity,
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.end,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            height: oldPriceSlotHeight,
-            child: hasDiscount
-                ? Text(
-                    widget.product.oldPrice!.contains('TL')
-                        ? widget.product.oldPrice!
-                        : '${widget.product.oldPrice!} TL',
-                    style: const TextStyle(
-                      fontSize: 10,
-                      color: Colors.red,
-                      decoration: TextDecoration.lineThrough,
-                      decorationColor: Colors.red,
-                      decorationThickness: 1.4,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  )
-                : null,
-          ),
-          const SizedBox(height: 2),
+          if (oldPriceLabel != null)
+            Text(
+              oldPriceLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: metrics.oldPriceFontSize,
+                color: const Color(0xFFE53935),
+                decoration: TextDecoration.lineThrough,
+                decorationColor: const Color(0xFFE53935),
+                decorationThickness: widget.compact ? 1.2 : 1.4,
+                fontWeight: FontWeight.w600,
+                height: 1.1,
+              ),
+            ),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    priceText,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black,
-                    ),
+                child: Text(
+                  priceText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: metrics.priceFontSize,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF1A1A1A),
+                    height: 1.15,
                   ),
                 ),
               ),
               if (hasDiscount) ...[
-                const SizedBox(width: 4),
-                _buildDiscountChip(),
+                SizedBox(width: widget.compact ? 4 : 6),
+                _buildDiscountChip(compact: widget.compact),
               ],
             ],
           ),
@@ -939,14 +1132,14 @@ class _ProductCardState extends State<ProductCard> {
         children: [
           Icon(
             Icons.arrow_downward,
-            size: compact ? 8 : 9,
+            size: compact ? 8 : 10,
             color: const Color(0xFF2E7D32),
           ),
           const SizedBox(width: 2),
           Text(
             'İndirim',
             style: TextStyle(
-              fontSize: compact ? 7.5 : 8.0,
+              fontSize: compact ? 7.5 : 10,
               color: const Color(0xFF2E7D32),
               fontWeight: FontWeight.w700,
             ),
@@ -957,8 +1150,8 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   Widget _buildQuickViewButton({bool compact = false}) {
-    final size = compact ? 28.0 : 30.0;
-    final iconSize = compact ? 16.0 : 17.0;
+    final size = widget.homeRail ? 22.0 : (compact ? 28.0 : 30.0);
+    final iconSize = widget.homeRail ? 13.0 : (compact ? 16.0 : 17.0);
 
     return PremiumPressable(
       pressedScale: 0.9,
@@ -987,9 +1180,53 @@ class _ProductCardState extends State<ProductCard> {
     );
   }
 
+  ButtonStyle _pillButtonStyle({
+    required Color background,
+    required Color foreground,
+    required double radius,
+    Color? borderColor,
+    Color? overlayColor,
+    double? fixedHeight,
+  }) {
+    return premiumButtonInteractionStyle(
+      ElevatedButton.styleFrom(
+        elevation: 0,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+        minimumSize: fixedHeight == null ? Size.zero : Size(0, fixedHeight),
+        maximumSize: fixedHeight == null
+            ? Size.infinite
+            : Size(double.infinity, fixedHeight),
+        fixedSize: fixedHeight == null ? null : Size.fromHeight(fixedHeight),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.standard,
+        alignment: Alignment.center,
+        backgroundColor: background,
+        foregroundColor: foreground,
+        surfaceTintColor: Colors.transparent,
+        shadowColor: Colors.transparent,
+        side: borderColor == null
+            ? BorderSide.none
+            : BorderSide(color: borderColor, width: 1.5),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radius),
+        ),
+      ),
+      overlayColor: overlayColor ?? foreground,
+    );
+  }
+
+  TextStyle _ctaTextStyle(double fontSize, Color color) {
+    return TextStyle(
+      fontSize: fontSize,
+      fontWeight: FontWeight.w700,
+      height: 1.05,
+      letterSpacing: 0.15,
+      color: color,
+    );
+  }
+
   Widget _buildButton(BuildContext context, bool isAddedToCart) {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final isMobile = screenWidth < 600;
+    final metrics = _metrics(context);
     final category = (widget.product.category ?? '').toLowerCase();
     final subCategory = (widget.product.subCategory ?? '').toLowerCase();
     final isFoodCategory =
@@ -997,9 +1234,8 @@ class _ProductCardState extends State<ProductCard> {
         category.contains('yemek') ||
         subCategory.contains('yemek');
 
-    // Mobil için daha küçük buton
-    final buttonHeight = widget.compact ? 28.0 : (widget.tight ? 30.0 : 34.0);
-    final fontSize = widget.compact ? 9.0 : (isMobile ? 11.0 : 12.0);
+    final buttonHeight = metrics.ctaHeight;
+    final fontSize = metrics.ctaFontSize;
 
     return AnimatedSwitcher(
       duration: AppMotion.normalTransitionDuration,
@@ -1047,22 +1283,21 @@ class _ProductCardState extends State<ProductCard> {
             InteractionFeedback.forInteraction(InteractionFeedbackType.mainCta);
             _showFoodOrderModePopup(context);
           },
-          style: premiumButtonInteractionStyle(
-            ElevatedButton.styleFrom(
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-              alignment: Alignment.center,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(widget.compact ? 6 : 12),
-              ),
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-            ),
+          style: _pillButtonStyle(
+            background: AppColors.primary,
+            foreground: Colors.white,
+            radius: widget.homeRail ? 14 : buttonHeight / 2,
             overlayColor: Colors.white,
+            fixedHeight: buttonHeight,
           ),
           child: Text(
             'Sipariş Ver',
-            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: _ctaTextStyle(
+              fontSize,
+              Colors.white,
+            ).copyWith(fontWeight: FontWeight.w600),
           ),
         ),
       ),
@@ -1095,27 +1330,15 @@ class _ProductCardState extends State<ProductCard> {
               child: PremiumPressable(
                 child: ElevatedButton(
                   onPressed: _onCardTap,
-                  style: premiumButtonInteractionStyle(
-                    ElevatedButton.styleFrom(
-                      elevation: 0,
-                      padding: EdgeInsets.zero,
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(
-                          widget.compact ? 6 : 12,
-                        ),
-                      ),
-                    ),
+                  style: _pillButtonStyle(
+                    background: Colors.green,
+                    foreground: Colors.white,
+                    radius: buttonHeight / 2,
                     overlayColor: Colors.white,
                   ),
                   child: Text(
                     'Sepette',
-                    style: TextStyle(
-                      fontSize: fontSize,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
+                    style: _ctaTextStyle(fontSize, Colors.white),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1139,18 +1362,10 @@ class _ProductCardState extends State<ProductCard> {
                       replaceStack: true,
                     );
                   },
-                  style: premiumButtonInteractionStyle(
-                    ElevatedButton.styleFrom(
-                      elevation: 0,
-                      padding: EdgeInsets.zero,
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(
-                          widget.compact ? 6 : 12,
-                        ),
-                      ),
-                    ),
+                  style: _pillButtonStyle(
+                    background: Colors.green,
+                    foreground: Colors.white,
+                    radius: buttonHeight / 2,
                     overlayColor: Colors.white,
                   ),
                   child: Icon(
@@ -1181,23 +1396,21 @@ class _ProductCardState extends State<ProductCard> {
           onPressed: () {
             _handleAddToCartTap(context);
           },
-          style: premiumButtonInteractionStyle(
-            ElevatedButton.styleFrom(
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-              alignment: Alignment.center,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(widget.compact ? 6 : 12),
-              ),
-              side: const BorderSide(color: _brandPurple, width: 2),
-              backgroundColor: Colors.white,
-              foregroundColor: _brandPurple,
-            ),
-            overlayColor: _brandPurple,
+          style: _pillButtonStyle(
+            background: Colors.white,
+            foreground: AppColors.primary,
+            borderColor: AppColors.primary,
+            radius: 14,
+            fixedHeight: buttonHeight,
           ),
           child: Text(
             'Sepete Ekle',
-            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: _ctaTextStyle(
+              fontSize,
+              AppColors.primary,
+            ).copyWith(fontWeight: FontWeight.w600, letterSpacing: 0.1),
           ),
         ),
       ),
@@ -1211,6 +1424,17 @@ class _ProductCardState extends State<ProductCard> {
     }
     InteractionFeedback.forInteraction(InteractionFeedbackType.favorite);
     _appState.toggleFavorite(widget.product);
+  }
+
+  void _handleCompareTap(BuildContext context) {
+    InteractionFeedback.lightImpact(channel: 'compare_tap');
+    final compareState = Provider.of<CompareState>(context, listen: false);
+    final error = compareState.toggleCompare(widget.product);
+    if (error != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
+    }
   }
 
   void _handleAddToCartTap(BuildContext context) {

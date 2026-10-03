@@ -1,5 +1,6 @@
 import '../domain/coupon_campaign.dart';
 import '../domain/coupon_enums.dart';
+import '../domain/coupon_status_labels.dart';
 
 abstract final class CouponCodeGenerator {
   static const _chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -113,6 +114,40 @@ abstract final class CouponSchedulePresets {
       ),
     ];
   }
+}
+
+/// `list_discoverable_coupons` ile aynı kurallar: ana sayfa / Kuponları Keşfet.
+/// `null` ise kupon keşfedilebilir; aksi halde admin'e gösterilecek neden.
+String? couponDiscoveryBlockReason(CouponCampaign campaign, {DateTime? now}) {
+  if (!campaign.isPublic) return 'Herkese açık değil';
+  if (campaign.wheelEnabled) return 'Yalnızca hediye çarkından kazanılır';
+  final status = CouponStatusLabels.compute(
+    approval: campaign.approvalStatus,
+    paused: campaign.paused,
+    startsAt: campaign.startsAt,
+    endsAt: campaign.endsAt,
+    now: now,
+  );
+  switch (status) {
+    case CouponEffectiveStatus.active:
+      break;
+    case CouponEffectiveStatus.scheduled:
+      return 'Başlangıç tarihi gelmedi';
+    case CouponEffectiveStatus.expired:
+      return 'Süresi doldu';
+    case CouponEffectiveStatus.paused:
+      return 'Duraklatıldı';
+    case CouponEffectiveStatus.pendingReview:
+      return 'Onay bekliyor';
+    case CouponEffectiveStatus.rejected:
+      return 'Reddedildi';
+    case CouponEffectiveStatus.draft:
+    case CouponEffectiveStatus.approved:
+      return 'Onaylanmadı';
+  }
+  final limit = campaign.totalUsageLimit;
+  if (limit != null && campaign.usedCount >= limit) return 'Kota doldu';
+  return null;
 }
 
 bool couponMatchesFilters({

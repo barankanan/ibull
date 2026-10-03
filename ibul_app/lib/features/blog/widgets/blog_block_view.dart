@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../widgets/common/video_player_widget.dart';
 import '../models/blog_content.dart';
+import 'blog_framed_image.dart';
 import 'blog_inline_text.dart';
 import 'blog_theme.dart';
 
@@ -37,19 +38,25 @@ class BlogBlockView extends StatelessWidget {
       case BlogBlockType.quote:
         return _QuoteBlock(block: block);
       case BlogBlockType.image:
+        if (block.url.trim().isEmpty) return const SizedBox.shrink();
         return _Figure(
           caption: block.caption,
+          aspect: null,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(14),
-            child: BlogImage(
+            child: BlogFramedImage(
               url: block.url,
+              frame: block.frame,
               semanticLabel: block.alt,
-              fit: BoxFit.contain,
             ),
           ),
         );
       case BlogBlockType.video:
-        return _Figure(caption: block.caption, child: _VideoBlock(block: block));
+        return _Figure(
+          caption: block.caption,
+          aspect: BlogTheme.coverAspect,
+          child: _VideoBlock(block: block),
+        );
       case BlogBlockType.button:
         if (block.label.trim().isEmpty) return const SizedBox.shrink();
         return Align(
@@ -201,17 +208,18 @@ class _QuoteBlock extends StatelessWidget {
 }
 
 class _Figure extends StatelessWidget {
-  const _Figure({required this.child, required this.caption});
+  const _Figure({required this.child, required this.caption, this.aspect});
 
   final Widget child;
   final String caption;
+  final double? aspect;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        AspectRatio(aspectRatio: BlogTheme.coverAspect, child: child),
+        if (aspect == null) child else AspectRatio(aspectRatio: aspect!, child: child),
         if (caption.trim().isNotEmpty) ...[
           const SizedBox(height: 8),
           BlogInlineText(

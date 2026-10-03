@@ -16,7 +16,7 @@ import '../widgets/optimized_image.dart';
 import '../widgets/skeleton_loading.dart';
 import '../widgets/staggered_reveal.dart';
 import '../widgets/web_header.dart';
-import '../widgets/web_footer.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../core/constants.dart';
 import '../utils/text_normalizer.dart';
 import '../core/home_navigation.dart';
@@ -815,8 +815,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                       ],
                     ),
                   ),
-                  const SliverToBoxAdapter(child: SizedBox(height: 48)),
-                  const SliverToBoxAdapter(child: WebFooter()),
+                  const WebStickyFooterEndSliver(),
                 ],
               ),
             ),

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../blog_paths.dart';
 import '../models/blog_content.dart';
+import '../models/blog_image_frame.dart';
 import '../models/blog_models.dart';
+import 'blog_framed_image.dart';
 import 'blog_block_view.dart';
 import 'blog_inline_text.dart';
 import 'blog_theme.dart';
@@ -61,12 +63,10 @@ class _BlogArticleViewState extends State<BlogArticleView> {
                 padding: EdgeInsets.fromLTRB(gutter, 28, gutter, 0),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(18),
-                  child: AspectRatio(
-                    aspectRatio: BlogTheme.coverAspect,
-                    child: BlogImage(
-                      url: post.coverUrl,
-                      semanticLabel: post.coverAlt ?? post.title,
-                    ),
+                  child: BlogFramedImage(
+                    url: post.coverUrl!,
+                    frame: post.document.coverFrame ?? const BlogImageFrame(),
+                    semanticLabel: post.coverAlt ?? post.title,
                   ),
                 ),
               ),

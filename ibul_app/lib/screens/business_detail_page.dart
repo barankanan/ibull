@@ -236,11 +236,15 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       } catch (_) {}
     }
 
+    final resolved = ProductPriceCalculator.resolveSellerPrice(
+      listPrice: ProductPriceCalculator.parsePriceValue(dbProduct.price),
+      discountPrice: ProductPriceCalculator.parsePriceValue(dbProduct.oldPrice),
+    );
     return Product(
       productId: dbProduct.id,
       name: dbProduct.name,
       brand: dbProduct.brand,
-      price: dbProduct.price,
+      price: ProductPriceCalculator.formatCatalogAmount(resolved.current),
       pricingType: dbProduct.pricingType,
       portionPrice: dbProduct.portionPrice,
       pricePerKg: dbProduct.pricePerKg,
@@ -258,7 +262,9 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       subCategory: dbProduct.subCategory,
       description: dbProduct.description,
       specifications: dbProduct.specifications,
-      oldPrice: dbProduct.oldPrice,
+      oldPrice: resolved.hasDiscount
+          ? ProductPriceCalculator.formatCatalogAmount(resolved.original!)
+          : null,
       attributes: attributes,
     );
   }
@@ -297,11 +303,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                     data['main_category']?.toString() ??
                     widget.business['category']?.toString(),
               });
-              final rawPrice = data['price'];
-              final formattedPrice = rawPrice is num
-                  ? '₺${rawPrice.toStringAsFixed(0)}'
-                  : rawPrice?.toString() ?? '';
-              return product.copyWith(price: formattedPrice);
+              return product;
             }).toList();
           }
         } catch (e) {
@@ -6677,11 +6679,15 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
       } catch (_) {}
     }
 
+    final resolved = ProductPriceCalculator.resolveSellerPrice(
+      listPrice: ProductPriceCalculator.parsePriceValue(dbProduct.price),
+      discountPrice: ProductPriceCalculator.parsePriceValue(dbProduct.oldPrice),
+    );
     return Product(
       productId: dbProduct.id,
       name: dbProduct.name,
       brand: dbProduct.brand,
-      price: _formatPrice(dbProduct.price),
+      price: ProductPriceCalculator.formatCatalogAmount(resolved.current),
       pricingType: dbProduct.pricingType,
       portionPrice: dbProduct.portionPrice,
       pricePerKg: dbProduct.pricePerKg,
@@ -6700,7 +6706,9 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
       shortDescription: dbProduct.description,
       description: dbProduct.description,
       specifications: dbProduct.specifications,
-      oldPrice: dbProduct.oldPrice,
+      oldPrice: resolved.hasDiscount
+          ? ProductPriceCalculator.formatCatalogAmount(resolved.original!)
+          : null,
       attributes: attributes,
     );
   }
@@ -6848,7 +6856,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                   widget.business['category']?.toString(),
             });
             _debugRestaurantPricing(product, source: 'menu_fetch');
-            return product.copyWith(price: _formatPrice(data['price']));
+            return product;
           })
           .where((product) => product.name.trim().isNotEmpty)
           .toList();

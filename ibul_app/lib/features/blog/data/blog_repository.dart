@@ -77,8 +77,18 @@ class BlogRepository {
   // Management
   // ---------------------------------------------------------------------------
   Future<BlogAccess> myAccess() async {
-    if (_client.auth.currentUser == null) return BlogAccess.none;
-    return BlogAccess.fromJson(await _run(() => _client.rpc('blog_my_access')));
+    if (_client.auth.currentUser == null) {
+      throw const BlogException(
+        'Oturum doğrulanamadı. Sayfayı yenileyip tekrar deneyin.',
+      );
+    }
+    try {
+      return BlogAccess.fromJson(
+        await _run(() => _client.rpc('blog_my_access')),
+      );
+    } on FormatException {
+      throw const BlogException('Blog yetkisi okunamadı.');
+    }
   }
 
   Future<BlogAdminPostPage> listManagedPosts({
@@ -260,7 +270,8 @@ class BlogRepository {
           'İçerik güvenli değil veya desteklenmeyen bir blok içeriyor.',
       'blog_invalid_slug': 'URL adresi (slug) geçersiz veya ayrılmış.',
       'blog_slug_taken': 'Bu URL adresi başka bir yazıda kullanılıyor.',
-      'blog_author_required': 'Yazar seçilmelidir.',
+      'blog_author_required': 'Yayınlamak için bir yazar seçin.',
+      'blog_cover_alt_required': 'Kapak görseli için alternatif metin girin.',
       'blog_invalid_category': 'Seçilen kategori bulunamadı.',
       'blog_no_revision': 'İncelemeye gönderilecek kaydedilmiş değişiklik yok.',
       'blog_user_not_found': 'Bu e-posta ile kayıtlı kullanıcı bulunamadı.',

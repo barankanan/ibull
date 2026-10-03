@@ -76,6 +76,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('HOME_PAGE'), findsOneWidget);
     expect(find.text('Admin Paneli'), findsOneWidget);
+    expect(find.text('AVM\'nizi İBUL\'a Ekleyin'), findsWidgets);
   });
 
   testWidgets('WebFooter Ihiz linki profesyonel landing acar', (

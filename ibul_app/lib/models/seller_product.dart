@@ -123,10 +123,7 @@ class SellerProduct {
     if (isWeightPriced && !hasSizeOptions) {
       return ProductPriceCalculator.formatPerKgLabel(pricePerKg);
     }
-    if (discountPrice != null && discountPrice! > 0) {
-      return '₺${discountPrice!.toStringAsFixed(0)}';
-    }
-    return '₺${price.toStringAsFixed(0)}';
+    return ProductPriceCalculator.formatCurrency(catalogPrice.current);
   }
 
   ProductPricingMode get resolvedPricingMode =>
@@ -260,14 +257,15 @@ class SellerProduct {
   }
 
   String get originalPrice {
-    return '₺${price.toStringAsFixed(0)}';
+    return ProductPriceCalculator.formatCurrency(catalogPrice.original ?? price);
   }
 
-  bool get hasDiscount {
-    return discountPrice != null &&
-        discountPrice! > 0 &&
-        discountPrice! < price;
-  }
+  bool get hasDiscount => catalogPrice.hasDiscount;
+
+  ResolvedSellerPrice get catalogPrice => ProductPriceCalculator.resolveSellerPrice(
+        listPrice: price,
+        discountPrice: discountPrice,
+      );
 
   Map<String, dynamic> toMap() {
     return {

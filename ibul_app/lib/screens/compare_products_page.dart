@@ -3,6 +3,7 @@ import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../core/favorite_state.dart';
+import '../core/compare_state.dart';
 import '../models/product_model.dart';
 import '../widgets/web_header.dart';
 import 'compare_features_page.dart';
@@ -31,14 +32,14 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
   }
 
   void _loadProducts() {
-    final favorites = Provider.of<FavoriteState>(context, listen: false).favorites;
-    _applyFavorites(favorites);
+    final compareState = Provider.of<CompareState>(context, listen: false);
+    _applyProducts(compareState.compareProducts);
   }
 
-  void _applyFavorites(List<Product> favorites) {
+  void _applyProducts(List<Product> products) {
     final Map<String, List<Map<String, dynamic>>> newCategories = {};
 
-    for (final product in favorites) {
+    for (final product in products) {
       final category = product.category ?? 'Diğer';
       newCategories.putIfAbsent(category, () => []);
       newCategories[category]!.add({
@@ -48,7 +49,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
           'product': product,
           'image': product.images.isNotEmpty ? product.images.first : null,
         }),
-        'selected': false,
+        'selected': true, // Auto select all compared products
         'product': product,
       });
     }
@@ -67,16 +68,26 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
     return selected;
   }
 
+  void _clearSelection() {
+    setState(() {
+      for (final products in _categories.values) {
+        for (final p in products) {
+          p['selected'] = false;
+        }
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final isWeb = MediaQuery.of(context).size.width >= 800;
 
-    return Consumer<FavoriteState>(
-      builder: (context, favoriteState, _) {
-        if (_categories.isEmpty && favoriteState.favorites.isNotEmpty) {
+    return Consumer<CompareState>(
+      builder: (context, compareState, _) {
+        if (_categories.isEmpty && compareState.compareProducts.isNotEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
-              _applyFavorites(favoriteState.favorites);
+              _applyProducts(compareState.compareProducts);
             }
           });
         }
@@ -225,13 +236,28 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
-                                      'Seçilen Ürünler (${_selectedProducts.length})',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.grey.shade800,
-                                      ),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          'Seçilen Ürünler (${_selectedProducts.length})',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.grey.shade800,
+                                          ),
+                                        ),
+                                        if (_selectedProducts.isNotEmpty)
+                                          TextButton(
+                                            onPressed: _clearSelection,
+                                            style: TextButton.styleFrom(
+                                              padding: EdgeInsets.zero,
+                                              minimumSize: Size.zero,
+                                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                            ),
+                                            child: const Text('Temizle', style: TextStyle(fontSize: 12)),
+                                          ),
+                                      ],
                                     ),
                                     const SizedBox(height: 16),
                                     Expanded(
@@ -429,6 +455,13 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
           ),
         ),
         centerTitle: true,
+        actions: [
+          if (_selectedProducts.isNotEmpty)
+            TextButton(
+              onPressed: _clearSelection,
+              child: const Text('Temizle', style: TextStyle(fontSize: 14)),
+            ),
+        ],
       ),
       body: Column(
         children: [

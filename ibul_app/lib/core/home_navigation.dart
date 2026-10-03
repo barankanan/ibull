@@ -7,11 +7,13 @@ class HomeRouteArgs {
   const HomeRouteArgs({
     this.initialIndex = 0,
     this.initialCategory,
+    this.initialSubCategory,
     this.initialSearchQuery,
   });
 
   final int initialIndex;
   final String? initialCategory;
+  final String? initialSubCategory;
 
   /// Home URL query `q`. The HTML boot shell submits search here.
   final String? initialSearchQuery;
@@ -27,6 +29,8 @@ class HomeRouteArgs {
             ? indexRaw
             : int.tryParse('$indexRaw') ?? 0,
         initialCategory: categoryRaw?.toString(),
+        initialSubCategory: (raw['initialSubCategory'] ?? raw['subcategory'])
+            ?.toString(),
         initialSearchQuery: queryRaw?.toString(),
       );
     }

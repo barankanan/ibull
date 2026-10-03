@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/web_boot_loader.dart';
 import '../core/web_seo.dart';
 import '../features/customer_support/screens/customer_support_page.dart';
 import '../features/saved_payment_cards/screens/saved_payment_cards_page.dart';
@@ -9,6 +10,7 @@ import '../screens/account_page.dart';
 import '../screens/addresses_page.dart';
 import '../screens/ai_chat_page.dart';
 import '../screens/business_detail_page.dart';
+import '../screens/category_products_page.dart';
 import '../screens/coupons_page.dart';
 import '../screens/favorites_page.dart';
 import '../screens/followed_stores_page.dart';
@@ -21,6 +23,123 @@ import '../services/store_service.dart';
 import '../services/supabase_service.dart';
 import 'account_sections.dart';
 import 'marketplace_paths.dart';
+
+class CategoryRoutePage extends StatefulWidget {
+  const CategoryRoutePage({
+    super.key,
+    required this.mainCategoryId,
+    required this.subCategoryId,
+  });
+
+  final String mainCategoryId;
+  final String subCategoryId;
+
+  @override
+  State<CategoryRoutePage> createState() => _CategoryRoutePageState();
+}
+
+class _CategoryRoutePageState extends State<CategoryRoutePage> {
+  late Future<Widget> _future = _resolve();
+
+  @override
+  void initState() {
+    super.initState();
+    // Direct / refreshed /kategori URLs never mount the home page, which is the
+    // only normal-boot path that removes the full-screen HTML boot loader.
+    WidgetsBinding.instance.addPostFrameCallback((_) => dismissWebBootLoader());
+  }
+
+  Future<Widget> _resolve() async {
+    final decodedMain = Uri.decodeComponent(widget.mainCategoryId);
+    final decodedSub = Uri.decodeComponent(widget.subCategoryId);
+    final mainId = int.tryParse(decodedMain);
+    final subId = int.tryParse(decodedSub);
+    
+    // We can match by integer ID or string Name
+    final isMainMatch = (node) => 
+        (mainId != null && node.mainCategory.id == mainId) || 
+        (node.mainCategory.name == decodedMain);
+        
+    final isSubMatch = (sub, resolvedMainId) => 
+        (subId != null && sub.id == subId) || 
+        (sub.name == decodedSub && sub.parentId == resolvedMainId);
+
+    final categories = await SupabaseService.instance
+      .getCategoriesWithSubsStrict();
+      
+    for (final node in categories) {
+      if (!isMainMatch(node) || !node.mainCategory.isActive) {
+        continue;
+      }
+      
+      if (widget.subCategoryId.isEmpty || widget.subCategoryId == '-') {
+        final products = await SupabaseService.instance.getCategoryProductsPaged(
+          category: node.mainCategory.name,
+          limit: 24,
+        );
+        return CategoryProductsPage(
+          category: node.mainCategory.name,
+          subCategory: '', // Main category only
+          products: products.items
+              .map(Product.fromDBProduct)
+              .toList(growable: false),
+          initialNextCursor: products.nextCursor,
+        );
+      }
+
+      for (final sub in node.subCategories) {
+        if (!isSubMatch(sub, node.mainCategory.id) || !sub.isActive) {
+          continue;
+        }
+        final products = await SupabaseService.instance.getCategoryProductsPaged(
+          category: node.mainCategory.name,
+          subCategory: sub.name,
+          limit: 24,
+        );
+        return CategoryProductsPage(
+          category: node.mainCategory.name,
+          subCategory: sub.name,
+          products: products.items
+              .map(Product.fromDBProduct)
+              .toList(growable: false),
+          initialNextCursor: products.nextCursor,
+        );
+      }
+    }
+    return IbulNotFoundPage(path: MarketplacePaths.categoryRoot);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Widget>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Scaffold(
+            body: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Kategori ürünleri yüklenemedi.'),
+                  TextButton(
+                    onPressed: () => setState(() => _future = _resolve()),
+                    child: const Text('Tekrar dene'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        if (!snapshot.hasData) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        return snapshot.data!;
+      },
+    );
+  }
+}
 
 class ProductRoutePage extends StatefulWidget {
   const ProductRoutePage({

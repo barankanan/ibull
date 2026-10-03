@@ -2,6 +2,14 @@
   "projects": {
     "y": "ibul-ecommerce"
   },
-  "targets": {},
+  "targets": {
+    "ibul-ecommerce": {
+      "hosting": {
+        "ibul": [
+          "ibul-ecommerce"
+        ]
+      }
+    }
+  },
   "etags": {}
 }

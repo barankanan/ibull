@@ -52,7 +52,12 @@ class CartState extends ChangeNotifier {
       .where((product) => tabKindForProduct(product) == kind)
       .toList(growable: false);
 
-  static String productKey(Product product) => '${product.brand}|${product.name}';
+  static String productKey(Product product) {
+    if (product.productId != null && product.productId!.trim().isNotEmpty) {
+      return product.productId!;
+    }
+    return '${product.brand}|${product.name}';
+  }
 
   bool isInCart(Product product) => _cartKeys.contains(productKey(product));
 

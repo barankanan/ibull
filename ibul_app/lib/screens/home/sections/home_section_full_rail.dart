@@ -138,7 +138,7 @@ class _HomeProductHorizontalRailState
         widget.items.length > 3 && MediaQuery.sizeOf(context).width >= 700;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 16, 10, 8),
+      padding: const EdgeInsets.fromLTRB(0, 16, 0, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -181,7 +181,7 @@ class _HomeProductHorizontalRailState
                   controller: _scrollController,
                   scrollDirection: Axis.horizontal,
                   physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  padding: EdgeInsets.zero,
                   itemCount: widget.items.length,
                   separatorBuilder: (_, _) => const SizedBox(width: _gap),
                   itemBuilder: (context, index) {

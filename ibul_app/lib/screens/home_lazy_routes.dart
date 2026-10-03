@@ -94,7 +94,7 @@ abstract final class HomeLazyRoutes {
 
   static Future<Widget> cartTab() async {
     await cart_page.loadLibrary();
-    return cart_page.CartPage();
+    return cart_page.CartPage(usedAsTab: true);
   }
 
   static Future<Widget> accountTab() async {

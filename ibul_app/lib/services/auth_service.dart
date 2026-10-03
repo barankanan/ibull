@@ -254,6 +254,25 @@ class AuthService {
     }
   }
 
+  /// Same Supabase password login. Phone is not a second credential system.
+  Future<AuthResponse> signInWithPhonePassword(
+    String phone,
+    String password,
+  ) async {
+    final normalized = phone.trim().replaceAll(RegExp(r'[\s()-]'), '');
+    try {
+      final response = await _supabase.auth.signInWithPassword(
+        phone: normalized,
+        password: password,
+      );
+      await ensureCurrentUserRow(user: response.user, phone: normalized);
+      return response;
+    } catch (e) {
+      debugPrint('Phone Sign-In Error: $e');
+      rethrow;
+    }
+  }
+
   // Register with Email/Password
   Future<AuthResponse> signUpWithEmailPassword(
     String email,
@@ -1019,17 +1038,14 @@ class AuthService {
 
     final dbData = _mapApplicationToSnakeCase(applicationData);
 
-    await _supabase
-        .from('seller_applications')
-        .insert({
-          ...dbData,
-          'user_id': user.id,
-          'status': 'pending',
-          'created_at': DateTime.now().toIso8601String(),
-          'user_email': user.email,
-          'user_name': user.userMetadata?['display_name'],
-        })
-        .timeout(const Duration(seconds: 30));
+    await _insertSellerApplication({
+      ...dbData,
+      'user_id': user.id,
+      'status': 'pending',
+      'created_at': DateTime.now().toIso8601String(),
+      'user_email': user.email,
+      'user_name': user.userMetadata?['display_name'],
+    });
 
     Map<String, dynamic>? profile;
     try {
@@ -1084,17 +1100,14 @@ class AuthService {
       // 3. Create Application Document
       final dbData = _mapApplicationToSnakeCase(applicationData);
 
-      await _supabase
-          .from('seller_applications')
-          .insert({
-            ...dbData,
-            'user_id': user.id,
-            'status': 'pending',
-            'created_at': DateTime.now().toIso8601String(),
-            'user_email': email,
-            'user_name': applicationData['contactName'],
-          })
-          .timeout(const Duration(seconds: 30));
+      await _insertSellerApplication({
+        ...dbData,
+        'user_id': user.id,
+        'status': 'pending',
+        'created_at': DateTime.now().toIso8601String(),
+        'user_email': email,
+        'user_name': applicationData['contactName'],
+      });
 
       return response;
     } catch (e) {
@@ -1177,6 +1190,20 @@ class AuthService {
   }
 
   // Helper to map camelCase application data to snake_case DB columns
+  Future<void> _insertSellerApplication(Map<String, dynamic> row) async {
+    try {
+      await _supabase.from('seller_applications').insert(row).timeout(const Duration(seconds: 30));
+    } on PostgrestException catch (error) {
+      if (row['mall_placement'] == null ||
+          (error.code != 'PGRST204' && error.code != '42703' && !error.message.contains('mall_placement'))) {
+        rethrow;
+      }
+      debugPrint('[SELLER_APP] mall_placement column missing, retrying without it');
+      final retry = Map<String, dynamic>.from(row)..remove('mall_placement');
+      await _supabase.from('seller_applications').insert(retry).timeout(const Duration(seconds: 30));
+    }
+  }
+
   Map<String, dynamic> _mapApplicationToSnakeCase(Map<String, dynamic> data) {
     final map = <String, dynamic>{
       'business_name': data['businessName'],
@@ -1199,6 +1226,7 @@ class AuthService {
     if (data['storeLat'] != null) map['store_lat'] = data['storeLat'];
     if (data['storeLng'] != null) map['store_lng'] = data['storeLng'];
     if (data['logoUrl'] != null) map['logo_url'] = data['logoUrl'];
+    if (data['mallPlacement'] != null) map['mall_placement'] = data['mallPlacement'];
     return map;
   }
 

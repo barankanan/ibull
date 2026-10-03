@@ -7,14 +7,7 @@ BoxDecoration printerCenterCardDecoration() {
   return BoxDecoration(
     color: Colors.white,
     borderRadius: BorderRadius.circular(12),
-    border: Border.all(color: const Color(0xFFE5E7EB)),
-    boxShadow: const [
-      BoxShadow(
-        color: Color(0x060F172A),
-        blurRadius: 10,
-        offset: Offset(0, 3),
-      ),
-    ],
+    border: Border.all(color: const Color(0xFFE7E5EE)),
   );
 }
 
@@ -134,7 +127,7 @@ class PrinterAssignmentSummaryCard extends StatelessWidget {
     final missingCount = items.where((item) => !item.isMapped).length;
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: printerCenterCardDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -172,13 +165,13 @@ class PrinterAssignmentSummaryCard extends StatelessWidget {
           const SizedBox(height: 12),
           ...items.map(_buildRow),
           if (onGoToMapping != null) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerLeft,
-              child: TextButton.icon(
+              child: OutlinedButton.icon(
                 onPressed: onGoToMapping,
                 icon: const Icon(Icons.alt_route_rounded, size: 18),
-                label: const Text('Eşleştirme sekmesine git'),
+                label: const Text('Eşleştirmeyi Yönet'),
               ),
             ),
           ],
@@ -250,13 +243,17 @@ class PrinterRegisteredListCard extends StatelessWidget {
   final void Function(PrinterModel printer)? onDelete;
   final Set<String> repairingIds;
 
+  static const double _tableBreakpoint = 720;
+  static const double _actionsWidth = 220;
+
   @override
   Widget build(BuildContext context) {
+    final activeCount = printers.where((printer) => printer.isActive).length;
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: printerCenterCardDecoration(),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
@@ -271,7 +268,9 @@ class PrinterRegisteredListCard extends StatelessWidget {
                 ),
               ),
               Text(
-                '${printers.length}',
+                printers.isEmpty
+                    ? '0 kayıt'
+                    : '${printers.length} kayıt • $activeCount aktif',
                 style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -280,24 +279,82 @@ class PrinterRegisteredListCard extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 4),
+          const Text(
+            'Aktif/pasif kayıt durumunu gösterir; yazıcının şu an açık ve bağlı olduğunu göstermez.',
+            style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+          ),
           const SizedBox(height: 12),
           if (printers.isEmpty)
-            const Text(
-              'Kayıtlı yazıcı yok. Hızlı kurulumdan yazıcı ekleyin.',
-              style: TextStyle(
-                fontSize: 12.5,
-                color: Color(0xFF6B7280),
-                height: 1.45,
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF7F7FA),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Text(
+                'Henüz kayıtlı yazıcı yok. Üstteki “Yazıcı Ekle” ile ilk yazıcınızı ekleyin.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: Color(0xFF6B7280),
+                  height: 1.45,
+                ),
               ),
             )
           else
-            ...printers.map((printer) => _PrinterRegisteredRow(
-              printer: printer,
-              onTest: onTest,
-              onEdit: onEdit,
-              onDelete: onDelete,
-              repairing: repairingIds.contains(printer.id),
-            )),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final table = constraints.maxWidth >= _tableBreakpoint;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (table) const _PrinterTableHeader(),
+                    for (final printer in printers)
+                      _PrinterRegisteredRow(
+                        printer: printer,
+                        table: table,
+                        onTest: onTest,
+                        onEdit: onEdit,
+                        onDelete: onDelete,
+                        repairing: repairingIds.contains(printer.id),
+                      ),
+                  ],
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrinterTableHeader extends StatelessWidget {
+  const _PrinterTableHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(
+      fontSize: 11.5,
+      fontWeight: FontWeight.w700,
+      color: Color(0xFF6B7280),
+    );
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: const BoxDecoration(
+        color: Color(0xFFF7F7FA),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+      ),
+      child: const Row(
+        children: [
+          Expanded(flex: 3, child: Text('Ad', style: style)),
+          Expanded(flex: 3, child: Text('Bağlantı', style: style)),
+          Expanded(flex: 2, child: Text('Profil', style: style)),
+          Expanded(flex: 2, child: Text('Etkinlik', style: style)),
+          SizedBox(
+            width: PrinterRegisteredListCard._actionsWidth,
+            child: Text('İşlemler', style: style, textAlign: TextAlign.right),
+          ),
         ],
       ),
     );
@@ -307,6 +364,7 @@ class PrinterRegisteredListCard extends StatelessWidget {
 class _PrinterRegisteredRow extends StatelessWidget {
   const _PrinterRegisteredRow({
     required this.printer,
+    required this.table,
     this.onTest,
     this.onEdit,
     this.onDelete,
@@ -314,6 +372,7 @@ class _PrinterRegisteredRow extends StatelessWidget {
   });
 
   final PrinterModel printer;
+  final bool table;
   final void Function(PrinterModel printer)? onTest;
   final void Function(PrinterModel printer)? onEdit;
   final void Function(PrinterModel printer)? onDelete;
@@ -345,87 +404,144 @@ class _PrinterRegisteredRow extends StatelessWidget {
     return device.isNotEmpty ? device : '-';
   }
 
+  String get _profileLabel =>
+      printer.printerProfileId ?? '${printer.paperWidthMm}mm';
+
   @override
   Widget build(BuildContext context) {
-    final healthColor = printer.isActive
+    final activityColor = printer.isActive
         ? const Color(0xFF15803D)
         : const Color(0xFF9CA3AF);
-    final healthLabel = printer.isActive ? 'Aktif' : 'Pasif';
+    final activityLabel = printer.isActive ? 'Kayıt aktif' : 'Kayıt pasif';
+    const cellStyle = TextStyle(fontSize: 12, color: Color(0xFF4B5563));
+
+    final name = Text(
+      printer.name,
+      maxLines: table ? 1 : 2,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w700,
+        color: Color(0xFF111827),
+      ),
+    );
+    final connection = Tooltip(
+      message: _connectionLine,
+      child: Text(
+        '$_backendBadge • $_connectionLine',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: cellStyle,
+      ),
+    );
+    final profile = Text(
+      _profileLabel,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: cellStyle,
+    );
+    final activity = Align(
+      alignment: Alignment.centerLeft,
+      child: _Badge(text: activityLabel, color: activityColor),
+    );
+    final actions = Wrap(
+      alignment: table ? WrapAlignment.end : WrapAlignment.start,
+      spacing: 2,
+      children: [
+        if (onTest != null)
+          TextButton(
+            onPressed: () => onTest!(printer),
+            style: _compactButton,
+            child: const Text('Test'),
+          ),
+        if (onEdit != null)
+          TextButton(
+            onPressed: () => onEdit!(printer),
+            style: _compactButton,
+            child: const Text('Düzenle'),
+          ),
+        if (onDelete != null)
+          TextButton(
+            onPressed: () => onDelete!(printer),
+            style: _compactButton.copyWith(
+              foregroundColor: const WidgetStatePropertyAll(Color(0xFFB91C1C)),
+            ),
+            child: const Text('Sil'),
+          ),
+      ],
+    );
+    const repairNote = Text(
+      'Profil onarımı çalışıyor…',
+      style: TextStyle(fontSize: 11, color: Color(0xFFB45309)),
+    );
+
+    if (table) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: Color(0xFFEFEDF3))),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 3,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [name, if (repairing) repairNote],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(flex: 3, child: connection),
+            const SizedBox(width: 8),
+            Expanded(flex: 2, child: profile),
+            Expanded(flex: 2, child: activity),
+            SizedBox(
+              width: PrinterRegisteredListCard._actionsWidth,
+              child: actions,
+            ),
+          ],
+        ),
+      );
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 4),
       decoration: BoxDecoration(
-        color: const Color(0xFFF9FAFB),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(color: const Color(0xFFE7E5EE)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Text(
-                  printer.name,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF111827),
-                  ),
-                ),
-              ),
-              _Badge(text: _backendBadge),
-              const SizedBox(width: 6),
-              _Badge(
-                text: healthLabel,
-                color: healthColor,
-              ),
+              Expanded(child: name),
+              const SizedBox(width: 8),
+              _Badge(text: activityLabel, color: activityColor),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
+          connection,
           Text(
-            'Bağlantı: $_connectionLine',
-            style: const TextStyle(fontSize: 11.5, color: Color(0xFF6B7280)),
+            'Profil: $_profileLabel',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: cellStyle,
           ),
-          Text(
-            'Profil: ${printer.printerProfileId ?? '${printer.paperWidthMm}mm'}',
-            style: const TextStyle(fontSize: 11.5, color: Color(0xFF6B7280)),
-          ),
-          if (repairing) ...[
-            const SizedBox(height: 6),
-            const Text(
-              'Profil onarımı çalışıyor…',
-              style: TextStyle(fontSize: 11, color: Color(0xFFB45309)),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: [
-              if (onTest != null)
-                TextButton(
-                  onPressed: () => onTest!(printer),
-                  child: const Text('Test'),
-                ),
-              if (onEdit != null)
-                TextButton(
-                  onPressed: () => onEdit!(printer),
-                  child: const Text('Düzenle'),
-                ),
-              if (onDelete != null)
-                TextButton(
-                  onPressed: () => onDelete!(printer),
-                  child: const Text('Sil'),
-                ),
-            ],
-          ),
+          if (repairing) repairNote,
+          actions,
         ],
       ),
     );
   }
 }
+
+final ButtonStyle _compactButton = TextButton.styleFrom(
+  visualDensity: VisualDensity.compact,
+  padding: const EdgeInsets.symmetric(horizontal: 10),
+);
 
 class _Badge extends StatelessWidget {
   const _Badge({required this.text, this.color = const Color(0xFF4B5563)});
@@ -459,18 +575,20 @@ class PrinterRecentJobsCard extends StatelessWidget {
     super.key,
     required this.jobs,
     this.loading = false,
+    this.onShowAll,
   });
 
   final List<PrintJobModel> jobs;
   final bool loading;
+  final VoidCallback? onShowAll;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: printerCenterCardDecoration(),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text(
             'Son Baskılar',
@@ -489,12 +607,31 @@ class PrinterRecentJobsCard extends StatelessWidget {
               ),
             )
           else if (jobs.isEmpty)
-            const Text(
-              'Henüz baskı kaydı yok.',
-              style: TextStyle(fontSize: 12.5, color: Color(0xFF6B7280)),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF7F7FA),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Text(
+                'Henüz baskı kaydı yok.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12.5, color: Color(0xFF6B7280)),
+              ),
             )
           else
             ...jobs.take(5).map(_buildJobRow),
+          if (onShowAll != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: onShowAll,
+                icon: const Icon(Icons.list_alt_rounded, size: 18),
+                label: const Text('Tüm Kayıtlar'),
+              ),
+            ),
+          ],
         ],
       ),
     );

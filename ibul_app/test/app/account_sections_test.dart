@@ -22,5 +22,6 @@ void main() {
       'Hesabım | İBUL',
     );
     expect(AccountSections.fromPath('/hesabim/ozet'), isNull);
+    expect(AccountSections.fromPath('/avm-basvurusu'), isNull);
   });
 }

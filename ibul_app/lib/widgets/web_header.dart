@@ -9,8 +9,10 @@ import '../core/ibul_chrome.dart';
 import '../screens/notifications_page.dart' deferred as notifications_page;
 import '../core/route_observer.dart';
 import 'web_header_menu_items.dart';
+import 'marketplace_content_frame.dart';
 import 'search_overlay.dart' deferred as search_overlay;
 import '../screens/home_lazy_routes.dart';
+import 'web_category_bar.dart';
 
 class WebHeader extends StatefulWidget {
   final ValueChanged<String> onSearch;
@@ -19,6 +21,7 @@ class WebHeader extends StatefulWidget {
   final String? initialQuery;
   final String? activeMenu;
   final bool showBackButton;
+  final bool showCategories;
 
   const WebHeader({
     super.key,
@@ -28,6 +31,7 @@ class WebHeader extends StatefulWidget {
     this.initialQuery,
     this.activeMenu,
     this.showBackButton = false,
+    this.showCategories = true,
   });
 
   @override
@@ -222,39 +226,63 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         // Üst Bar (Logo, Arama, Menüler)
         Container(
           decoration: IbulChrome.headerBarDecoration,
-          padding: IbulChrome.headerPadding(isWeb: true),
-          child: Row(
-            children: [
-              if (widget.showBackButton) ...[
-                _buildBackButton(),
-                const SizedBox(width: 4),
-              ],
-              _buildLogo(),
-
-              const SizedBox(width: 48),
-
-              // 2. Search Bar
-              Expanded(child: _buildSearchBar()),
-
-              const SizedBox(width: 32),
-
-              // 3. Location (Konum)
-              _buildLocation(),
-
-              const SizedBox(width: 32),
-
-              // 4. Menu Items (Hesabım, Favorilerim, Sepetim)
-              WebHeaderMenuItems(activeMenu: widget.activeMenu),
-            ],
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: MarketplaceContentFrame(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 850;
+                final links = Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildLocation(),
+                    const SizedBox(width: 16),
+                    WebHeaderMenuItems(activeMenu: widget.activeMenu),
+                  ],
+                );
+                final logo = Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.showBackButton) ...[
+                      _buildBackButton(),
+                      const SizedBox(width: 4),
+                    ],
+                    _buildLogo(),
+                  ],
+                );
+                if (compact) {
+                  return Column(
+                    children: [
+                      Row(children: [logo, const Spacer(), links]),
+                      const SizedBox(height: 12),
+                      _buildSearchBar(),
+                    ],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    logo,
+                    const SizedBox(width: 24),
+                    Expanded(child: _buildSearchBar()),
+                    const SizedBox(width: 16),
+                    links,
+                  ],
+                );
+              },
+            ),
           ),
         ),
 
         // Kategori Menüsü (Alt Bar)
-        _buildCategoryBar(),
+        if (widget.showCategories) WebCategoryBar(
+          selectedCategory: widget.selectedCategory,
+          onCategorySelected: widget.onCategorySelected,
+        ),
       ],
     );
   }
@@ -386,7 +414,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
             ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 8),
         Expanded(
           child: CompositedTransformTarget(
             link: _layerLink,
@@ -405,9 +433,9 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
               ),
               child: Row(
                 children: [
-                  const SizedBox(width: 16),
-                  const Icon(Icons.search, color: Colors.grey, size: 22),
                   const SizedBox(width: 12),
+                  const Icon(Icons.search, color: Colors.grey, size: 22),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: TextField(
                       textAlign: TextAlign.start,
@@ -462,7 +490,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                       onTap: () => _submitSearch(),
                       child: Container(
                         margin: const EdgeInsets.all(4),
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(
                           color: AppColors.primary,
                           borderRadius: BorderRadius.circular(6),
@@ -496,6 +524,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
         HomeLazyRoutes.openMap(context);
       },
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
           const Icon(Icons.map, color: AppColors.primary, size: 24),
           const SizedBox(width: 6),
@@ -531,145 +560,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
     );
   }
 
-  Widget _buildCategoryBar() {
-    final categories = [
-      'Yakın Lokasyon',
-      'Erkek',
-      'Kadın',
-      'Elektronik',
-      'Ayakkabı & Çanta',
-      'Saat & Aksesuar',
-      'Ev & Yaşam',
-      'Kırtasiye & Ofis',
-      'Oto, Bahçe, Yapı Market',
-      'Oyuncak, Müzik, Film',
-      'Spor & Outdoor',
-      'Kozmetik & Kişisel Bakım',
-      'Pet Shop',
-    ];
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: IbulChrome.categoryBarDecoration,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: IbulChrome.contentConstraints,
-          child: SizedBox(
-            height: 40,
-            child: Stack(
-              alignment: Alignment.centerLeft,
-              children: [
-                ScrollConfiguration(
-                  behavior: ScrollConfiguration.of(context).copyWith(
-                    dragDevices: {
-                      PointerDeviceKind.touch,
-                      PointerDeviceKind.mouse,
-                    },
-                  ),
-                  child: ListView.separated(
-                    controller: _categoryScrollController,
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.only(left: 24, right: 60),
-                    itemCount: categories.length,
-                    shrinkWrap: true,
-                    separatorBuilder: (context, index) =>
-                        const SizedBox(width: 32),
-                    itemBuilder: (context, index) {
-                      final category = categories[index];
-                      final isSelected = widget.selectedCategory == category;
-                      return InkWell(
-                        onTap: () {
-                          if (category == 'Yakın Lokasyon') {
-                            HomeLazyRoutes.openMap(context);
-                          } else {
-                            widget.onCategorySelected?.call(category);
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 4,
-                            horizontal: 12,
-                          ),
-                          decoration: BoxDecoration(
-                            border: isSelected
-                                ? const Border(
-                                    bottom: BorderSide(
-                                      color: AppColors.primary,
-                                      width: 2,
-                                    ),
-                                  )
-                                : null,
-                          ),
-                          child: Text(
-                            category,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                              color: isSelected
-                                  ? AppColors.primary
-                                  : Colors.grey[800],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                Positioned(
-                  right: 0,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.centerRight,
-                        end: Alignment.centerLeft,
-                        colors: [
-                          Colors.white,
-                          Colors.white.withValues(alpha: 0.0),
-                        ],
-                        stops: const [0.5, 1.0],
-                      ),
-                    ),
-                    padding: const EdgeInsets.only(left: 20),
-                    child: Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.1),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: IconButton(
-                        padding: EdgeInsets.zero,
-                        tooltip: 'Daha fazla kategori',
-                        icon: const Icon(
-                          Icons.chevron_right,
-                          color: AppColors.primary,
-                        ),
-                        onPressed: () {
-                          _categoryScrollController.animateTo(
-                            _categoryScrollController.offset + 200,
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeInOut,
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _NotificationsPopup extends StatefulWidget {

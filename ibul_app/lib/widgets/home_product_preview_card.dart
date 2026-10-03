@@ -46,8 +46,8 @@ class _HomeProductPreviewCardState extends State<HomeProductPreviewCard> {
   bool _reportedPaint = false;
   bool _isFavorite = false;
 
-  static const double _buttonHeight = 32;
-  static const double _priceHeight = 22;
+  static const double _buttonHeight = 34;
+  static const double _priceBlockHeight = 40;
   static const double _nameHeight = 34;
   static const double _brandHeight = 14;
   static const double _verticalPadding = 14;
@@ -147,7 +147,12 @@ class _HomeProductPreviewCardState extends State<HomeProductPreviewCard> {
         widget.preview.storeName != null &&
         widget.preview.storeName!.isNotEmpty;
     var bodyHeight =
-        _verticalPadding + _nameHeight + 8 + _priceHeight + 8 + _buttonHeight;
+        _verticalPadding +
+        _nameHeight +
+        8 +
+        _priceBlockHeight +
+        8 +
+        _buttonHeight;
     if (hasBrand) bodyHeight += _brandHeight + 4;
     if (hasStore) bodyHeight += 14 + 4;
     final imageHeight = widget.height - bodyHeight;
@@ -330,37 +335,75 @@ class _HomeProductPreviewCardState extends State<HomeProductPreviewCard> {
                       ],
                       const Spacer(),
                       SizedBox(
-                        height: _priceHeight,
+                        height: _priceBlockHeight,
                         child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.end,
+                          alignment: Alignment.bottomLeft,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Flexible(
-                                child: Text(
-                                  '₺${widget.preview.displayPrice.toStringAsFixed(2)}',
+                              if (widget.preview.hasDiscount)
+                                Text(
+                                  '₺${widget.preview.price.toStringAsFixed(widget.preview.price == widget.preview.price.roundToDouble() ? 0 : 2)}',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF7C3AED),
-                                  ),
-                                ),
-                              ),
-                              if (widget.preview.hasDiscount) ...[
-                                const SizedBox(width: 4),
-                                Text(
-                                  '₺${widget.preview.price.toStringAsFixed(2)}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.grey.shade500,
+                                    fontSize: 11,
+                                    color: Color(0xFFE53935),
                                     decoration: TextDecoration.lineThrough,
+                                    decorationColor: Color(0xFFE53935),
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.1,
                                   ),
                                 ),
-                              ],
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      '₺${widget.preview.displayPrice.toStringAsFixed(widget.preview.displayPrice == widget.preview.displayPrice.roundToDouble() ? 0 : 2)}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                  ),
+                                  if (widget.preview.hasDiscount) ...[
+                                    const SizedBox(width: 4),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 5,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFE8F5E9),
+                                        borderRadius: BorderRadius.circular(5),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.arrow_downward,
+                                            size: 9,
+                                            color: Color(0xFF2E7D32),
+                                          ),
+                                          SizedBox(width: 2),
+                                          Text(
+                                            'İndirim',
+                                            style: TextStyle(
+                                              fontSize: 9,
+                                              color: Color(0xFF2E7D32),
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
                             ],
                           ),
                         ),
@@ -373,16 +416,24 @@ class _HomeProductPreviewCardState extends State<HomeProductPreviewCard> {
                           onPressed: widget.onAddTap ?? widget.onTap,
                           style: FilledButton.styleFrom(
                             backgroundColor: AppColors.primary,
-                            padding: EdgeInsets.zero,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            elevation: 0,
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(
+                                _buttonHeight / 2,
+                              ),
                             ),
                           ),
                           child: const Text(
                             'Sepete Ekle',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.15,
+                              height: 1.05,
                             ),
                           ),
                         ),

@@ -7,7 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
 import '../../features/seller/panel/printer_center/printer_assignment_state.dart';
 import '../../features/seller/panel/printer_center/printer_station_test_guard.dart';
-import '../../features/seller/panel/printer_center/widgets/printer_center_health_banner.dart';
+import '../../features/seller/panel/printer_center/widgets/printer_center_layout.dart';
 import '../../features/seller/panel/printer_center/widgets/printer_center_sections.dart';
 import '../../features/seller/panel/printer_center/widgets/printer_role_mappings_card.dart';
 import '../../models/discovered_printer.dart';
@@ -384,6 +384,12 @@ class _KitchenPrintManagementPageState
             : _printerNameById(_selectedKitchenPrinterId);
         _lastBridgePrinterRefreshKey = nextBridgePrinterRefreshKey;
       });
+      final connectivity = RestaurantConnectivityService.instance;
+      if (connectivity.bridgeReachable != snapshot.bridgeReachable) {
+        // The page-level offline banner reads the same local bridge through
+        // this service; re-probe so both show the same current state.
+        unawaited(connectivity.refresh().catchError((Object _) {}));
+      }
       if (shouldRefreshPrinterViews) {
         _triggerPrintersRefresh(reason: 'bridgeScanUpdated');
         _triggerAssignmentsRefresh(reason: 'bridgeScanUpdated');
@@ -857,12 +863,6 @@ class _KitchenPrintManagementPageState
         .toLowerCase();
   }
 
-  bool get _isLocalPrintRuntimeOnline =>
-      _bridgeReachable && (_bridgeHealthy || _hasDetectedPrinters);
-
-  bool get _isPrintStationOnline =>
-      _isRemotePrintStationOnline || _isLocalPrintRuntimeOnline;
-
   bool get _hasDetectedPrinters => _bridgePrinters.isNotEmpty;
 
   String _wizardStatusLabel(String? status) {
@@ -886,31 +886,6 @@ class _KitchenPrintManagementPageState
       default:
         return 'Kontrol Ediliyor';
     }
-  }
-
-  Color _wizardStatusColor(String? status) {
-    switch ((status ?? '').trim().toLowerCase()) {
-      case 'ready':
-        return const Color(0xFF15803D);
-      case 'running_unhealthy':
-      case 'setup_required':
-      case 'not_installed':
-      case 'installed_not_running':
-        return const Color(0xFFB45309);
-      case 'bridge_not_running':
-      case 'driver_missing':
-      case 'printer_offline':
-        return const Color(0xFFB91C1C);
-      default:
-        return const Color(0xFF6B7280);
-    }
-  }
-
-  String _bridgeSummaryLabel() {
-    if (!_bridgeReachable) return 'Bridge kapalı';
-    return _bridgeHealthy || _hasDetectedPrinters
-        ? 'Bridge hazır'
-        : 'Bridge çalışıyor ama hatalı';
   }
 
   String _bridgeSummaryMessage() {
@@ -1038,18 +1013,6 @@ class _KitchenPrintManagementPageState
   }
 
   String _printSystemStateLabel(bool enabled) => enabled ? 'Açık' : 'Kapalı';
-
-  String _printSystemDescription(bool enabled) {
-    return enabled
-        ? 'Yeni siparişler otomatik olarak yazdırılır.'
-        : 'Siparişler alınır ancak fişler otomatik yazdırılmaz.';
-  }
-
-  String _printSystemBannerText(bool enabled) {
-    return enabled
-        ? 'Baskı sistemi açık. Yeni siparişler yazdırılır.'
-        : 'Baskı sistemi kapalı. Siparişler alınır ancak fişler otomatik yazdırılmaz.';
-  }
 
   bool get _isQueuePrintSystemDisabled =>
       _queueRuntimePrintSystemDisabled(_localQueueStatus);
@@ -2124,9 +2087,14 @@ class _KitchenPrintManagementPageState
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Hard Reset Printers'),
+          title: const Text('Tüm yazıcı kayıtları sıfırlansın mı?'),
           content: const Text(
-            'Bu islem yerel config, printer kayitlari ve rol eslestirmelerini temizler. Sonrasinda yeni tarama yapilir.',
+            'Bu işlem geri alınamaz. Şunlar silinir:\n'
+            '• Bu restorana ait tüm kayıtlı yazıcılar\n'
+            '• Tüm alan–yazıcı eşleştirmeleri\n'
+            '• Adisyon ve mutfak yazıcı atamaları (bulut)\n'
+            '• Bu cihazdaki yerel yazıcı ayarı\n\n'
+            'Ardından yazıcılar yeniden taranır; yazıcıları tekrar eklemeniz ve eşleştirmeniz gerekir.',
           ),
           actions: [
             TextButton(
@@ -2134,8 +2102,11 @@ class _KitchenPrintManagementPageState
               child: const Text('Vazgeç'),
             ),
             FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB91C1C),
+              ),
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Sifirla'),
+              child: const Text('Kayıtları Sıfırla'),
             ),
           ],
         );
@@ -2219,910 +2190,672 @@ class _KitchenPrintManagementPageState
     );
   }
 
-  Widget _buildPrintSystemControlCard() {
-    final isQueueDisabled = _isQueuePrintSystemDisabled;
-    final uiEnabled = !isQueueDisabled && _printSystemEnabled;
-    final statusLabel = !_printSystemEnabledLoaded
-        ? 'Durum yükleniyor...'
-        : isQueueDisabled
-        ? 'Baskı sistemi kapalı'
-        : _printSystemStateLabel(_printSystemEnabled);
-    final statusColor = _printSystemEnabledLoaded
-        ? (isQueueDisabled
-              ? const Color(0xFFDC2626)
-              : (_printSystemEnabled
-                    ? const Color(0xFF16A34A)
-                    : const Color(0xFFDC2626)))
-        : const Color(0xFF6B7280);
-    final effectiveEnabled =
-        _printSystemEnabledLoaded ? uiEnabled : null;
-    final bannerColor = effectiveEnabled == null
-        ? const Color(0xFFF3F4F6)
-        : effectiveEnabled
-        ? const Color(0xFFDCFCE7)
-        : const Color(0xFFFFEDD5);
-    final bannerBorder = effectiveEnabled == null
-        ? const Color(0xFFD1D5DB)
-        : effectiveEnabled
-        ? const Color(0xFF16A34A)
-        : const Color(0xFFEA580C);
-    final buttonLabel = uiEnabled
-        ? 'Baskı Sistemini Kapat'
-        : 'Baskı Sistemini Aç';
+  bool get _localServiceStatusKnown => _localBridgeHealth != null;
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x06000000),
-            blurRadius: 10,
-            offset: Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Text(
-                          'Baskı Sistemi',
-                          style: TextStyle(
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF111827),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusColor.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(
-                              color: statusColor.withValues(alpha: 0.25),
-                            ),
-                          ),
-                          child: Text(
-                            statusLabel,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                              color: statusColor,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      !_printSystemEnabledLoaded
-                          ? 'Bridge ve bulut ayarı yükleniyor...'
-                          : isQueueDisabled
-                          ? 'Bridge Queue: print_system_disabled'
-                          : _printSystemDescription(_printSystemEnabled),
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: Color(0xFF4B5563),
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Switch.adaptive(
-                    value: uiEnabled,
-                    onChanged:
-                        !_printSystemEnabledLoaded || _savingPrintSystemEnabled
-                        ? null
-                        : _togglePrintSystemEnabled,
-                  ),
-                  const SizedBox(height: 6),
-                  OutlinedButton.icon(
-                    onPressed:
-                        !_printSystemEnabledLoaded || _savingPrintSystemEnabled
-                        ? null
-                        : () => _togglePrintSystemEnabled(!uiEnabled),
-                    icon: _savingPrintSystemEnabled
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Icon(
-                            uiEnabled
-                                ? Icons.pause_circle_outline
-                                : Icons.play_circle_outline,
-                            size: 18,
-                          ),
-                    label: Text(buttonLabel),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: uiEnabled
-                          ? const Color(0xFFB91C1C)
-                          : const Color(0xFF15803D),
-                      side: BorderSide(
-                        color: uiEnabled
-                            ? const Color(0xFFFCA5A5)
-                            : const Color(0xFF86EFAC),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      textStyle: const TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: bannerColor,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: bannerBorder),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  uiEnabled
-                      ? Icons.check_circle_outline
-                      : Icons.warning_amber_rounded,
-                  size: 18,
-                  color: bannerBorder,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    _printSystemEnabledLoaded
-                        ? _printSystemBannerText(uiEnabled)
-                        : 'Baskı sistemi durumu yükleniyor...',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                      color: effectiveEnabled == null
-                          ? const Color(0xFF374151)
-                          : effectiveEnabled
-                          ? const Color(0xFF166534)
-                          : const Color(0xFF9A3412),
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (_printSystemSyncNotice != null &&
-              _printSystemSyncNotice!.trim().isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(
-              _printSystemSyncNotice!,
-              style: const TextStyle(
-                fontSize: 12.5,
-                color: Color(0xFF92400E),
-                height: 1.4,
-              ),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Text(
-            'Bridge runtime: ${_printSystemStateDetailLabel(_localPrintSystemEnabled)}'
-            ' • Bulut ayarı: ${_printSystemStateDetailLabel(_remotePrintSystemEnabled)}'
-            ' • Kaynak: ${_printSystemSourceIsLocalRuntime ? 'Yerel bridge runtime' : 'Bulut ayarı'}',
-            style: const TextStyle(
-              fontSize: 12,
-              color: Color(0xFF6B7280),
-              height: 1.4,
-            ),
-          ),
-          if (_printSystemError != null &&
-              _printSystemError!.trim().isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(
-              _printSystemError!,
-              style: const TextStyle(
-                fontSize: 12.5,
-                color: Color(0xFFB91C1C),
-              ),
-            ),
-          ],
-        ],
-      ),
+  bool get _localServiceWorking =>
+      _bridgeReachable && (_bridgeHealthy || _hasDetectedPrinters);
+
+  bool get _printSystemUiEnabled =>
+      !_isQueuePrintSystemDisabled && _printSystemEnabled;
+
+  PrinterCenterStatusItem _localServiceStatusItem() {
+    const label = 'Yazıcı servisi (bu cihaz)';
+    if (!_localServiceStatusKnown) {
+      return _loadingPrintStationState
+          ? const PrinterCenterStatusItem(
+              label: label,
+              value: 'Kontrol ediliyor',
+              tone: PrinterCenterTone.neutral,
+              detail: 'Yerel servis yanıtı bekleniyor.',
+            )
+          : const PrinterCenterStatusItem(
+              label: label,
+              value: 'Bilinmiyor',
+              tone: PrinterCenterTone.neutral,
+              detail: 'Durum okunamadı. Yenile ile tekrar deneyin.',
+            );
+    }
+    if (!_bridgeReachable) {
+      return const PrinterCenterStatusItem(
+        label: label,
+        value: 'Bağlantı yok',
+        tone: PrinterCenterTone.error,
+        detail: 'Bu cihazdaki yazıcı servisi yanıt vermiyor.',
+      );
+    }
+    if (_localServiceWorking) {
+      return PrinterCenterStatusItem(
+        label: label,
+        value: 'Çalışıyor',
+        tone: PrinterCenterTone.success,
+        detail: _hasDetectedPrinters
+            ? 'Taramada ${_bridgePrinters.length} yazıcı görüldü.'
+            : 'Servis yanıt veriyor.',
+      );
+    }
+    return const PrinterCenterStatusItem(
+      label: label,
+      value: 'Yazıcı doğrulanmadı',
+      tone: PrinterCenterTone.warning,
+      detail: 'Servis yanıt veriyor ama yazıcı bulunamadı.',
     );
   }
 
-  Widget _constrainedSection(Widget child) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1200),
-        child: child,
-      ),
-    );
+  /// Whether fişler can actually go out right now; the on/off setting alone
+  /// does not mean the system is ready.
+  ({String short, String long, PrinterCenterTone tone}) _printReadiness() {
+    if (!_printSystemEnabledLoaded) {
+      return (
+        short: 'Durum yükleniyor',
+        long: 'Baskı ayarı yükleniyor…',
+        tone: PrinterCenterTone.neutral,
+      );
+    }
+    if (!_printSystemUiEnabled) {
+      return (
+        short: 'Fişler otomatik basılmaz',
+        long: 'Kapalı. Siparişler alınır ancak fişler otomatik yazdırılmaz.',
+        tone: PrinterCenterTone.warning,
+      );
+    }
+    if (_isThisDevicePrintStation) {
+      if (!_localServiceStatusKnown) {
+        return (
+          short: 'Servis kontrol ediliyor',
+          long: 'Açık. Bu cihazdaki yazıcı servisinin durumu kontrol ediliyor.',
+          tone: PrinterCenterTone.neutral,
+        );
+      }
+      if (!_bridgeReachable) {
+        return (
+          short: 'Açık, baskıya hazır değil',
+          long:
+              'Açık, ancak bu cihazdaki yazıcı servisi yanıt vermiyor. Servis çalışana kadar fişler basılamaz.',
+          tone: PrinterCenterTone.error,
+        );
+      }
+      if (!_localServiceWorking) {
+        return (
+          short: 'Açık, yazıcı doğrulanmadı',
+          long: 'Açık, ancak yazıcı servisi bir yazıcı doğrulayamadı.',
+          tone: PrinterCenterTone.warning,
+        );
+      }
+      return (
+        short: 'Baskıya hazır',
+        long: 'Açık ve yazıcı servisi çalışıyor. Yeni siparişler otomatik yazdırılır.',
+        tone: PrinterCenterTone.success,
+      );
+    }
+    return _isRemotePrintStationOnline
+        ? (
+            short: 'Merkez cihaz basar',
+            long:
+                'Açık. Fişleri yazıcı merkezi cihazı basar; merkezden güncel sinyal alınıyor.',
+            tone: PrinterCenterTone.success,
+          )
+        : (
+            short: 'Merkezden sinyal yok',
+            long:
+                'Açık, ancak yazıcı merkezi cihazından güncel sinyal yok. Fişler merkez açılana kadar bekleyebilir.',
+            tone: PrinterCenterTone.warning,
+          );
   }
 
-  Widget _responsive2Col({
-    required Widget left,
-    required Widget right,
-    double gap = 12,
-  }) {
+  Future<void> _startLocalPrintService() async {
+    final result = await BridgeManager.ensureReady();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result.message),
+        backgroundColor: result.ok ? Colors.green : Colors.red,
+      ),
+    );
+    _triggerPrintersRefresh(reason: 'bridge_start');
+    await _loadPrintStationState(invalidateBridgeCache: true);
+  }
+
+  Future<void> _clearCupsQueueFromNotice() async {
+    setState(() => _clearingCupsQueue = true);
+    try {
+      // Best-effort clear for the active queue configured on bridge.
+      final svc = LocalPrintService();
+      final res = await svc.clearCupsQueue();
+      svc.dispose();
+      if (!mounted) return;
+      if (res?['ok'] == true) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Kuyruk temizlendi.')));
+        await _loadPrintStationState();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Kuyruk temizlenemedi: ${res?['error'] ?? 'Bilinmeyen hata'}',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Kuyruk temizlenemedi: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _clearingCupsQueue = false);
+      }
+    }
+  }
+
+  Widget _printerCenterActionGroup(List<Widget> buttons) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isTwoCol = constraints.maxWidth >= 900;
-        if (!isTwoCol) {
+        if (constraints.maxWidth < 480) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              left,
-              SizedBox(height: gap),
-              right,
+              for (var i = 0; i < buttons.length; i++) ...[
+                if (i > 0) const SizedBox(height: 8),
+                buttons[i],
+              ],
             ],
           );
         }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: left),
-            SizedBox(width: gap),
-            Expanded(child: right),
-          ],
-        );
+        return Wrap(spacing: 8, runSpacing: 8, children: buttons);
       },
     );
   }
 
-  BoxDecoration _dashboardCardDecoration() {
-    return BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: const Color(0xFFE5E7EB)),
-      boxShadow: const [
-        BoxShadow(
-          color: Color(0x06000000),
-          blurRadius: 10,
-          offset: Offset(0, 3),
-        ),
-      ],
+  Widget _printerCenterLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontSize: 12.5,
+        fontWeight: FontWeight.w700,
+        color: PrinterCenterColors.title,
+      ),
     );
   }
 
-  Widget _buildPrintStationTab() {
-    final queueRuntime = _localQueueStatus?['queue'];
-    final selectedStationPlatform = _printStationService
-        .normalizeStationPlatform(_selectedPrintStationPlatform);
-    final runtime = queueRuntime is Map<String, dynamic>
-        ? queueRuntime['runtime']
-        : queueRuntime is Map
-        ? Map<String, dynamic>.from(queueRuntime)['runtime']
-        : null;
-    final runtimeMap = runtime is Map<String, dynamic>
-        ? runtime
-        : runtime is Map
-        ? Map<String, dynamic>.from(runtime)
-        : const <String, dynamic>{};
-    final queueStatus = runtimeMap['status']?.toString() ?? 'idle';
+  Widget _buildPrinterCenterHeader() {
+    final connectivity = RestaurantConnectivityService.instance;
+    final readiness = _printReadiness();
+    final printSystemValue = !_printSystemEnabledLoaded
+        ? 'Yükleniyor'
+        : (_printSystemUiEnabled ? 'Açık' : 'Kapalı');
+    final activeCount = _allPrintersCache.where((p) => p.isActive).length;
     final lastSeenAt =
         _remotePrintStationConfig?['last_seen_at']?.toString() ?? '-';
-    final connectivity = RestaurantConnectivityService.instance;
+    final platform = _stationPlatformTitle(
+      _remotePrintStationConfig?['device_platform']?.toString() ??
+          _selectedPrintStationPlatform,
+    );
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      children: [
-        _constrainedSection(
-          PrinterCenterHealthBanner(
-            bridgeHealthy: _bridgeHealthy,
-            bridgeReachable: _bridgeReachable,
-            printSystemEnabled: _printSystemEnabled,
-            activePrinterCount: _allPrintersCache
-                .where((printer) => printer.isActive)
-                .length,
-            issueMappingCount: _issueMappingCount(),
-            supabaseReachable: connectivity.supabaseReachable,
-            hasNetwork: connectivity.hasNetwork,
-          ),
-        ),
-        const SizedBox(height: 12),
-        _constrainedSection(
-          PrinterCenterQuickSetupCard(
-            bridgeHealthy: _bridgeHealthy,
-            copyingDiagnostics: _copyingDiagnosticsReport,
-            onAddPrinter: () => _showPrinterEditor(),
-            onBridgeSetup: () async {
-              final result = await BridgeManager.ensureReady();
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(result.message),
-                  backgroundColor: result.ok ? Colors.green : Colors.red,
-                ),
+    final actions = <Widget>[
+      OutlinedButton.icon(
+        onPressed: _loadingPrintStationState
+            ? null
+            : () => _loadPrintStationState(invalidateBridgeCache: true),
+        icon: const Icon(Icons.refresh_rounded, size: 18),
+        label: const Text('Yenile'),
+      ),
+      FilledButton.icon(
+        onPressed: () => _showPrinterEditor(),
+        icon: const Icon(Icons.add_rounded, size: 18),
+        label: const Text('Yazıcı Ekle'),
+      ),
+    ];
+
+    return PrinterCenterCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const title = PrinterCenterSectionTitle(
+                title: 'Yazıcı Merkezi',
+                subtitle:
+                    'Bu restoranın yazıcı servisini, otomatik baskıyı ve kayıtlı yazıcıları buradan yönetin.',
               );
-              _triggerPrintersRefresh(reason: 'bridge_start');
-            },
-            onConnectionTest: () =>
-                _loadPrintStationState(invalidateBridgeCache: true),
-            onCopyDiagnostics: _copyDiagnosticsReport,
-          ),
-        ),
-        const SizedBox(height: 12),
-        _constrainedSection(_buildPrintSystemControlCard()),
-        const SizedBox(height: 12),
-        _constrainedSection(
-          FutureBuilder<List<dynamic>>(
-            future: _assignmentsFuture,
-            builder: (context, snapshot) {
-              final stations =
-                  snapshot.data?[0] as List<StationModel>? ?? const [];
-              final printers =
-                  snapshot.data?[1] as List<PrinterModel>? ??
-                  _allPrintersCache;
-              final mappings =
-                  snapshot.data?[2] as List<StationPrinterModel>? ??
-                  const [];
-              final summaryItems = _buildAssignmentSummaryItems(
-                stations: stations,
-                mappings: mappings,
-                printers: printers.isNotEmpty ? printers : _allPrintersCache,
-              );
-              return _responsive2Col(
-                left: PrinterAssignmentSummaryCard(
-                  items: summaryItems,
-                  onGoToMapping: () {
-                    DefaultTabController.of(context).animateTo(3);
-                  },
-                ),
-                right: PrinterRegisteredListCard(
-                  printers: _allPrintersCache,
-                  repairingIds: _repairingPrinterIds,
-                  onTest: _testRegisteredPrinter,
-                  onEdit: (printer) => _showPrinterEditor(printer: printer),
-                  onDelete: (printer) => _deletePrinter(printer),
-                ),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 12),
-        _constrainedSection(
-          PrinterRecentJobsCard(
-            jobs: _recentPrintJobs,
-            loading: _loadingRecentPrintJobs,
-          ),
-        ),
-        const SizedBox(height: 12),
-        if ((_printStationError ?? '').isNotEmpty &&
-            (_lastCupsQueueBlockedDetails?['suggested_action'] == 'clear_queue'))
-          _constrainedSection(
-            Container(
-            padding: const EdgeInsets.all(12),
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF7ED),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFF59E0B)),
-            ),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Yazıcı kuyruğunda bekleyen işler var. Önce kuyruğu temizleyin.',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF9A3412),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                FilledButton(
-                  onPressed: _clearingCupsQueue
-                      ? null
-                      : () async {
-                          setState(() => _clearingCupsQueue = true);
-                          try {
-                            // Best-effort clear for the active queue configured on bridge.
-                            final svc = LocalPrintService();
-                            final res = await svc.clearCupsQueue();
-                            svc.dispose();
-                            if (!mounted) return;
-                            if (res?['ok'] == true) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Kuyruk temizlendi.'),
-                                ),
-                              );
-                              await _loadPrintStationState();
-                            } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Kuyruk temizlenemedi: ${res?['error'] ?? 'Bilinmeyen hata'}',
-                                  ),
-                                ),
-                              );
-                            }
-                          } catch (e) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Kuyruk temizlenemedi: $e')),
-                            );
-                          } finally {
-                            if (mounted) {
-                              setState(() => _clearingCupsQueue = false);
-                            }
-                          }
-                        },
-                  child: _clearingCupsQueue
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Kuyruğu Temizle'),
-                ),
-              ],
-            ),
-          ),
-          ),
-        if (_hasLegacyRoleMapping()) ...[
-          _constrainedSection(_buildLegacyRoleMappingRepairCard()),
-          const SizedBox(height: 12),
-        ],
-        StreamBuilder<List<PrinterModel>>(
-          stream: _printersStream,
-          builder: (context, snapshot) {
-            final dbPrinters = snapshot.data ?? const <PrinterModel>[];
-            final suggested = _suggestedUnsavedLocalPrinter(dbPrinters);
-            if (suggested == null) return const SizedBox.shrink();
-            return Column(
-              children: [
-                _constrainedSection(
-                  _buildUnsavedLocalPrinterCard(
-                    printer: suggested,
-                    dbPrinters: dbPrinters,
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
-            );
-          },
-        ),
-        _constrainedSection(
-          Container(
-          padding: const EdgeInsets.all(16),
-          decoration: _dashboardCardDecoration(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Bu cihaz yazıcı merkezi mi?',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _isThisDevicePrintStation
-                    ? 'Bu cihaz Yazıcı Merkezi olarak işaretli. Adisyon ve mutfak fişleri bridge arka plan servisinden basılır.'
-                    : 'Bu cihaz sadece sipariş gönderecek. Yazdırma işlemi Yazıcı Merkezi cihazından yapılacak.',
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF4B5563),
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE5E7EB)),
-                ),
-                child: Column(
+              if (constraints.maxWidth < 640) {
+                return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Yazıcı Merkezi sistemi',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment<String>(
-                          value: 'windows',
-                          label: Text('Windows'),
-                          icon: Icon(Icons.desktop_windows_outlined),
-                        ),
-                        ButtonSegment<String>(
-                          value: 'macos',
-                          label: Text('MacBook'),
-                          icon: Icon(Icons.laptop_mac_outlined),
-                        ),
-                      ],
-                      selected: <String>{selectedStationPlatform},
-                      onSelectionChanged: (selection) {
-                        if (selection.isEmpty) return;
-                        setState(() {
-                          _selectedPrintStationPlatform = selection.first;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      selectedStationPlatform == 'windows'
-                          ? 'Windows sistemi secilirse bridge Windows yazici servisi icin ayarlanir. Diger tum cihazlar sadece is gonderir.'
-                          : 'MacBook sistemi secilirse bridge macOS/CUPS veya USB direct yolu icin ayarlanir. Diger tum cihazlar sadece is gonderir.',
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: Color(0xFF4B5563),
-                        height: 1.4,
-                      ),
-                    ),
+                    title,
+                    const SizedBox(height: 12),
+                    Wrap(spacing: 8, runSpacing: 8, children: actions),
                   ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  FilledButton.icon(
-                    onPressed: _savingPrintStation
-                        ? null
-                        : _savePrintStationMode,
-                    icon: const Icon(Icons.print_outlined),
-                    label: const Text('Bu cihazı Yazıcı Merkezi yap'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      await showPrinterSystemSetupWizard(
-                        context,
-                        restaurantId: widget.restaurantId,
-                      );
-                      if (!mounted) return;
-                      await _loadPrintStationState();
-                    },
-                    icon: const Icon(Icons.settings_suggest_outlined),
-                    label: const Text('Bridge kurulumunu ac'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _savingPrintStation
-                        ? null
-                        : _setNormalDeviceMode,
-                    icon: const Icon(Icons.send_to_mobile_outlined),
-                    label: const Text('Bu cihaz sadece sipariş gönderecek'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _savingPrintStation
-                        ? null
-                        : () => _loadPrintStationState(invalidateBridgeCache: true),
-                    icon: const Icon(Icons.refresh_rounded),
-                    label: const Text('Durumu yenile'),
+                  const Expanded(child: title),
+                  const SizedBox(width: 16),
+                  ...actions.expand((b) => [b, const SizedBox(width: 8)]).take(
+                    actions.length * 2 - 1,
                   ),
                 ],
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          if (_loadingPrintStationState) ...[
+            const LinearProgressIndicator(minHeight: 2),
+            const SizedBox(height: 12),
+          ],
+          PrinterCenterStatusStrip(
+            items: [
+              _localServiceStatusItem(),
+              PrinterCenterStatusItem(
+                label: 'Otomatik baskı',
+                value: printSystemValue,
+                tone: readiness.tone,
+                detail: readiness.short,
               ),
-              if (_loadingPrintStationState) ...[
-                const SizedBox(height: 14),
-                const LinearProgressIndicator(minHeight: 3),
-              ],
-              if (_printStationError != null &&
-                  _printStationError!.trim().isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _printStationError!,
-                  style: const TextStyle(
-                    color: Color(0xFFB91C1C),
-                    fontSize: 12.5,
-                  ),
-                ),
-              ],
+              PrinterCenterStatusItem(
+                label: 'Kayıtlı yazıcılar',
+                value: '${_allPrintersCache.length} kayıt',
+                tone: _allPrintersCache.isEmpty
+                    ? PrinterCenterTone.warning
+                    : PrinterCenterTone.neutral,
+                detail: _allPrintersCache.isEmpty
+                    ? 'Henüz yazıcı eklenmedi.'
+                    : '$activeCount aktif kayıt',
+              ),
+              PrinterCenterStatusItem(
+                label: 'Bu cihazın rolü',
+                value: _isThisDevicePrintStation
+                    ? 'Yazıcı merkezi'
+                    : 'Yalnızca sipariş gönderir',
+                tone: PrinterCenterTone.info,
+                detail: _isThisDevicePrintStation
+                    ? 'Fişleri bu cihaz basar.'
+                    : 'Fişleri merkez cihaz basar.',
+              ),
             ],
           ),
-        ),
-        ),
-        const SizedBox(height: 12),
-        _constrainedSection(
-          _responsive2Col(
-            left: _statusTile(
-              title: 'Yazıcı Merkezi',
-              value: _isPrintStationOnline ? 'Cevrimici' : 'Cevrimdisi',
-              subtitle:
-                  'Sistem: ${_stationPlatformTitle(_remotePrintStationConfig?['device_platform']?.toString() ?? selectedStationPlatform)}\n'
-                  'Son heartbeat: $lastSeenAt\n'
-                  'Bridge status: ${_remotePrintStationConfig?['bridge_status'] ?? '-'}\n'
-                  'Yerel runtime: ${_isLocalPrintRuntimeOnline ? 'hazır' : 'bekleniyor'}',
-              accent: _isPrintStationOnline
-                  ? const Color(0xFF16A34A)
-                  : const Color(0xFFDC2626),
-            ),
-            right: _statusTile(
-              title: 'Bridge Queue',
-              value: queueStatus,
-              subtitle:
-                  'runtime=${runtimeMap['running'] ?? false}\nlastError=${runtimeMap['lastError'] ?? '-'}',
-              accent: queueStatus == 'error'
-                  ? const Color(0xFFDC2626)
-                  : queueStatus == 'print_system_disabled'
-                  ? const Color(0xFFEA580C)
-                  : const Color(0xFF2563EB),
+          const SizedBox(height: 12),
+          ListenableBuilder(
+            listenable: connectivity,
+            builder: (context, _) => PrinterCenterExpandable(
+              title: 'Bağlantı detayları',
+              icon: Icons.lan_outlined,
+              children: [
+                PrinterCenterKeyValue(
+                  label: 'İnternet',
+                  value: connectivity.hasNetwork ? 'Var' : 'Yok',
+                ),
+                PrinterCenterKeyValue(
+                  label: 'Bulut (Supabase)',
+                  value: connectivity.supabaseReachable
+                      ? 'Bağlı'
+                      : 'Bağlı değil',
+                ),
+                PrinterCenterKeyValue(
+                  label: 'Uzak yazıcı merkezi sinyali',
+                  value: _isRemotePrintStationOnline
+                      ? 'Güncel (son sinyal: $lastSeenAt)'
+                      : 'Güncel sinyal yok (son sinyal: $lastSeenAt)',
+                ),
+                PrinterCenterKeyValue(
+                  label: 'Yazıcı merkezinin sistemi',
+                  value: platform,
+                ),
+                PrinterCenterKeyValue(
+                  label: 'Eksik/sorunlu eşleştirme',
+                  value: '${_issueMappingCount()}',
+                ),
+              ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildPrinterCenterNotices() {
+    final notices = <Widget>[];
+    final error = (_printStationError ?? '').trim();
+    if (error.isNotEmpty) {
+      if (_lastCupsQueueBlockedDetails?['suggested_action'] == 'clear_queue') {
+        notices.add(
+          PrinterCenterNotice(
+            message:
+                'Yazıcı kuyruğunda bekleyen işler var. Önce kuyruğu temizleyin.',
+            action: FilledButton(
+              onPressed: _clearingCupsQueue ? null : _clearCupsQueueFromNotice,
+              child: _clearingCupsQueue
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Kuyruğu Temizle'),
+            ),
+          ),
+        );
+      }
+      final firstLine = error.split('\n').first;
+      notices.add(
+        PrinterCenterNotice(
+          tone: PrinterCenterTone.error,
+          message: firstLine.length > 220
+              ? '${firstLine.substring(0, 220)}… (ayrıntı: Teknik Ayrıntılar)'
+              : firstLine,
         ),
-        const SizedBox(height: 12),
-        _constrainedSection(
-          Container(
-          padding: const EdgeInsets.all(16),
-          decoration: _dashboardCardDecoration(),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final leftChildren = <Widget>[
-                const Row(
-                  children: [
-                    Icon(Icons.usb_rounded, size: 18),
-                    SizedBox(width: 8),
-                    Text(
-                      'Yerel Bridge ve Test',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Bu sekme sadece bridge durumunu, yerel taramayı, test fişlerini ve aktif yazıcı kayıtlarını gösterir. Adisyon, mutfak ve alan eşleştirmeleri yalnızca Eşleştirme sekmesinden yönetilir.',
+      );
+    }
+    if (_hasLegacyRoleMapping()) {
+      notices.add(_buildLegacyRoleMappingRepairCard());
+    }
+    if (_usbCupsConflictWarning) {
+      notices.add(
+        PrinterCenterNotice(
+          message: DiscoveredPrinterCatalog.usbCupsDuplicateMessage(),
+        ),
+      );
+    }
+    if (_ipMismatchWarnings.isNotEmpty) {
+      notices.add(PrinterCenterNotice(message: _ipMismatchWarnings.first));
+    }
+    if (_staleBridgePrinters.isNotEmpty) {
+      notices.add(
+        PrinterCenterNotice(
+          tone: PrinterCenterTone.error,
+          message:
+              '${_staleBridgePrinters.length} kayıtlı yazıcı canlı taramada yok. '
+              'Eski Mac/CUPS eşlemesi aktif rol olarak kullanılamaz; yeni bir Windows yazıcısı seçin.',
+        ),
+      );
+    }
+    final guidance = _bridgeReachable ? _printerDiscoveryGuidance() : null;
+    if (guidance != null) {
+      notices.add(PrinterCenterNotice(message: guidance));
+    }
+    return notices;
+  }
+
+  Widget _buildAutoPrintCard() {
+    final isQueueDisabled = _isQueuePrintSystemDisabled;
+    final uiEnabled = _printSystemUiEnabled;
+    final readiness = _printReadiness();
+    final statusLabel = !_printSystemEnabledLoaded
+        ? 'Durum yükleniyor...'
+        : isQueueDisabled
+        ? 'Kapalı (yazıcı servisi baskıyı durdurmuş)'
+        : _printSystemStateLabel(_printSystemEnabled);
+
+    return PrinterCenterCard(
+      title: 'Otomatik Baskı',
+      subtitle:
+          'Yeni siparişlerin adisyon ve mutfak fişlerinin otomatik yazdırılmasını açar veya kapatır.',
+      trailing: _savingPrintSystemEnabled
+          ? const Padding(
+              padding: EdgeInsets.all(10),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          : Switch.adaptive(
+              key: const ValueKey<String>('print-system-switch'),
+              value: uiEnabled,
+              onChanged: !_printSystemEnabledLoaded
+                  ? null
+                  : _togglePrintSystemEnabled,
+            ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            statusLabel,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: !_printSystemEnabledLoaded
+                  ? PrinterCenterColors.muted
+                  : uiEnabled
+                  ? const Color(0xFF15803D)
+                  : const Color(0xFFB45309),
+            ),
+          ),
+          const SizedBox(height: 10),
+          PrinterCenterNotice(message: readiness.long, tone: readiness.tone),
+          if (_printSystemError != null &&
+              _printSystemError!.trim().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            PrinterCenterNotice(
+              tone: PrinterCenterTone.error,
+              message: _printSystemError!,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRoleOption({
+    required bool selected,
+    required IconData icon,
+    required String title,
+    required String description,
+  }) {
+    final color = selected
+        ? PrinterCenterColors.accent
+        : PrinterCenterColors.muted;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: selected ? const Color(0xFFF5F3FF) : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: selected ? const Color(0xFFC4B5FD) : PrinterCenterColors.border,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
                   style: TextStyle(
                     fontSize: 13,
-                    color: Color(0xFF4B5563),
-                    height: 1.4,
+                    fontWeight: FontWeight.w700,
+                    color: selected
+                        ? PrinterCenterColors.title
+                        : PrinterCenterColors.body,
                   ),
                 ),
-                if (_usbCupsConflictWarning) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFF7ED),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFF59E0B)),
-                    ),
-                    child: Text(
-                      DiscoveredPrinterCatalog.usbCupsDuplicateMessage(),
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF9A3412),
-                        height: 1.4,
-                      ),
-                    ),
+                Text(
+                  description,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: PrinterCenterColors.muted,
+                    height: 1.35,
                   ),
-                ],
-                if (_ipMismatchWarnings.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFF7ED),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFF59E0B)),
-                    ),
-                    child: Text(
-                      _ipMismatchWarnings.first,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF9A3412),
-                        height: 1.4,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    _InlineStatusChip(
-                      label: _wizardStatusLabel(_localSetupStatusKey()),
-                      color: _wizardStatusColor(_localSetupStatusKey()),
-                    ),
-                    _InlineStatusChip(
-                      label: _bridgeSummaryLabel(),
-                      color: _bridgeHealthy
-                          ? const Color(0xFF15803D)
-                          : _bridgeReachable
-                          ? const Color(0xFFB45309)
-                          : const Color(0xFFB91C1C),
-                    ),
-                    _InlineStatusChip(
-                      label: _hasDetectedPrinters
-                          ? '${_bridgePrinters.length} yazici bulundu'
-                          : 'Yazici bekleniyor',
-                      color: _hasDetectedPrinters
-                          ? const Color(0xFF15803D)
-                          : const Color(0xFF6B7280),
-                    ),
-                  ],
                 ),
-                const SizedBox(height: 12),
-                _GuidedStepTile(
-                  stepNumber: '1',
-                  title: 'Bridge ve sistem kontrolü',
-                  subtitle: _bridgeSummaryMessage(),
-                  done: _bridgeHealthy,
-                ),
-                for (final check
-                    in ((_localSetupPrerequisites?['checks'] as List?)
-                            ?.whereType<Map>()
-                            .map((entry) => Map<String, dynamic>.from(entry))
-                            .toList(growable: false) ??
-                        const <Map<String, dynamic>>[]))
-                  _GuidedStepTile(
-                    stepNumber: '•',
-                    title: check['label']?.toString() ?? 'Kontrol',
-                    subtitle: check['message']?.toString() ?? '',
-                    done: check['ok'] == true,
-                    compact: true,
-                  ),
-                _GuidedStepTile(
-                  stepNumber: '2',
-                  title: 'Yerel yazicilari tara',
-                  subtitle:
-                      _printerDiscoveryGuidance() ??
-                      (_hasDetectedPrinters
-                          ? 'Tarama tamamlandi. Kayitli yazici ve eslestirme ozetleri asagida gosteriliyor.'
-                          : 'Önce yazicilari tara butonunu kullanin.'),
-                  done: _hasDetectedPrinters,
-                ),
-                _GuidedStepTile(
-                  stepNumber: '3',
-                  title: 'Test fişi gönder',
-                  subtitle:
-                      'Adisyon ve mutfak testleri, Eşleştirme sekmesinde kayıtlı aktif yazıcıları kullanır.',
-                  done: _selectedReceiptPrinterId != null &&
-                      _selectedKitchenPrinterId != null,
-                ),
-                if (_staleBridgePrinters.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFEF2F2),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFFECACA)),
-                    ),
-                    child: Text(
-                      '${_staleBridgePrinters.length} kayıtlı yazıcı canlı taramada yok. '
-                      'Eski Mac/CUPS eşlemesi aktif rol olarak kullanılamaz; yeni bir Windows yazıcısı seçin.',
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: Color(0xFF991B1B),
-                        height: 1.45,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    FilledButton.icon(
-                      onPressed: _openGuidedSetup,
-                      icon: const Icon(Icons.auto_fix_high_outlined),
-                      label: const Text('Adim adim kurulum'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () =>
-                          _loadPrintStationState(invalidateBridgeCache: true),
-                      icon: const Icon(Icons.search_rounded),
-                      label: const Text('Yazicilari tara'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _runningHardReset ? null : _hardResetPrinters,
-                      icon: _runningHardReset
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.restart_alt_rounded),
-                      label: const Text('Hard Reset Printers'),
-                    ),
-                    if (!_hasDetectedPrinters)
-                      OutlinedButton.icon(
-                        onPressed: () => _showPrinterEditor(),
-                        icon: const Icon(Icons.add_rounded),
-                        label: const Text('Yazici ekle'),
-                      ),
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        DefaultTabController.of(context).animateTo(3);
-                      },
-                      icon: const Icon(Icons.alt_route_rounded),
-                      label: const Text('Yazıcı Eşleştir'),
-                    ),
-                  ],
-                ),
-              ];
+              ],
+            ),
+          ),
+          if (selected)
+            const Icon(
+              Icons.check_circle_rounded,
+              size: 18,
+              color: PrinterCenterColors.accent,
+            ),
+        ],
+      ),
+    );
+  }
 
-              final rightChildren = <Widget>[
-                if (_printerDiscoveryGuidance() != null) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFFBEB),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFFDE68A)),
-                    ),
-                    child: Text(
-                      _printerDiscoveryGuidance()!,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: Color(0xFF92400E),
-                        height: 1.45,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                if ((_selectedReceiptPrinterId != null ||
-                        _selectedKitchenPrinterId != null) &&
-                    !_turkishEncodingVerified) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFFBEB),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFFDE68A)),
-                    ),
-                    child: const Text(
-                      'Türkçe karakter doğrulaması yapılmadı. '
-                      'Ürün adları bozuk basılabilir; Türkçe Karakter Testi ile doğru codepage seçin.',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: Color(0xFF92400E),
-                        height: 1.45,
-                      ),
-                    ),
-                  ),
-                ],
-                if (_selectedReceiptPrinterId != null ||
-                    _selectedKitchenPrinterId != null) ...[
-                  const SizedBox(height: 8),
-                  Row(
+  Widget _buildDeviceRoleCard() {
+    final selectedStationPlatform = _printStationService
+        .normalizeStationPlatform(_selectedPrintStationPlatform);
+    final isStation = _isThisDevicePrintStation;
+
+    return PrinterCenterCard(
+      title: 'Cihaz Rolü',
+      subtitle:
+          'Fişleri hangi cihazın basacağını belirler. Restoranda tek bir yazıcı merkezi olmalıdır.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildRoleOption(
+            selected: isStation,
+            icon: Icons.print_outlined,
+            title: 'Yazıcı merkezi',
+            description:
+                'Adisyon ve mutfak fişleri bu cihazdaki yazıcı servisinden basılır.',
+          ),
+          const SizedBox(height: 8),
+          _buildRoleOption(
+            selected: !isStation,
+            icon: Icons.send_to_mobile_outlined,
+            title: 'Yalnızca sipariş gönderir',
+            description:
+                'Bu cihaz sipariş gönderir; yazdırmayı yazıcı merkezi cihazı yapar.',
+          ),
+          const SizedBox(height: 16),
+          _printerCenterLabel('Yazıcı merkezi cihazının sistemi'),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: SegmentedButton<String>(
+              segments: const [
+                ButtonSegment<String>(
+                  value: 'windows',
+                  label: Text('Windows'),
+                  icon: Icon(Icons.desktop_windows_outlined),
+                ),
+                ButtonSegment<String>(
+                  value: 'macos',
+                  label: Text('MacBook'),
+                  icon: Icon(Icons.laptop_mac_outlined),
+                ),
+              ],
+              selected: <String>{selectedStationPlatform},
+              onSelectionChanged: (selection) {
+                if (selection.isEmpty) return;
+                setState(() {
+                  _selectedPrintStationPlatform = selection.first;
+                });
+              },
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            selectedStationPlatform == 'windows'
+                ? 'Windows seçilirse yazıcı servisi Windows yazıcı servisi için ayarlanır. Diğer cihazlar yalnızca iş gönderir.'
+                : 'MacBook seçilirse yazıcı servisi macOS/CUPS veya USB doğrudan yolu için ayarlanır. Diğer cihazlar yalnızca iş gönderir.',
+            style: const TextStyle(
+              fontSize: 12,
+              color: PrinterCenterColors.muted,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 16),
+          _printerCenterActionGroup([
+            if (isStation)
+              OutlinedButton.icon(
+                onPressed: _savingPrintStation ? null : _savePrintStationMode,
+                icon: const Icon(Icons.save_outlined, size: 18),
+                label: const Text('Merkez ayarını kaydet'),
+              )
+            else
+              FilledButton.icon(
+                onPressed: _savingPrintStation ? null : _savePrintStationMode,
+                icon: const Icon(Icons.print_outlined, size: 18),
+                label: const Text('Bu cihazı Yazıcı Merkezi yap'),
+              ),
+            if (isStation)
+              OutlinedButton.icon(
+                onPressed: _savingPrintStation ? null : _setNormalDeviceMode,
+                icon: const Icon(Icons.send_to_mobile_outlined, size: 18),
+                label: const Text('Yalnızca sipariş göndersin'),
+              ),
+            OutlinedButton.icon(
+              onPressed: _openGuidedSetup,
+              icon: const Icon(Icons.settings_suggest_outlined, size: 18),
+              label: const Text('Bridge Kurulumu'),
+            ),
+          ]),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTestAndDiagnosticsCard() {
+    final hasRoleSelection =
+        _selectedReceiptPrinterId != null || _selectedKitchenPrinterId != null;
+    final queueRuntime = _localQueueStatus?['queue'];
+    final runtime = queueRuntime is Map ? queueRuntime['runtime'] : null;
+    final runtimeMap = runtime is Map
+        ? Map<String, dynamic>.from(runtime)
+        : const <String, dynamic>{};
+    final lastError = runtimeMap['lastError']?.toString().trim() ?? '';
+    final runtimeExtras = runtimeMap.entries
+        .where((e) => e.key != 'lastError' && e.key != 'status')
+        .map((e) => '${e.key}=${e.value}')
+        .join(' · ');
+    final prerequisiteChecks =
+        (_localSetupPrerequisites?['checks'] as List?)
+            ?.whereType<Map>()
+            .map((entry) => Map<String, dynamic>.from(entry))
+            .toList(growable: false) ??
+        const <Map<String, dynamic>>[];
+
+    return PrinterCenterCard(
+      title: 'Test ve Tanılama',
+      subtitle:
+          'Bağlantıyı kontrol edin, yazıcıları tarayın ve test fişi gönderin. Test fişleri Eşleştirme sekmesindeki adisyon ve mutfak yazıcılarını kullanır.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _printerCenterLabel('Bağlantı'),
+          const SizedBox(height: 8),
+          _printerCenterActionGroup([
+            OutlinedButton.icon(
+              onPressed: _loadingPrintStationState
+                  ? null
+                  : () => _loadPrintStationState(invalidateBridgeCache: true),
+              icon: const Icon(Icons.wifi_tethering_rounded, size: 18),
+              label: const Text('Bağlantıyı Test Et ve Yazıcıları Tara'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _startLocalPrintService,
+              icon: const Icon(Icons.power_settings_new, size: 18),
+              label: const Text('Yazıcı Servisini Başlat'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _copyingDiagnosticsReport
+                  ? null
+                  : _copyDiagnosticsReport,
+              icon: _copyingDiagnosticsReport
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.content_copy_rounded, size: 18),
+              label: const Text('Tanı Raporunu Kopyala'),
+            ),
+          ]),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(child: _printerCenterLabel('Fiş testleri')),
+              if (hasRoleSelection)
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
                         _turkishEncodingVerified
@@ -3134,117 +2867,311 @@ class _KitchenPrintManagementPageState
                             : const Color(0xFFB45309),
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        _turkishEncodingVerified
-                            ? 'Türkçe karakter doğrulandı'
-                            : 'Türkçe karakter doğrulanmadı',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: _turkishEncodingVerified
-                              ? const Color(0xFF15803D)
-                              : const Color(0xFFB45309),
+                      Flexible(
+                        child: Text(
+                          _turkishEncodingVerified
+                              ? 'Türkçe karakter doğrulandı'
+                              : 'Türkçe karakter doğrulanmadı',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: _turkishEncodingVerified
+                                ? const Color(0xFF15803D)
+                                : const Color(0xFFB45309),
+                          ),
                         ),
                       ),
                     ],
                   ),
-                ],
-                const SizedBox(height: 12),
-                LayoutBuilder(
-                  builder: (context, inner) {
-                    final isGrid = inner.maxWidth >= 520;
-                    Widget item(Widget child) => SizedBox(
-                      width: isGrid ? (inner.maxWidth - 10) / 2 : double.infinity,
-                      child: child,
-                    );
-                    return Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        item(
-                          OutlinedButton.icon(
-                            onPressed: _selectedReceiptPrinterId == null &&
-                                    _selectedKitchenPrinterId == null
-                                ? null
-                                : _openTurkishEncodingCalibration,
-                            icon: const Icon(Icons.translate_outlined),
-                            label: const Text('Türkçe Karakter Testi'),
-                          ),
-                        ),
-                        item(
-                          OutlinedButton.icon(
-                            onPressed: _selectedReceiptPrinterId == null ||
-                                    _testingPrintStation
-                                ? null
-                                : () => _sendPrintStationTest(kitchen: false),
-                            icon: const Icon(Icons.receipt_long_outlined),
-                            label: const Text('Adisyon test fişi'),
-                          ),
-                        ),
-                        item(
-                          OutlinedButton.icon(
-                            onPressed: _selectedKitchenPrinterId == null ||
-                                    _testingPrintStation
-                                ? null
-                                : () => _sendPrintStationTest(kitchen: true),
-                            icon: const Icon(Icons.restaurant_menu_outlined),
-                            label: const Text('Mutfak Genel test fişi'),
-                          ),
-                        ),
-                        item(
-                          OutlinedButton.icon(
-                            onPressed: _selectedReceiptPrinterId == null ||
-                                    _testingPrintStation
-                                ? null
-                                : _sendDirectAdisyonRoleDebugPrint,
-                            icon: const Icon(Icons.print_outlined),
-                            label: const Text(
-                              'Seçili Adisyon Yazıcısına Direkt Bas',
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
                 ),
-              ];
-
-              final isTwoCol = constraints.maxWidth >= 980;
-              if (!isTwoCol) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ...leftChildren,
-                    const SizedBox(height: 12),
-                    ...rightChildren,
-                  ],
-                );
-              }
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 3,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: leftChildren,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: rightChildren,
-                    ),
-                  ),
-                ],
-              );
-            },
+            ],
           ),
-        ),
-        ),
-      ],
+          const SizedBox(height: 8),
+          if (!hasRoleSelection) ...[
+            const PrinterCenterNotice(
+              tone: PrinterCenterTone.neutral,
+              message:
+                  'Test fişi göndermek için önce Eşleştirme sekmesinden adisyon ve mutfak yazıcılarını kaydedin.',
+            ),
+            const SizedBox(height: 8),
+          ] else if (!_turkishEncodingVerified) ...[
+            const PrinterCenterNotice(
+              message:
+                  'Ürün adları bozuk basılabilir; Türkçe Karakter Testi ile doğru kod sayfasını seçin.',
+            ),
+            const SizedBox(height: 8),
+          ],
+          _printerCenterActionGroup([
+            OutlinedButton.icon(
+              onPressed: hasRoleSelection
+                  ? _openTurkishEncodingCalibration
+                  : null,
+              icon: const Icon(Icons.translate_outlined, size: 18),
+              label: const Text('Türkçe Karakter Testi'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _selectedReceiptPrinterId == null ||
+                      _testingPrintStation
+                  ? null
+                  : () => _sendPrintStationTest(kitchen: false),
+              icon: const Icon(Icons.receipt_long_outlined, size: 18),
+              label: const Text('Adisyon test fişi'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _selectedKitchenPrinterId == null ||
+                      _testingPrintStation
+                  ? null
+                  : () => _sendPrintStationTest(kitchen: true),
+              icon: const Icon(Icons.restaurant_menu_outlined, size: 18),
+              label: const Text('Mutfak Genel test fişi'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _selectedReceiptPrinterId == null ||
+                      _testingPrintStation
+                  ? null
+                  : _sendDirectAdisyonRoleDebugPrint,
+              icon: const Icon(Icons.print_outlined, size: 18),
+              label: const Text('Seçili Adisyon Yazıcısına Direkt Bas'),
+            ),
+          ]),
+          const SizedBox(height: 20),
+          PrinterCenterExpandable(
+            title: 'Kurulum adımları',
+            subtitle: _wizardStatusLabel(_localSetupStatusKey()),
+            icon: Icons.checklist_rounded,
+            children: [
+              _GuidedStepTile(
+                stepNumber: '1',
+                title: 'Yazıcı servisi ve sistem kontrolü',
+                subtitle: _bridgeSummaryMessage(),
+                done: _bridgeHealthy,
+              ),
+              for (final check in prerequisiteChecks)
+                _GuidedStepTile(
+                  stepNumber: '•',
+                  title: check['label']?.toString() ?? 'Kontrol',
+                  subtitle: check['message']?.toString() ?? '',
+                  done: check['ok'] == true,
+                  compact: true,
+                ),
+              _GuidedStepTile(
+                stepNumber: '2',
+                title: 'Yerel yazıcıları tara',
+                subtitle:
+                    _printerDiscoveryGuidance() ??
+                    (_hasDetectedPrinters
+                        ? 'Tarama tamamlandı. Kayıtlı yazıcılar ve eşleştirme özeti yukarıda.'
+                        : 'Bağlantıyı Test Et ve Yazıcıları Tara ile tarama yapın.'),
+                done: _hasDetectedPrinters,
+              ),
+              _GuidedStepTile(
+                stepNumber: '3',
+                title: 'Test fişi gönder',
+                subtitle:
+                    'Adisyon ve mutfak testleri, Eşleştirme sekmesinde kayıtlı aktif yazıcıları kullanır.',
+                done: _selectedReceiptPrinterId != null &&
+                    _selectedKitchenPrinterId != null,
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _openGuidedSetup,
+                  icon: const Icon(Icons.auto_fix_high_outlined, size: 18),
+                  label: const Text('Adım adım kurulum'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          PrinterCenterExpandable(
+            title: 'Teknik Ayrıntılar',
+            subtitle: 'Destek ekibi için ham servis bilgileri',
+            icon: Icons.code_rounded,
+            children: [
+              PrinterCenterKeyValue(
+                label: 'Kurulum durumu',
+                value: '${_wizardStatusLabel(_localSetupStatusKey())} '
+                    '(${_localSetupStatusKey()})',
+              ),
+              PrinterCenterKeyValue(
+                label: 'Yerel servis (127.0.0.1)',
+                value: 'erişilebilir=$_bridgeReachable · '
+                    'sağlıklı=$_bridgeHealthy · '
+                    'sürüm=${_localBridgeHealth?['bridge_version'] ?? '-'}',
+              ),
+              PrinterCenterKeyValue(
+                label: 'Kuyruk runtime',
+                value: '${runtimeMap['status'] ?? 'idle'}'
+                    '${runtimeExtras.isEmpty ? '' : ' · $runtimeExtras'}',
+              ),
+              PrinterCenterKeyValue(
+                label: 'Bulut heartbeat',
+                value:
+                    '${_remotePrintStationConfig?['last_seen_at'] ?? '-'} · '
+                    'bridge_status=${_remotePrintStationConfig?['bridge_status'] ?? '-'}',
+              ),
+              PrinterCenterKeyValue(
+                label: 'Baskı ayarı kaynağı',
+                value:
+                    'Bridge runtime: ${_printSystemStateDetailLabel(_localPrintSystemEnabled)}'
+                    ' · Bulut: ${_printSystemStateDetailLabel(_remotePrintSystemEnabled)}'
+                    ' · Kaynak: ${_printSystemSourceIsLocalRuntime ? 'Yerel bridge runtime' : 'Bulut ayarı'}',
+              ),
+              if ((_printSystemSyncNotice ?? '').trim().isNotEmpty)
+                PrinterCenterKeyValue(
+                  label: 'Senkron notu',
+                  value: _printSystemSyncNotice!.trim(),
+                ),
+              PrinterCenterKeyValue(
+                label: 'Yazıcı doğrulama',
+                value: _bridgeSummaryMessage(),
+              ),
+              PrinterCenterKeyValue(
+                label: 'Son kuyruk hatası (geçmiş kayıt)',
+                value: lastError.isEmpty || lastError == 'null'
+                    ? '-'
+                    : '$lastError\nBu kayıt geçmişe aittir; güncel durum için yukarıdaki servis durumuna bakın.',
+              ),
+              if ((_printStationError ?? '').trim().isNotEmpty)
+                PrinterCenterKeyValue(
+                  label: 'Son işlem hatası',
+                  value: _printStationError!.trim(),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          PrinterCenterExpandable(
+            title: 'Gelişmiş',
+            subtitle: 'Geri alınamaz işlemler',
+            icon: Icons.warning_amber_rounded,
+            children: [
+              const Text(
+                'Tüm yazıcı kayıtlarını, alan eşleştirmelerini, adisyon/mutfak atamalarını ve bu cihazdaki yerel yazıcı ayarını siler; ardından yeniden tarama yapar.',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: PrinterCenterColors.body,
+                  height: 1.45,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _runningHardReset ? null : _hardResetPrinters,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFB91C1C),
+                    side: const BorderSide(color: Color(0xFFFCA5A5)),
+                  ),
+                  icon: _runningHardReset
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.restart_alt_rounded, size: 18),
+                  label: const Text('Tüm Yazıcı Kayıtlarını Sıfırla'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrintStationTab() {
+    final notices = _buildPrinterCenterNotices();
+    final sections = <Widget>[
+      _buildPrinterCenterHeader(),
+      ...notices,
+      PrinterCenterTwoColumn(
+        left: _buildAutoPrintCard(),
+        right: _buildDeviceRoleCard(),
+      ),
+      PrinterRegisteredListCard(
+        printers: _allPrintersCache,
+        repairingIds: _repairingPrinterIds,
+        onTest: _testRegisteredPrinter,
+        onEdit: (printer) => _showPrinterEditor(printer: printer),
+        onDelete: (printer) => _deletePrinter(printer),
+      ),
+      FutureBuilder<List<dynamic>>(
+        future: _assignmentsFuture,
+        builder: (context, snapshot) {
+          final stations =
+              snapshot.data?[0] as List<StationModel>? ?? const [];
+          final printers =
+              snapshot.data?[1] as List<PrinterModel>? ?? _allPrintersCache;
+          final mappings =
+              snapshot.data?[2] as List<StationPrinterModel>? ?? const [];
+          final summaryItems = _buildAssignmentSummaryItems(
+            stations: stations,
+            mappings: mappings,
+            printers: printers.isNotEmpty ? printers : _allPrintersCache,
+          );
+          return PrinterCenterTwoColumn(
+            left: PrinterAssignmentSummaryCard(
+              items: summaryItems,
+              onGoToMapping: () => DefaultTabController.of(context).animateTo(3),
+            ),
+            right: PrinterRecentJobsCard(
+              jobs: _recentPrintJobs,
+              loading: _loadingRecentPrintJobs,
+              onShowAll: () => DefaultTabController.of(context).animateTo(6),
+            ),
+          );
+        },
+      ),
+      _buildTestAndDiagnosticsCard(),
+    ];
+
+    return ColoredBox(
+      color: PrinterCenterColors.background,
+      child: ListView(
+        padding: const EdgeInsets.all(kPrinterCenterGap),
+        children: [
+          Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: kPrinterCenterMaxWidth,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < sections.length; i++) ...[
+                    if (i > 0) const SizedBox(height: kPrinterCenterGap),
+                    sections[i],
+                    if (i == notices.length)
+                      StreamBuilder<List<PrinterModel>>(
+                        stream: _printersStream,
+                        builder: (context, snapshot) {
+                          final dbPrinters =
+                              snapshot.data ?? const <PrinterModel>[];
+                          final suggested = _suggestedUnsavedLocalPrinter(
+                            dbPrinters,
+                          );
+                          if (suggested == null) return const SizedBox.shrink();
+                          return Padding(
+                            padding: const EdgeInsets.only(
+                              top: kPrinterCenterGap,
+                            ),
+                            child: _buildUnsavedLocalPrinterCard(
+                              printer: suggested,
+                              dbPrinters: dbPrinters,
+                            ),
+                          );
+                        },
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -3579,53 +3506,6 @@ class _KitchenPrintManagementPageState
         setState(() => _adoptingLocalPrinter = false);
       }
     }
-  }
-
-  Widget _statusTile({
-    required String title,
-    required String value,
-    required String subtitle,
-    required Color accent,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF6B7280),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              color: accent,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            subtitle,
-            style: const TextStyle(
-              fontSize: 12,
-              color: Color(0xFF4B5563),
-              height: 1.4,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildStationRow(StationModel station) {
@@ -6325,33 +6205,6 @@ class _KitchenPrintManagementPageState
   String _logField(String value) {
     final normalized = value.trim();
     return normalized.isEmpty ? '-' : normalized;
-  }
-}
-
-class _InlineStatusChip extends StatelessWidget {
-  const _InlineStatusChip({required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.25)),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          color: color,
-        ),
-      ),
-    );
   }
 }
 

@@ -31,65 +31,34 @@ class _IbulOpportunityShortcutsSectionState
   }
 
   List<({IconData icon, String title})> _itemsForCategory() {
-    switch (widget.selectedCategory) {
-      case 'Elektronik':
-        return const [
-          (icon: Icons.phone_iphone, title: 'Telefonlar'),
-          (icon: Icons.laptop, title: 'Laptop & Tablet'),
-          (icon: Icons.tv, title: 'Televizyon'),
-          (icon: Icons.headphones_battery, title: 'Aksesuar'),
-        ];
-      case 'Erkek':
-      case 'Kadın':
-        return const [
-          (icon: Icons.checkroom, title: 'Giyim'),
-          (icon: Icons.hiking, title: 'Ayakkabı & Çanta'),
-          (icon: Icons.watch, title: 'Saat & Aksesuar'),
-        ];
-      case 'Yakın Lokasyon':
-        return const [
-          (icon: Icons.restaurant_menu, title: 'Yemek'),
-          (icon: Icons.shopping_cart, title: 'Market'),
-          (icon: Icons.explore, title: 'Keşfet'),
-        ];
-      default:
-        return const [
-          (icon: Icons.flash_on, title: 'Süper Fırsat'),
-          (icon: Icons.local_offer, title: 'İndirimler'),
-          (icon: Icons.trending_up, title: 'Çok Satanlar'),
-          (icon: Icons.new_releases, title: 'Yeniler'),
-          (icon: Icons.diamond, title: 'Özel Ürünler'),
-          (icon: Icons.card_giftcard, title: 'Hediye'),
-          (icon: Icons.computer, title: 'Elektronik'),
-          (icon: Icons.chair, title: 'Ev & Yaşam'),
-          (icon: Icons.checkroom, title: 'Moda'),
-          (icon: Icons.sports_soccer, title: 'Spor'),
-          (icon: Icons.auto_stories, title: 'Kitap'),
-          (icon: Icons.directions_car_outlined, title: 'Araç'),
-        ];
-    }
+    return const [
+      (icon: Icons.flash_on, title: 'Süper Fırsat'),
+      (icon: Icons.local_offer, title: 'İndirimler'),
+      (icon: Icons.trending_up, title: 'Çok Satanlar'),
+      (icon: Icons.new_releases, title: 'Yeniler'),
+      (icon: Icons.diamond, title: 'Özel Ürünler'),
+      (icon: Icons.card_giftcard, title: 'Hediye'),
+      (icon: Icons.directions_car_outlined, title: 'Araç'),
+    ];
   }
 
   @override
   Widget build(BuildContext context) {
     final items = _itemsForCategory();
     return SizedBox(
-      height: 140,
+      height: 76,
       child: Stack(
         children: [
           ScrollConfiguration(
             behavior: ScrollConfiguration.of(context).copyWith(
-              dragDevices: {
-                PointerDeviceKind.touch,
-                PointerDeviceKind.mouse,
-              },
+              dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse},
             ),
             child: ListView.separated(
               controller: _scrollController,
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
               itemCount: items.length,
-              separatorBuilder: (context, index) => const SizedBox(width: 16),
+              separatorBuilder: (context, index) => const SizedBox(width: 8),
               itemBuilder: (context, index) {
                 final item = items[index];
                 return HomeQuickActionChip(

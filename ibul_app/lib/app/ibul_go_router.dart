@@ -57,11 +57,35 @@ List<RouteBase> _routes(bool includeAuthRoutes) {
     _pageRoute('/seller', includeAuthRoutes),
     _pageRoute('/admin', includeAuthRoutes),
     _pageRoute('/become-seller', includeAuthRoutes),
+    _pageRoute(MarketplacePaths.mallHub, includeAuthRoutes),
+    _pageRoute(MarketplacePaths.mallLogin, includeAuthRoutes),
+    _pageRoute(MarketplacePaths.mallRegister, includeAuthRoutes),
+    _pageRoute(MarketplacePaths.mallApplication, includeAuthRoutes),
+    _pageRoute(MarketplacePaths.mallManagement, includeAuthRoutes),
+    for (final pattern in mallPanelRoutePatterns)
+      GoRoute(
+        path: pattern,
+        pageBuilder: (context, state) =>
+            mallPanelPage(state, _pageFor(state.uri.path, state, includeAuthRoutes)),
+      ),
+    GoRoute(
+      path: '${MarketplacePaths.mallProfileRoot}/:mallId',
+      builder: (context, state) =>
+          _pageFor(state.uri.path, state, includeAuthRoutes),
+    ),
     _pageRoute('/seller-forgot-password', includeAuthRoutes),
     _pageRoute('/yatirimci', includeAuthRoutes),
     _pageRoute('/ihiz', includeAuthRoutes),
     _pageRoute('/arac', includeAuthRoutes),
     _pageRoute('/arac/arama', includeAuthRoutes),
+    GoRoute(
+      path: '/kategori/:mainCategoryId/:subCategoryId/:slug',
+      builder: (context, state) => _pageFor(
+        state.uri.path,
+        state,
+        includeAuthRoutes,
+      ),
+    ),
     _pageRoute(MarketplacePaths.account, includeAuthRoutes),
     GoRoute(
       path: '/hesabim/:section',
@@ -153,6 +177,26 @@ List<RouteBase> _routes(bool includeAuthRoutes) {
   return routes;
 }
 
+/// Sibling (not nested) routes: a nested `:mallId` parent stayed mounted under
+/// every section page and kept its first-load data, so Genel Bakış showed
+/// stale counts.
+const mallPanelRoutePatterns = <String>[
+  '${MarketplacePaths.mallManagement}/:mallId',
+  '${MarketplacePaths.mallManagement}/:mallId/katlar/:floorId',
+  '${MarketplacePaths.mallManagement}/:mallId/:section',
+];
+
+/// Every section of one mall shares this page key, so the Navigator updates
+/// the same route and the panel keeps a single state per mall.
+Page<void> mallPanelPage(GoRouterState state, Widget child) {
+  final mallId = state.pathParameters['mallId'] ?? '';
+  return MaterialPage<void>(
+    key: ValueKey<String>('mall-panel:$mallId'),
+    name: state.uri.path,
+    child: child,
+  );
+}
+
 GoRoute _pageRoute(String path, bool includeAuthRoutes) {
   return GoRoute(
     path: path,
@@ -219,6 +263,22 @@ String? ibulGoRouterRedirect({
   if (path == '/hesabim/ozet') {
     return MarketplacePaths.account;
   }
+  if (path == MarketplacePaths.legacyMallApplication ||
+      path == MarketplacePaths.legacyPublicMallApplication) {
+    return MarketplacePaths.mallApplication;
+  }
+  if (path == MarketplacePaths.mallRegister) {
+    return MarketplacePaths.mallApplication;
+  }
+  if (path == MarketplacePaths.legacyMallManagement ||
+      path.startsWith('${MarketplacePaths.legacyMallManagement}/')) {
+    return path.replaceFirst(
+      MarketplacePaths.legacyMallManagement,
+      MarketplacePaths.mallManagement,
+    );
+  }
+  // `/avm/yonetim` is guarded by MallAuthGate against the separate AVM
+  // session; [authenticated] is the marketplace customer session.
   if (includeAuthRoutes &&
       MarketplacePaths.isAccountPath(path) &&
       !authenticated) {

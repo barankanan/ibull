@@ -40,7 +40,7 @@ class _HomePromotionsBlockState extends State<HomePromotionsBlock> {
             groups: _groups,
             convertToProduct: Product.fromDBProduct,
           ),
-        const DeferredHomeSponsoredSection(),
+        const DeferredHomeSponsoredSection(suppressSkeleton: true),
       ],
     );
   }

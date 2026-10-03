@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'blog_image_frame.dart';
+
 /// Versioned block document shared by the editor, the reader and the preview.
 ///
 /// Must stay in sync with `blog_content_is_safe` (SQL) and
@@ -39,6 +41,7 @@ class BlogBlock {
     this.cite = '',
     this.label = '',
     this.videoSource = BlogVideoSource.upload,
+    this.frame = const BlogImageFrame(),
     List<BlogColumn>? columns,
   }) : items = items ?? <String>[],
        columns = columns ?? <BlogColumn>[];
@@ -55,6 +58,7 @@ class BlogBlock {
   String cite;
   String label;
   BlogVideoSource videoSource;
+  BlogImageFrame frame;
   List<BlogColumn> columns;
 
   static const int minColumns = 2;
@@ -107,6 +111,7 @@ class BlogBlock {
         (s) => s.name == raw['source']?.toString(),
         orElse: () => BlogVideoSource.upload,
       ),
+      frame: BlogImageFrame.fromJson(raw),
       columns: type == BlogBlockType.columns && rawColumns is List
           ? rawColumns
                 .take(maxColumns)
@@ -134,6 +139,7 @@ class BlogBlock {
         json['url'] = url;
         json['alt'] = alt;
         if (caption.trim().isNotEmpty) json['caption'] = caption;
+        json.addAll(frame.toJson());
       case BlogBlockType.video:
         json['source'] = videoSource.name;
         json['url'] = url;
@@ -197,14 +203,19 @@ class BlogColumn {
 }
 
 class BlogDocument {
-  BlogDocument({List<BlogBlock>? blocks}) : blocks = blocks ?? <BlogBlock>[];
+  BlogDocument({List<BlogBlock>? blocks, this.coverFrame})
+    : blocks = blocks ?? <BlogBlock>[];
 
   static const int version = 1;
 
   final List<BlogBlock> blocks;
 
+  /// Crop for the post cover. Null keeps the legacy cover box.
+  BlogImageFrame? coverFrame;
+
   factory BlogDocument.fromJson(Object? raw) {
     final rawBlocks = raw is Map ? raw['blocks'] : null;
+    final cover = raw is Map ? raw['cover'] : null;
     return BlogDocument(
       blocks: rawBlocks is List
           ? rawBlocks
@@ -212,12 +223,14 @@ class BlogDocument {
                 .whereType<BlogBlock>()
                 .toList(growable: true)
           : null,
+      coverFrame: cover is Map ? BlogImageFrame.fromJson(cover) : null,
     );
   }
 
   Map<String, dynamic> toJson() => {
     'version': version,
     'blocks': blocks.map((b) => b.toJson()).toList(),
+    if (coverFrame != null && !coverFrame!.isLegacy) 'cover': coverFrame!.toJson(),
   };
 
   /// All blocks including those inside column sections, in reading order.
@@ -268,8 +281,8 @@ class BlogDocument {
     return math.max(1, (words / 200).ceil());
   }
 
-  /// First validation problem in Turkish, or null when the document is safe.
-  String? validate() {
+  /// Draft saves only reject unsafe content. Publish also requires finished blocks.
+  String? validate({bool publishing = false}) {
     var count = 0;
     for (final block in flattened) {
       count++;
@@ -283,21 +296,29 @@ class BlogDocument {
           }
         }
       }
+      if (!publishing) {
+        if (block.type == BlogBlockType.columns &&
+            (block.columns.length < BlogBlock.minColumns ||
+                block.columns.length > BlogBlock.maxColumns)) {
+          return 'Sütun bölümü 2–4 sütun içermeli.';
+        }
+        continue;
+      }
       switch (block.type) {
         case BlogBlockType.image:
-          if (block.url.trim().isEmpty) return 'Görsel bloğunda görsel yok.';
+          if (block.url.trim().isEmpty) return 'Yayınlamak için görsel bloğuna görsel ekleyin.';
           if (block.alt.trim().isEmpty) {
-            return 'Her görsel için alternatif metin girin.';
+            return 'Yayınlamak için her görsele alternatif metin girin.';
           }
         case BlogBlockType.video:
-          if (block.url.trim().isEmpty) return 'Video bloğunda video yok.';
+          if (block.url.trim().isEmpty) return 'Yayınlamak için video bloğuna video ekleyin.';
           if (block.videoSource != BlogVideoSource.upload &&
               BlogVideoLink.parse(block.url) == null) {
             return 'Video bağlantısı YouTube veya Vimeo adresi olmalı.';
           }
         case BlogBlockType.button:
           if (block.label.trim().isEmpty || block.url.trim().isEmpty) {
-            return 'Buton için metin ve hedef bağlantı girin.';
+            return 'Yayınlamak için butona metin ve bağlantı girin.';
           }
         case BlogBlockType.columns:
           if (block.columns.length < BlogBlock.minColumns ||

@@ -113,10 +113,9 @@ class DailyDealProduct {
       imageUrl: map['image_url']?.toString(),
       price: price,
       discountPrice: discount,
-      discountPercent: (map['discount_percent'] as num?)?.toDouble() ??
-          (price > 0 && discount > 0 && discount < price
-              ? ((1 - discount / price) * 100)
-              : 0),
+      discountPercent: price > 0 && discount > price
+          ? ((discount - price) / discount) * 100
+          : 0,
       storeName: map['store_name']?.toString(),
       sellerId: map['seller_id']?.toString(),
     );

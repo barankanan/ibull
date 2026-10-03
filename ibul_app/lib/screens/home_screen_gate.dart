@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 // ignore: unused_import
-import 'package:ibul_app/screens/home_screen_deferred_entry.dart' deferred as home_entry;
+import 'package:ibul_app/screens/home_screen_deferred_entry.dart'
+    deferred as home_entry;
 
 import '../core/perf_debug_config.dart';
 import '../core/web_boot_error_store.dart';
@@ -17,11 +18,13 @@ class HomeScreenGate extends StatefulWidget {
     super.key,
     this.initialIndex = 0,
     this.initialCategory,
+    this.initialSubCategory,
     this.initialSearchQuery,
   });
 
   final int initialIndex;
   final String? initialCategory;
+  final String? initialSubCategory;
   final String? initialSearchQuery;
 
   static const String moduleName = 'home_screen_deferred_entry';
@@ -43,19 +46,22 @@ class HomeScreenGate extends StatefulWidget {
   /// yüklemeyi paylaşır, başarıdan sonra anında tamamlanır), bu yüzden Future
   /// ayrıca cache'lenmiyor — hata sonrası retry doğal olarak yeniden dener.
   static Future<void> loadModule() {
-    return home_entry.loadLibrary().then((_) {
-      _moduleReady = true;
-    }).catchError((Object error, StackTrace stackTrace) {
-      // Chunk yüklenemedi — hata izlenebilir ve yeniden fırlatılarak
-      // çağıran (DeferredModuleScreen retry / test) doğru şekilde bilgilendirilir.
-      debugPrint('[HomeScreenGate] deferred chunk load failed: $error');
-      saveWebBootError(
-        module: 'home_screen_gate',
-        message: 'Deferred home chunk load failed: $error',
-        detail: stackTrace.toString(),
-      );
-      Error.throwWithStackTrace(error, stackTrace);
-    });
+    return home_entry
+        .loadLibrary()
+        .then((_) {
+          _moduleReady = true;
+        })
+        .catchError((Object error, StackTrace stackTrace) {
+          // Chunk yüklenemedi — hata izlenebilir ve yeniden fırlatılarak
+          // çağıran (DeferredModuleScreen retry / test) doğru şekilde bilgilendirilir.
+          debugPrint('[HomeScreenGate] deferred chunk load failed: $error');
+          saveWebBootError(
+            module: 'home_screen_gate',
+            message: 'Deferred home chunk load failed: $error',
+            detail: stackTrace.toString(),
+          );
+          Error.throwWithStackTrace(error, stackTrace);
+        });
   }
 
   /// Start downloading the home chunk as early as possible (web cold start).
@@ -68,8 +74,9 @@ class HomeScreenGate extends StatefulWidget {
 }
 
 class _HomeScreenGateState extends State<HomeScreenGate> {
-  late final WebBootTraceNotifier _trace =
-      WebBootTraceNotifier(module: HomeScreenGate.moduleName);
+  late final WebBootTraceNotifier _trace = WebBootTraceNotifier(
+    module: HomeScreenGate.moduleName,
+  );
 
   @override
   void initState() {
@@ -91,6 +98,7 @@ class _HomeScreenGateState extends State<HomeScreenGate> {
           child: HomeInitialPage(
             initialIndex: widget.initialIndex,
             initialCategory: widget.initialCategory,
+            initialSubCategory: widget.initialSubCategory,
             initialSearchQuery: widget.initialSearchQuery,
           ),
         ),

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('three MaterialApps share generateAppRoute', () {
     final table = File('lib/app/app_route_table.dart').readAsStringSync();
+    final router = File('lib/app/ibul_go_router.dart').readAsStringSync();
     final customer = File('lib/app/customer_app.dart').readAsStringSync();
     final full = File('lib/app/full_app.dart').readAsStringSync();
     final root = File('../lib/main.dart').readAsStringSync();
@@ -17,6 +18,8 @@ void main() {
     expect(table, contains('SiteInfoRoutes.pageForPath'));
     expect(table, contains('IhizRoutePaths.isTrackPath'));
     expect(table, contains('mode=deferred'));
+    expect(router, contains("path: '/kategori/:mainCategoryId/:subCategoryId/:slug'"));
+    expect(table, contains('CategoryRoutePage'));
 
     expect(customer, contains('IbulMaterialApp'));
     expect(customer, contains('includeAuthRoutes: true'));

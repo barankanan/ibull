@@ -284,15 +284,67 @@ create trigger blog_posts_derive_trg
 -- ---------------------------------------------------------------------------
 -- Yetki
 -- ---------------------------------------------------------------------------
+-- Panel ile aynı sözleşme (AdminService.getCurrentAdminAccessBundle):
+-- super_admin her modül; Genel Operasyon (`users.role = admin`) blogu yönetir
+-- ve bunun için blog_authors satırı gerekmez. Aktif allow-list modülü
+-- içermiyorsa veya denied_modules'ta varsa erişim yok (kısıtlı admin).
+-- admin_* ekip rolleri yalnızca campaign_content modülü varsa yönetir.
 create or replace function public.blog_is_admin()
 returns boolean
-language sql
+language plpgsql
 stable
 security definer
 set search_path = public
 as $$
-  select auth.uid() is not null
-    and coalesce(public.current_admin_has_module('campaign_content'), false);
+declare
+  v_role text;
+  v_allowed text[];
+  v_denied text[];
+begin
+  if auth.uid() is null then
+    return false;
+  end if;
+
+  select lower(btrim(u.role))
+  into v_role
+  from public.users u
+  where u.id = auth.uid()
+  limit 1;
+
+  if v_role = 'super_admin' then
+    return true;
+  end if;
+
+  if to_regclass('public.admin_user_permissions') is not null then
+    select
+      case
+        when p.is_active is true
+          and cardinality(coalesce(p.allowed_modules, '{}'::text[])) > 0
+          then p.allowed_modules
+      end,
+      coalesce(p.denied_modules, '{}'::text[])
+    into v_allowed, v_denied
+    from public.admin_user_permissions p
+    where p.user_id = auth.uid()
+      and p.is_active is true
+    limit 1;
+  end if;
+
+  if 'campaign_content' = any(coalesce(v_denied, '{}'::text[])) then
+    return false;
+  end if;
+
+  if v_role = 'admin' then
+    if v_allowed is not null
+       and cardinality(v_allowed) > 0
+       and not ('campaign_content' = any(v_allowed)) then
+      return false;
+    end if;
+    return true;
+  end if;
+
+  return coalesce(public.current_admin_has_module('campaign_content'), false);
+end;
 $$;
 
 create or replace function public.blog_current_author_id()

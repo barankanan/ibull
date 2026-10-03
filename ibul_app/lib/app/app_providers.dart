@@ -5,6 +5,7 @@ import 'package:provider/single_child_widget.dart';
 import '../core/app_state.dart';
 import '../core/cart_state.dart';
 import '../core/favorite_state.dart';
+import '../core/compare_state.dart';
 import '../core/ibul_app_mode.dart';
 import '../core/providers/connectivity_provider.dart';
 import '../core/review_state.dart';
@@ -24,6 +25,7 @@ List<SingleChildWidget> buildCustomerProviders() {
   return [
     ChangeNotifierProvider.value(value: CartState()),
     ChangeNotifierProvider.value(value: FavoriteState()),
+    ChangeNotifierProvider.value(value: CompareState()),
     ChangeNotifierProvider.value(value: ReviewState()),
     ChangeNotifierProvider(create: (_) => AppState()),
     ChangeNotifierProvider(create: (_) => ConnectivityProvider()),

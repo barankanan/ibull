@@ -76,6 +76,16 @@ void main() {
             );
           },
         ),
+        GoRoute(
+          path: '/kategori/:mainCategoryId/:subCategoryId/:slug',
+          builder: (context, state) => Scaffold(
+            body: Text(
+              'category-${state.pathParameters['mainCategoryId']}-'
+              '${state.pathParameters['subCategoryId']}-'
+              '${state.pathParameters['slug']}',
+            ),
+          ),
+        ),
       ],
     );
     IbulGoRouterBinding.instance = router;
@@ -163,6 +173,22 @@ void main() {
     );
     expect(path(), startsWith('/arac/de5ef4d2-veh'));
     expect(find.text('vehicle-de5ef4d2-veh-toyota-corolla'), findsOneWidget);
+  });
+
+  testWidgets('category submenu updates router path outside home', (
+    tester,
+  ) async {
+    await pumpApp(tester);
+    await tester.tap(find.text('Telefonlar'));
+    await tester.pumpAndSettle();
+
+    final categoryPath = MarketplacePaths.category(
+      1,
+      2,
+      slug: 'Elektronik Telefonlar',
+    );
+    expect(path(), categoryPath);
+    expect(find.text('category-1-2-elektronik-telefonlar'), findsOneWidget);
   });
 
   testWidgets('browser back returns to previous real URL', (tester) async {
@@ -258,6 +284,12 @@ class _ClickHarness extends StatelessWidget {
               slug: 'Toyota Corolla',
             ),
             child: const Text('Toyota Corolla'),
+          ),
+          TextButton(
+            onPressed: () => GoRouter.of(context).push(
+              MarketplacePaths.category(1, 2, slug: 'Elektronik Telefonlar'),
+            ),
+            child: const Text('Telefonlar'),
           ),
         ],
       ),

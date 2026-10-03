@@ -76,6 +76,7 @@ Widget buildSafeHome({
           ? homeArgs.initialIndex
           : initialIndex,
       initialCategory: homeArgs.initialCategory ?? initialCategory,
+      initialSubCategory: homeArgs.initialSubCategory,
       initialSearchQuery: homeArgs.initialSearchQuery ?? initialSearchQuery,
     ),
   );
@@ -94,7 +95,8 @@ Widget buildQrEntry({required String source}) {
 
 /// Initial [MaterialApp.home] for all three shells.
 Widget buildLaunchHome() {
-  final launchQrHome = kIsWeb &&
+  final launchQrHome =
+      kIsWeb &&
       QrInitialParams.isQrPath &&
       !QrInitialParams.wasResetAfterQrExit;
   if (launchQrHome) {
@@ -206,7 +208,8 @@ class SeoRouteObserver extends NavigatorObserver {
         );
       case '/yatirimci':
         return const _SeoRouteConfig(
-          title: 'İBUL Yatırımcı İlişkileri | Yerel Ticaretin Dijital Altyapısı',
+          title:
+              'İBUL Yatırımcı İlişkileri | Yerel Ticaretin Dijital Altyapısı',
           description:
               'İBUL’un ürün ekosistemini, gelir modellerini, büyüme stratejisini, İHIZ teslimat altyapısını ve uzun vadeli vizyonunu keşfedin.',
           path: '/yatirimci',

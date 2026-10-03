@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/models/db_product.dart';
 import 'package:ibul_app/screens/home/home_product_rail_groups.dart';
+import 'package:ibul_app/utils/category_product_filter.dart';
 
 DBProduct _product({
   required String id,
@@ -66,5 +67,35 @@ void main() {
 
   test('empty pool yields no rails', () {
     expect(HomeProductRailGroups.build(const []), isEmpty);
+  });
+
+  test('phone and tablet leaf matches accept category naming variants', () {
+    expect(
+      CategoryProductFilter.productMatchesSelection(
+        mainCategory: 'Elektronik',
+        subCategory: 'Telefonlar',
+        productMainCategory: 'Cep Telefonu',
+        productSubCategory: 'Akıllı Telefon',
+        productName: 'iPhone 16',
+      ),
+      isTrue,
+    );
+    expect(
+      CategoryProductFilter.productMatchesSelection(
+        mainCategory: 'Bilgisayar / Elektronik',
+        subCategory: 'Tabletler',
+        productMainCategory: 'Teknoloji',
+        productSubCategory: 'Mobil Cihazlar',
+        productName: 'Apple iPad Air',
+      ),
+      isTrue,
+    );
+    expect(
+      CategoryProductFilter.buildSubCategoryOrClause(
+        mainCategory: 'Elektronik',
+        subCategory: 'Tabletler',
+      ),
+      contains('name.ilike.*ipad*'),
+    );
   });
 }

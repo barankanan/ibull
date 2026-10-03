@@ -61,7 +61,7 @@ class _ProductFilterSidebarState extends State<ProductFilterSidebar> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 280,
+      width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -392,25 +392,56 @@ class _ProductFilterSidebarState extends State<ProductFilterSidebar> {
   }
 
   Future<void> _showMore(ProductFilterGroup group) async {
+    String searchQuery = '';
+    
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(group.title),
-        content: SizedBox(
-          width: 320,
-          child: ListView(
-            shrinkWrap: true,
-            children: group.options
-                .map((option) => _optionTile(group, option))
-                .toList(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Kapat'),
-          ),
-        ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          final options = group.options.where((o) => 
+            o.label.toLowerCase().contains(searchQuery.toLowerCase())
+          ).toList();
+          
+          return AlertDialog(
+            title: Text(group.title),
+            content: SizedBox(
+              width: 320,
+              height: 400,
+              child: Column(
+                children: [
+                  TextField(
+                    decoration: const InputDecoration(
+                      hintText: 'Ara...',
+                      prefixIcon: Icon(Icons.search),
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (val) {
+                      setStateDialog(() {
+                        searchQuery = val;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: options
+                          .map((option) => _optionTile(group, option))
+                          .toList(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Kapat'),
+              ),
+            ],
+          );
+        }
       ),
     );
   }

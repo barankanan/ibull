@@ -11,6 +11,7 @@ import '../screens/favorites_page.dart';
 import '../screens/coupons_page.dart';
 import '../screens/reviews_page.dart';
 import '../screens/settings_page.dart';
+import '../screens/account/account_menu_navigation.dart';
 import '../screens/account_page.dart';
 import '../screens/followed_stores_page.dart';
 import '../screens/addresses_page.dart';
@@ -350,6 +351,14 @@ class AccountSidebar extends StatelessWidget {
             );
           }
         },
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.storefront_outlined,
+        AccountMenuNavigation.sellerTitle,
+        subtitle: AccountMenuNavigation.sellerSubtitle,
+        isActive: false,
+        onTap: () => AccountMenuNavigation.openStoreApply(context),
       ),
       _buildWebMenuItem(
         context,

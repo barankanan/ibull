@@ -35,10 +35,12 @@ class VehicleDetailPage extends StatefulWidget {
     super.key,
     required this.listingId,
     this.previewMode = false,
+    this.focusContact = false,
   });
 
   final String listingId;
   final bool previewMode;
+  final bool focusContact;
 
   @override
   State<VehicleDetailPage> createState() => _VehicleDetailPageState();
@@ -450,6 +452,7 @@ class _VehicleDetailPageState extends State<VehicleDetailPage> {
                   child: VehicleListingDetailView(
                     listing: listing,
                     previewMode: widget.previewMode,
+                    focusContact: widget.focusContact,
                     favorite: _favorite,
                     following: following,
                     related: _related,
@@ -470,7 +473,10 @@ class _VehicleDetailPageState extends State<VehicleDetailPage> {
                         'seller_profile_open',
                       );
                       if (!context.mounted) return;
-                      await VehicleRoutes.openGallery(context, listing.sellerId);
+                      await VehicleRoutes.openGallery(
+                        context,
+                        listing.sellerId,
+                      );
                     },
                     onOpenRelated: (item) =>
                         VehicleRoutes.openDetail(context, item.id),

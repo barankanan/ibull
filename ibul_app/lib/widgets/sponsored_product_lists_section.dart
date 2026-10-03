@@ -107,14 +107,16 @@ class _SponsoredProductListsSectionState
           .timeout(widget.loadTimeout);
 
       if (!mounted) return;
+      final validLists = lists.where((l) => l.productIds.isNotEmpty).toList();
       setState(() {
-        _lists = lists;
-        _loadState = lists.isEmpty
+        _lists = validLists;
+        _loadState = validLists.isEmpty
             ? const SectionLoadState(phase: SectionLoadPhase.empty)
             : const SectionLoadState(phase: SectionLoadPhase.loaded);
       });
-      state = lists.isEmpty ? SectionLoadPhase.empty : SectionLoadPhase.loaded;
-      if (lists.isEmpty) {
+      state = validLists.isEmpty ? SectionLoadPhase.empty : SectionLoadPhase.loaded;
+      
+      if (validLists.isEmpty) {
         HomeAdsDiagnostics.sponsoredHidden(reason: 'empty');
         HomeSectionDiagnostics.hidden(
           section: 'sponsored_lists',
@@ -184,6 +186,10 @@ class _SponsoredProductListsSectionState
 
   @override
   Widget build(BuildContext context) {
+    if (_loadState.phase == SectionLoadPhase.empty || (_lists.isEmpty && !_loadState.isLoading && _loadState.phase != SectionLoadPhase.error)) {
+      return const SizedBox.shrink();
+    }
+
     if (_loadState.isLoading) {
       if (widget.suppressSkeleton || _skeletonTimedOut) {
         HomeSkeletonDiagnostics.hide(
@@ -199,7 +205,7 @@ class _SponsoredProductListsSectionState
       return const _SponsoredListsSectionSkeleton();
     }
 
-    if (_loadState.shouldShowError) {
+    if (_loadState.phase == SectionLoadPhase.error) {
       HomeSkeletonDiagnostics.hide(
         source: 'sponsored_lists',
         reason: 'error',

@@ -10,10 +10,12 @@ class BlogColumnsEditor extends StatelessWidget {
     super.key,
     required this.block,
     required this.onChanged,
+    this.onUndo,
   });
 
   final BlogBlock block;
   final VoidCallback onChanged;
+  final void Function(VoidCallback undo)? onUndo;
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +79,14 @@ class BlogColumnsEditor extends StatelessWidget {
                       BlogBlockListEditor(
                         blocks: block.columns[i].blocks,
                         allowColumns: false,
+                        onUndo: onUndo,
+                        onShift: (moved, direction) {
+                          final target = i + direction;
+                          if (target < 0 || target >= block.columns.length) return;
+                          block.columns[i].blocks.remove(moved);
+                          block.columns[target].blocks.add(moved);
+                          onChanged();
+                        },
                         onChanged: onChanged,
                       ),
                     ],

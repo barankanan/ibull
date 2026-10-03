@@ -3,13 +3,11 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:ibul_app/l10n/arb/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../ads/models/home_card_template.dart';
 import '../ads/services/home_feature_ad_service.dart';
 import '../core/app_motion.dart';
-import '../core/app_state.dart';
 import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/home_boot_diagnostics.dart';
@@ -56,8 +54,9 @@ import 'home/sections/home_nearby_discovery_section.dart';
 import 'home/sections/home_vehicle_rail_section.dart';
 import 'home/sections/ibul_delivery_address_section.dart';
 import 'home/sections/ibul_hero_campaign_row.dart';
+import 'home/mobile/mobile_home_nav.dart';
 import 'home/sections/ibul_mobile_home_chrome.dart';
-import 'home/sections/ibul_opportunity_shortcuts_section.dart';
+
 import 'home/sections/ibul_trust_bar_section.dart';
 import 'home/deferred/deferred_reward_wheel_overlay.dart';
 
@@ -674,40 +673,6 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
     }
   }
 
-  Widget _buildCartIcon({required bool isActive}) {
-    return ValueListenableBuilder<int>(
-      valueListenable: context.read<AppState>().cartCountNotifier,
-      builder: (context, count, _) {
-        return Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Icon(isActive ? Icons.shopping_cart : Icons.shopping_cart_outlined),
-            if (count > 0)
-              Positioned(
-                right: -6,
-                top: -6,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    color: AppColors.primary,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Text(
-                    count.toString(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-
   @override
   void dispose() {
     _watchdogTimer?.cancel();
@@ -717,7 +682,6 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
     final isWeb = IbulChrome.isWebOf(context);
     final visibleCards = _sectionsRevealed
         ? _products.length.clamp(0, kHomeCatalogBatchSize)
@@ -746,55 +710,11 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       ),
       bottomNavigationBar: isWeb
           ? null
-          : Theme(
-              data: Theme.of(context).copyWith(
-                splashColor: Colors.transparent,
-                highlightColor: Colors.transparent,
-              ),
-              child: ValueListenableBuilder<int>(
-                valueListenable: _selectedIndexNotifier,
-                builder: (context, index, _) => BottomNavigationBar(
-                  currentIndex: index,
-                  onTap: _onItemTapped,
-                  selectedItemColor: AppColors.primary,
-                  unselectedItemColor: Colors.black,
-                  type: BottomNavigationBarType.fixed,
-                  showUnselectedLabels: true,
-                  selectedLabelStyle: const TextStyle(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 12,
-                  ),
-                  unselectedLabelStyle: const TextStyle(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 12,
-                  ),
-                  items: [
-                    BottomNavigationBarItem(
-                      icon: const Icon(Icons.home_outlined),
-                      activeIcon: const Icon(Icons.home),
-                      label: l10n?.home ?? 'Ana Sayfa',
-                    ),
-                    BottomNavigationBarItem(
-                      icon: const Icon(Icons.segment),
-                      label: l10n?.categories ?? 'Kategori',
-                    ),
-                    const BottomNavigationBarItem(
-                      icon: Icon(Icons.map_outlined),
-                      activeIcon: Icon(Icons.map),
-                      label: 'Harita',
-                    ),
-                    BottomNavigationBarItem(
-                      icon: _buildCartIcon(isActive: false),
-                      activeIcon: _buildCartIcon(isActive: true),
-                      label: l10n?.cart ?? 'Sepet',
-                    ),
-                    BottomNavigationBarItem(
-                      icon: const Icon(Icons.person_outline),
-                      activeIcon: const Icon(Icons.person),
-                      label: l10n?.profile ?? 'Hesap',
-                    ),
-                  ],
-                ),
+          : ValueListenableBuilder<int>(
+              valueListenable: _selectedIndexNotifier,
+              builder: (context, index, _) => MobileHomeBottomNav(
+                stackIndex: index,
+                onStack: _onItemTapped,
               ),
             ),
     );
@@ -843,12 +763,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
 
     return [
       const IbulDeliveryAddressSection(),
-      if (isWeb)
-        IbulOpportunityShortcutsSection(
-          selectedCategory: _selectedCategory,
-          onShortcutTap: _setSelectedCategory,
-        )
-      else
+      if (!isWeb)
         IbulMobileHomeChrome(
           bannerImageUrls: _heroBannerUrls,
           isLoadingHero: _isLoadingHero,
@@ -923,7 +838,6 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
   Widget _buildWebHomeScrollBody(bool isWeb) {
     final sections = _buildHomeSections(isWeb);
     return WebStickyFooterScrollView(
-      contentAlignment: Alignment.topCenter,
       child: Center(
         child: ConstrainedBox(
           constraints: IbulChrome.contentConstraints,

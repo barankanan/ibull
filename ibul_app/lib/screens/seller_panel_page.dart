@@ -132,6 +132,9 @@ import 'seller/product_management/product_quick_edit_models.dart';
 import 'seller/product_management/product_quick_edit_row.dart';
 import 'seller/product_management/product_quick_edit_service.dart';
 import 'seller_panel_route_args.dart';
+import '../features/mall/seller/seller_mall_code_card.dart';
+import '../features/mall/seller/seller_store_location_card.dart';
+import '../features/mall/seller/seller_mall_requests_view.dart';
 
 export 'seller_panel_route_args.dart' show SellerPanelEntryRole, parseSellerPanelEntryRole;
 
@@ -2232,6 +2235,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return 'system';
       case SellerModule.store:
         return 'store';
+      case SellerModule.mallRequests:
+        return 'mall_requests';
       case SellerModule.team:
         return 'team';
       case SellerModule.campaigns:
@@ -2269,6 +2274,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return 'sidebar_system_tap';
       case SellerModule.store:
         return 'sidebar_store_tap';
+      case SellerModule.mallRequests:
+        return 'sidebar_mall_requests_tap';
       case SellerModule.team:
         return 'sidebar_team_tap';
       case SellerModule.campaigns:
@@ -2306,6 +2313,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return SellerModule.system;
       case 'store':
         return SellerModule.store;
+      case 'mall_requests':
+        return SellerModule.mallRequests;
       case 'team':
         return SellerModule.team;
       case 'campaigns':
@@ -3058,6 +3067,12 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         _logSellerPanel(
           'Tab',
           'module=${module.name} fetch=store_contracts refetch=true',
+        );
+        break;
+      case SellerModule.mallRequests:
+        _logSellerPanel(
+          'Tab',
+          'module=${module.name} fetch=mall_link_requests refetch=true',
         );
         break;
     }
@@ -8951,6 +8966,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         );
       case SellerModule.store:
         return _buildMobileStoreModule();
+      case SellerModule.mallRequests:
+        return const SellerMallRequestsView();
       case SellerModule.team:
         return _buildMobileTeamModule();
       case SellerModule.campaigns:
@@ -15813,6 +15830,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 ),
               if ((_authService.currentUser?.id ?? '').trim().isNotEmpty)
                 const SizedBox(height: 10),
+              const SellerMallCodeCard(gap: 10),
+              const SellerStoreLocationCard(gap: 10),
               _buildStoreInfoCard(),
               const SizedBox(height: 10),
               _buildContactInfoCard(),
@@ -16130,6 +16149,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         );
       case SellerModule.store:
         return _buildStoreModule();
+      case SellerModule.mallRequests:
+        return const SellerMallRequestsView();
       case SellerModule.team:
         return _buildTeamModule();
       case SellerModule.campaigns:
@@ -27067,6 +27088,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           const SizedBox(
                             height: StoreProfileDashboardTokens.pageGap,
                           ),
+                        const SellerMallCodeCard(
+                          gap: StoreProfileDashboardTokens.pageGap,
+                        ),
+                        const SellerStoreLocationCard(
+                          gap: StoreProfileDashboardTokens.pageGap,
+                        ),
                         _buildBusinessInfoCard(),
                         const SizedBox(height: StoreProfileDashboardTokens.pageGap),
                         _buildSocialMediaCard(),

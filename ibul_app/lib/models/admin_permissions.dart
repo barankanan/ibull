@@ -2,6 +2,7 @@ class AdminModules {
   static const String dashboard = 'dashboard';
   static const String analytics = 'analytics';
   static const String storeManagement = 'store_management';
+  static const String mallReview = 'mall_review';
   static const String productApproval = 'product_approval';
   static const String ordersReturns = 'orders_returns';
   static const String mapSearch = 'map_search';
@@ -19,6 +20,7 @@ class AdminModules {
     dashboard,
     analytics,
     storeManagement,
+    mallReview,
     productApproval,
     ordersReturns,
     mapSearch,
@@ -37,6 +39,7 @@ class AdminModules {
     dashboard: 'Dashboard',
     analytics: 'Veriler',
     storeManagement: 'Magaza Yonetimi',
+    mallReview: 'AVM Basvurulari',
     productApproval: 'Urun Onay',
     ordersReturns: 'Siparis & Iade',
     mapSearch: 'Harita & Arama',
@@ -299,6 +302,7 @@ const List<AdminRoleCatalogEntry> defaultAdminRoleCatalog = [
       AdminModules.dashboard,
       AdminModules.analytics,
       AdminModules.storeManagement,
+      AdminModules.mallReview,
       AdminModules.productApproval,
       AdminModules.ordersReturns,
       AdminModules.mapSearch,
@@ -360,6 +364,7 @@ const List<AdminRoleCatalogEntry> defaultAdminRoleCatalog = [
       AdminModules.dashboard,
       AdminModules.analytics,
       AdminModules.storeManagement,
+      AdminModules.mallReview,
       AdminModules.productApproval,
       AdminModules.ordersReturns,
       AdminModules.mapSearch,

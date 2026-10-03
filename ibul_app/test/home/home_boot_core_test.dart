@@ -3,13 +3,32 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/app/app_providers.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ibul_app/core/app_motion.dart';
+import 'package:ibul_app/core/app_state.dart';
 import 'package:ibul_app/core/home_boot_diagnostics.dart';
 import 'package:ibul_app/core/ibul_app_mode.dart';
 import 'package:ibul_app/core/single_flight_guard.dart';
+import 'package:ibul_app/l10n/arb/app_localizations.dart';
+import 'package:ibul_app/screens/home/home_initial_page.dart';
 import 'package:ibul_app/widgets/home_boot_timeout_banner.dart';
+import 'package:ibul_app/widgets/web_header.dart';
 
 void main() {
+  late final AppState testAppState;
+
+  setUpAll(() async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await Supabase.initialize(
+      url: 'https://example.supabase.co',
+      anonKey: 'test-anon-key',
+    );
+    testAppState = AppState();
+  });
+
   group('Home boot core guards', () {
     setUp(() {
       HomeBootDiagnostics.resetForTests();
@@ -151,6 +170,59 @@ void main() {
           File('lib/screens/home_screen_core.dart').readAsStringSync();
       expect(core, contains('HomeLazyRoutes.mapTab'));
       expect(core, isNot(contains('MapPage(')));
+    });
+
+    testWidgets('mobile bottom nav updates selected tab index', (tester) async {
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: testAppState,
+          child: MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: MediaQuery(
+              data: const MediaQueryData(size: Size(390, 844)),
+              child: const HomeInitialPage(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle(const Duration(seconds: 8));
+
+      expect(find.byKey(const ValueKey('mobile-nav-home-active')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('mobile-nav-map')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byKey(const ValueKey('mobile-nav-map-active')), findsOneWidget);
+      expect(find.byKey(const ValueKey('mobile-nav-home-active')), findsNothing);
+      await tester.pump(const Duration(seconds: 11));
+    });
+
+    testWidgets('web category pills update the selected category', (tester) async {
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: testAppState,
+          child: MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: MediaQuery(
+              data: const MediaQueryData(size: Size(1280, 900)),
+              child: const HomeInitialPage(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle(const Duration(seconds: 8));
+
+      final initialHeader = tester.widget<WebHeader>(find.byType(WebHeader));
+      expect(initialHeader.selectedCategory, 'Ana Sayfa');
+
+      initialHeader.onCategorySelected?.call('Erkek');
+      await tester.pumpAndSettle();
+
+      final updatedHeader = tester.widget<WebHeader>(find.byType(WebHeader));
+      expect(updatedHeader.selectedCategory, 'Erkek');
+      expect(find.byKey(const ValueKey('mobile-home-search')), findsNothing);
+      await tester.pump(const Duration(seconds: 11));
     });
   });
 }

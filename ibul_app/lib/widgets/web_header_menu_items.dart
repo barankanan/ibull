@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/app_state.dart';
-import '../core/app_motion.dart';
 import '../core/constants.dart';
-import '../screens/cart_page.dart' deferred as cart_page;
 import '../screens/home_lazy_routes.dart';
 import '../app/ibul_router.dart';
 
@@ -18,6 +16,7 @@ class WebHeaderMenuItems extends StatelessWidget {
     final appState = context.read<AppState>();
 
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         _WebHeaderMenuItem(
           icon: Icons.person_outline,
@@ -25,14 +24,14 @@ class WebHeaderMenuItems extends StatelessWidget {
           isActive: activeMenu == 'account',
           onTap: () => HomeLazyRoutes.openAccount(context),
         ),
-        const SizedBox(width: 24),
+        const SizedBox(width: 16),
         _WebHeaderMenuItem(
           icon: Icons.favorite_border,
           label: 'Favorilerim',
           isActive: activeMenu == 'favorites',
           onTap: () => HomeLazyRoutes.openFavorites(context),
         ),
-        const SizedBox(width: 24),
+        const SizedBox(width: 16),
         ValueListenableBuilder<int>(
           valueListenable: appState.cartCountNotifier,
           builder: (context, count, child) {
@@ -77,49 +76,53 @@ class _WebHeaderMenuItem extends StatelessWidget {
       button: true,
       label: badgeCount == null ? label : '$label, $badgeCount ürün',
       child: InkWell(
-      onTap: onTap,
-      hoverColor: Colors.transparent,
-      child: ExcludeSemantics(
-      child: Row(
-        children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Icon(icon, color: color, size: 20),
-              if (badgeCount != null)
-                Positioned(
-                  right: -6,
-                  top: -6,
-                  child: Container(
-                    padding: const EdgeInsets.all(3),
-                    decoration: const BoxDecoration(
-                      color: AppColors.primary,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Text(
-                      badgeCount.toString(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
+        onTap: onTap,
+        hoverColor: Colors.transparent,
+        child: ExcludeSemantics(
+          child: SizedBox(
+            height: 48,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Icon(icon, color: color, size: 20),
+                    if (badgeCount != null)
+                      Positioned(
+                        right: -6,
+                        top: -6,
+                        child: Container(
+                          padding: const EdgeInsets.all(3),
+                          decoration: const BoxDecoration(
+                            color: AppColors.primary,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            badgeCount.toString(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
+                  ],
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: color,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-            ],
-          ),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 13,
-              color: color,
-              fontWeight: FontWeight.w500,
+              ],
             ),
           ),
-        ],
-      ),
-      ),
+        ),
       ),
     );
   }

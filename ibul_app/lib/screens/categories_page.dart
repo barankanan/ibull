@@ -1,17 +1,21 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/mobile_category_catalog.dart';
 import '../core/category_image_resolver.dart';
 import '../core/constants.dart';
+import '../app/marketplace_paths.dart';
 import '../models/product_model.dart';
 import '../models/db_product.dart';
 import '../services/database_helper.dart';
+import '../services/supabase_service.dart';
 import 'search_results_page.dart';
 import 'market_list_page.dart';
 import '../features/products/models/product_filter_models.dart';
 import 'category_products_page.dart';
 import '../widgets/custom_header.dart'; // CustomHeader eklendi
+import '../widgets/skeleton_loading.dart';
 
 class CategoriesPage extends StatefulWidget {
   const CategoriesPage({super.key});
@@ -21,8 +25,6 @@ class CategoriesPage extends StatefulWidget {
 }
 
 class _CategoriesPageState extends State<CategoriesPage> {
-  static const Set<String> _hiddenMobileCategories = {'Yakın Lokasyon'};
-
   // Shared layout tokens — top bar + sub-category grid use the same rhythm.
   static const double _topBarHeight = 104;
   static const double _topItemWidth = 76;
@@ -41,7 +43,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
   int _selectedIndex = 0;
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
-  bool _isLoading = true;
+  bool _isLoading = false;
+  bool _categoriesLoading = true;
+  String? _categoryLoadError;
   List<MobileCategoryNode> _categoryTree = const [];
   
   @override
@@ -53,42 +57,52 @@ class _CategoriesPageState extends State<CategoriesPage> {
   Future<void> _loadCategories() async {
     if (mounted) {
       setState(() {
-        _isLoading = true;
+        _categoriesLoading = true;
+        _categoryLoadError = null;
       });
     }
 
     try {
-      final categories = await _dbHelper.getCategoriesWithSubs();
+      final categories = await SupabaseService.instance
+          .getCategoriesWithSubsStrict();
       if (!mounted) return;
       setState(() {
         _categoryTree = buildMobileCategoryTree(
           categories,
-          includeUnmatchedMainCategories: false,
-          includeMissingDefaultCategories: true,
-          excludedNames: _hiddenMobileCategories,
+          includeUnmatchedMainCategories: true,
+          includeMissingDefaultCategories: false,
         );
+        _categoryTree = _deduplicateCategories(_categoryTree);
         if (_selectedIndex >= _categoryTree.length) {
           _selectedIndex = 0;
         }
       });
-    } catch (e) {
-      debugPrint('Kategori agaci yuklenemedi: $e');
+      debugPrint('[CategoriesPage] loaded active roots=${_categoryTree.length}');
+    } catch (error, stackTrace) {
+      debugPrint('[CategoriesPage] category query failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
       if (!mounted) return;
       setState(() {
-        _categoryTree = buildMobileCategoryTree(
-          const [],
-          includeUnmatchedMainCategories: false,
-          includeMissingDefaultCategories: true,
-          excludedNames: _hiddenMobileCategories,
-        );
+        _categoryTree = const [];
+        _categoryLoadError = 'Kategoriler yüklenemedi.';
       });
     } finally {
       if (mounted) {
         setState(() {
-          _isLoading = false;
+          _categoriesLoading = false;
         });
       }
     }
+  }
+
+  List<MobileCategoryNode> _deduplicateCategories(
+    List<MobileCategoryNode> categories,
+  ) {
+    final seen = <String>{};
+    return categories.where((category) {
+      final key = normalizeCategoryNameForLookup(category.name);
+      return seen.add(key);
+    }).toList(growable: false);
   }
 
   Widget _buildSubCategoryImage(
@@ -282,8 +296,50 @@ class _CategoriesPageState extends State<CategoriesPage> {
   }
 
   Widget _buildTopCategoryBar() {
+    if (_categoriesLoading) {
+      return SizedBox(
+        height: _topBarHeight,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: _pagePaddingH),
+          itemCount: 6,
+          separatorBuilder: (_, _) => const SizedBox(width: _topItemSpacing),
+          itemBuilder: (_, _) => const SizedBox(
+            width: _topItemWidth,
+            child: Center(
+              child: SkeletonLoading(
+                width: _topIconSize,
+                height: _topIconSize,
+                borderRadius: _topIconRadius,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    if (_categoryLoadError != null) {
+      return SizedBox(
+        height: _topBarHeight,
+        child: Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_categoryLoadError!),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: _loadCategories,
+                child: const Text('Tekrar dene'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     if (_categoryTree.isEmpty) {
-      return const SizedBox(height: _topBarHeight);
+      return const SizedBox(
+        height: _topBarHeight,
+        child: Center(child: Text('Henüz aktif kategori bulunmuyor.')),
+      );
     }
 
     return Container(
@@ -391,8 +447,25 @@ class _CategoriesPageState extends State<CategoriesPage> {
   }
 
   Widget _getContentForIndex(int index) {
+    if (_categoryLoadError != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_categoryLoadError!),
+            TextButton(
+              onPressed: _loadCategories,
+              child: const Text('Tekrar dene'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_categoriesLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
     if (_categoryTree.isEmpty) {
-      return const SizedBox.shrink();
+      return const Center(child: Text('Henüz aktif kategori bulunmuyor.'));
     }
 
     final safeIndex = index.clamp(0, _categoryTree.length - 1);
@@ -530,8 +603,12 @@ class _CategoriesPageState extends State<CategoriesPage> {
                   return _buildSubCategoryTile(
                     subCategory: subCategory,
                     mainCategoryName: category.name,
-                    onTap: () =>
-                        _showCategoryProducts(category.name, subCategory.name),
+                    onTap: () => _showCategoryProducts(
+                      category.name,
+                      subCategory.name,
+                      mainCategoryId: category.id,
+                      subCategoryId: subCategory.id,
+                    ),
                   );
                 },
               ),
@@ -541,7 +618,12 @@ class _CategoriesPageState extends State<CategoriesPage> {
     );
   }
   
-  Future<void> _showCategoryProducts(String category, String subCategory) async {
+  Future<void> _showCategoryProducts(
+    String category,
+    String subCategory, {
+    int? mainCategoryId,
+    int? subCategoryId,
+  }) async {
     // Yakın Lokasyon - Market için özel sayfa
     if (category == "Yakın Lokasyon" && subCategory == "Market") {
       Navigator.push(
@@ -549,6 +631,19 @@ class _CategoriesPageState extends State<CategoriesPage> {
         MaterialPageRoute(builder: (context) => const MarketListPage()),
       );
       return;
+    }
+
+    if (mainCategoryId != null && subCategoryId != null) {
+      final route = MarketplacePaths.category(
+        mainCategoryId.toString(),
+        subCategoryId.toString(),
+        slug: '$category-$subCategory',
+      );
+      final router = GoRouter.maybeOf(context);
+      if (router != null) {
+        await router.push(route);
+        return;
+      }
     }
 
     if (_isLoading) return;

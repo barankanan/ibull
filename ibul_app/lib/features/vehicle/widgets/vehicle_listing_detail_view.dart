@@ -39,6 +39,7 @@ class VehicleListingDetailView extends StatefulWidget {
     this.onCall,
     this.compared = false,
     this.topLeftOverlay,
+    this.focusContact = false,
   });
 
   final VehicleListing listing;
@@ -61,6 +62,7 @@ class VehicleListingDetailView extends StatefulWidget {
   final VoidCallback? onCall;
   final bool compared;
   final Widget? topLeftOverlay;
+  final bool focusContact;
 
   @override
   State<VehicleListingDetailView> createState() =>
@@ -71,8 +73,19 @@ class _VehicleListingDetailViewState extends State<VehicleListingDetailView> {
   final _descriptionKey = GlobalKey();
   final _specsKey = GlobalKey();
   final _rentalKey = GlobalKey();
+  final _sellerKey = GlobalKey();
   bool _descExpanded = false;
   int _tabIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.focusContact) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _scrollTo(_sellerKey);
+      });
+    }
+  }
 
   VehicleListing get listing => widget.listing;
 
@@ -241,7 +254,10 @@ class _VehicleListingDetailViewState extends State<VehicleListingDetailView> {
                     const SizedBox(height: 16),
                     SizedBox(height: 280, child: _tabs()),
                     const SizedBox(height: 16),
-                    _sellerCard(compact: true),
+                    KeyedSubtree(
+                      key: _sellerKey,
+                      child: _sellerCard(compact: true),
+                    ),
                     const SizedBox(height: 16),
                     _reviewsBody(),
                     const SizedBox(height: 16),
@@ -341,7 +357,7 @@ class _VehicleListingDetailViewState extends State<VehicleListingDetailView> {
     return SingleChildScrollView(
       child: Column(
         children: [
-          _sellerCard(compact: false),
+          KeyedSubtree(key: _sellerKey, child: _sellerCard(compact: false)),
           const SizedBox(height: 16),
           CatalogSidebarReviewsCard(child: _reviewsBody()),
           const SizedBox(height: 16),

@@ -6,6 +6,7 @@ enum SellerModule {
   garson,
   system,
   store,
+  mallRequests,
   team,
   campaigns,
   finance,

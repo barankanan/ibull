@@ -8,10 +8,10 @@ PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
 cd "$PROJECT_DIR"
 echo "Deploying to Firebase Hosting..."
-firebase deploy --only hosting
+firebase deploy --only hosting:ibul --project ibul-ecommerce
 
 echo "Post-deploy cache headers (index.html):"
-curl -sI "${IBUL_WEB_DEPLOY_URL:-https://ibul.com.tr}/index.html" | rg -i 'cache-control|content-length|last-modified' || true
+curl -sI "${IBUL_WEB_DEPLOY_URL:-https://ibul.com.tr}/index.html" | grep -Ei 'cache-control|content-length|last-modified' || true
 
 echo "Post-deploy main.dart.js size:"
-curl -sI "${IBUL_WEB_DEPLOY_URL:-https://ibul.com.tr}/main.dart.js" | rg -i 'content-length|last-modified' || true
+curl -sI "${IBUL_WEB_DEPLOY_URL:-https://ibul.com.tr}/main.dart.js" | grep -Ei 'content-length|last-modified' || true

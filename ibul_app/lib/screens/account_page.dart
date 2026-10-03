@@ -14,12 +14,8 @@ import '../widgets/account_sidebar.dart';
 import 'settings_page.dart';
 import 'orders_page.dart';
 import 'favorites_page.dart';
-import 'reviews_page.dart';
 import '../features/customer_support/screens/customer_support_page.dart';
-import '../features/orders/screens/order_history_page.dart';
-import 'ai_chat_page.dart';
 import 'followed_stores_page.dart';
-import 'my_chats_page.dart';
 import 'coupons_page.dart';
 import 'addresses_page.dart';
 import '../features/saved_payment_cards/screens/saved_payment_cards_page.dart';
@@ -28,7 +24,9 @@ import '../features/vehicle/widgets/vehicle_account_recent_section.dart';
 import '../app/account_sections.dart';
 import '../core/home_navigation.dart';
 import 'login_page.dart';
+import 'register_page.dart';
 import 'seller_login_page.dart';
+import '../app/site_info_routes.dart';
 import '../services/order_service.dart';
 import '../services/auth_service.dart';
 import 'account/account_menu_navigation.dart';
@@ -119,9 +117,7 @@ class _AccountPageState extends State<AccountPage> {
                       children: [
                         const SizedBox(
                           width: 280,
-                          child: AccountSidebar(
-                            activePage: 'Hesap Özeti',
-                          ),
+                          child: AccountSidebar(activePage: 'Hesap Özeti'),
                         ),
                         const SizedBox(width: 32),
                         Expanded(child: _buildWebDashboard(appState)),
@@ -146,7 +142,6 @@ class _AccountPageState extends State<AccountPage> {
           Expanded(
             child: WebStickyFooterScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
-              contentFooterGap: 56,
               footerBottomPadding: 24,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -166,14 +161,10 @@ class _AccountPageState extends State<AccountPage> {
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: Colors.grey.shade200,
-                            ),
+                            border: Border.all(color: Colors.grey.shade200),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withValues(
-                                  alpha: 0.06,
-                                ),
+                                color: Colors.black.withValues(alpha: 0.06),
                                 blurRadius: 20,
                                 offset: const Offset(0, 8),
                               ),
@@ -216,9 +207,12 @@ class _AccountPageState extends State<AccountPage> {
                                     Navigator.push(
                                       context,
                                       PageRouteBuilder(
-                                        pageBuilder: (context, animation,
-                                                secondaryAnimation) =>
-                                            const LoginPage(),
+                                        pageBuilder:
+                                            (
+                                              context,
+                                              animation,
+                                              secondaryAnimation,
+                                            ) => const LoginPage(),
                                         transitionDuration: Duration.zero,
                                         reverseTransitionDuration:
                                             Duration.zero,
@@ -250,9 +244,12 @@ class _AccountPageState extends State<AccountPage> {
                                     Navigator.push(
                                       context,
                                       PageRouteBuilder(
-                                        pageBuilder: (context, animation,
-                                                secondaryAnimation) =>
-                                            const SellerLoginPage(),
+                                        pageBuilder:
+                                            (
+                                              context,
+                                              animation,
+                                              secondaryAnimation,
+                                            ) => const SellerLoginPage(),
                                         transitionDuration: Duration.zero,
                                         reverseTransitionDuration:
                                             Duration.zero,
@@ -452,7 +449,8 @@ class _AccountPageState extends State<AccountPage> {
         final orders = snapshot.data ?? const <Map<String, dynamic>>[];
         final waitingOrders = orders.where((order) {
           final status = (order['status'] ?? '').toString().toLowerCase();
-          return status != OrderStatusConstants.ecommerceDelivered && status != OrderStatusConstants.ecommerceCancelled;
+          return status != OrderStatusConstants.ecommerceDelivered &&
+              status != OrderStatusConstants.ecommerceCancelled;
         }).length;
         final recentOrders = orders.take(3).toList(growable: false);
         final firstAddress = appState.deliveryAddresses.isNotEmpty
@@ -934,7 +932,9 @@ class _AccountPageState extends State<AccountPage> {
     Map<String, dynamic>? item,
     String? trackingNumber,
   }) {
-    if (trackingNumber == null || trackingNumber.isEmpty || trackingNumber == '-') {
+    if (trackingNumber == null ||
+        trackingNumber.isEmpty ||
+        trackingNumber == '-') {
       return false;
     }
     return OrderStatusConstants.isInTransitShipmentStatus(
@@ -946,9 +946,8 @@ class _AccountPageState extends State<AccountPage> {
     await Navigator.push<dynamic>(
       context,
       MaterialPageRoute(
-        builder: (context) => OrderDetailPage(
-          orderData: wrapOrderForDetailPage(order),
-        ),
+        builder: (context) =>
+            OrderDetailPage(orderData: wrapOrderForDetailPage(order)),
       ),
     );
   }
@@ -966,11 +965,8 @@ class _AccountPageState extends State<AccountPage> {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ShipmentTrackingPage(
-          order: order,
-          item: item,
-          history: history,
-        ),
+        builder: (_) =>
+            ShipmentTrackingPage(order: order, item: item, history: history),
       ),
     );
   }
@@ -1131,636 +1127,527 @@ class _AccountPageState extends State<AccountPage> {
 
   Widget _buildMobileView(AppState appState) {
     if (!appState.isLoggedIn) {
-      return Scaffold(
-        backgroundColor: Colors.white,
-        body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20.0),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight:
-                    MediaQuery.of(context).size.height -
-                    MediaQuery.of(context).padding.top -
-                    MediaQuery.of(context).padding.bottom -
-                    40,
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.account_circle_outlined,
-                    size: 72,
-                    color: AppColors.primary,
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Hesabınıza Giriş Yapın',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    'Siparişlerinizi takip etmek ve fırsatlardan yararlanmak için giriş yapın.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey, fontSize: 13),
-                  ),
-                  const SizedBox(height: 28),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 44,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          PageRouteBuilder(
-                            pageBuilder:
-                                (context, animation, secondaryAnimation) =>
-                                    const LoginPage(),
-                            transitionDuration: Duration.zero,
-                            reverseTransitionDuration: Duration.zero,
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Üye Girişi / Üye Ol',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 44,
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          PageRouteBuilder(
-                            pageBuilder:
-                                (context, animation, secondaryAnimation) =>
-                                    const SellerLoginPage(),
-                            transitionDuration: Duration.zero,
-                            reverseTransitionDuration: Duration.zero,
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.storefront_outlined, size: 18),
-                      label: const Text(
-                        'Satıcı Girişi',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF111827),
-                        side: BorderSide(color: Colors.grey.shade300),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+      return _buildMobileGuestView();
+    }
+    return _buildMobileAccountDashboard(appState);
+  }
+
+  void _pushAccountPage(Widget page) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) => page,
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+  }
+
+  String _accountContactLine(Map<String, dynamic>? user) {
+    final email = UserIdentity.resolveEmail(currentUser: user);
+    final phone = (user?['phone'] ?? user?['phone_number'] ?? '')
+        .toString()
+        .trim();
+    if (email.isNotEmpty && phone.isNotEmpty) return '$email · $phone';
+    if (email.isNotEmpty) return email;
+    if (phone.isNotEmpty) return phone;
+    return 'Profil bilgilerinizi tamamlayın';
+  }
+
+  Widget _buildMobileGuestView() {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F7FA),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(4, 8, 4, 12),
+              child: Text(
+                'Hesabım',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF111827),
+                ),
               ),
             ),
-          ),
+            _mobileCard(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Icon(
+                            Icons.person_outline,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'İBUL hesabınıza giriş yapın',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF111827),
+                                ),
+                              ),
+                              SizedBox(height: 4),
+                              Text(
+                                'Siparişlerinizi, favorilerinizi, kuponlarınızı ve adreslerinizi tek yerden yönetin.',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  height: 1.35,
+                                  color: Color(0xFF6B7280),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 44,
+                      child: ElevatedButton(
+                        onPressed: () => _pushAccountPage(const LoginPage()),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Giriş Yap',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 44,
+                      child: OutlinedButton(
+                        onPressed: () => _pushAccountPage(const RegisterPage()),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          side: const BorderSide(color: AppColors.primary),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Üye Ol',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _mobileGroup('Destek', [
+              _buildMenuItem(
+                Icons.help_outline,
+                'Yardım & Destek',
+                subtitle: 'Sorularınız ve hesap yardımı',
+                onTap: () => AccountMenuNavigation.openHelp(context),
+              ),
+              _buildMenuItem(
+                Icons.quiz_outlined,
+                'Sık Sorulan Sorular',
+                onTap: () => AccountMenuNavigation.openNamed(
+                  context,
+                  SiteInfoRoutes.faq,
+                ),
+              ),
+              _buildMenuItem(
+                Icons.mail_outline,
+                'İletişim',
+                onTap: () => AccountMenuNavigation.openNamed(
+                  context,
+                  SiteInfoRoutes.contact,
+                ),
+              ),
+              _buildMenuItem(
+                Icons.privacy_tip_outlined,
+                'Gizlilik',
+                onTap: () => AccountMenuNavigation.openNamed(
+                  context,
+                  SiteInfoRoutes.privacy,
+                ),
+              ),
+              _buildMenuItem(
+                Icons.description_outlined,
+                'Kullanım Koşulları',
+                showDivider: false,
+                onTap: () => AccountMenuNavigation.openNamed(
+                  context,
+                  SiteInfoRoutes.terms,
+                ),
+              ),
+            ]),
+            const SizedBox(height: 16),
+            _mobileGroup('İşletme araçları', [
+              _buildMenuItem(
+                Icons.storefront_outlined,
+                'Satıcı Girişi',
+                subtitle: 'Mağaza panelinize ayrı oturumla girin',
+                showDivider: false,
+                onTap: () => _pushAccountPage(const SellerLoginPage()),
+              ),
+            ]),
+          ],
         ),
-      );
-    }
+      ),
+    );
+  }
 
+  Widget _buildMobileAccountDashboard(AppState appState) {
     final isGuestUser = UserIdentity.isGuest(appState.currentUser);
     final userName = UserIdentity.resolveDisplayName(
       currentUser: appState.currentUser,
       fallback: isGuestUser ? 'Misafir Kullanıcı' : 'Kullanıcı',
     );
-    final heightWeightSummary =
-        UserIdentity.formatHeightWeightSummary(appState.currentUser);
 
-    // Unified Layout for both Guest and Normal Users
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF7F7FA),
       body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          child: Column(
-            children: [
-              // Header - Profile Section
-              Padding(
-                padding: const EdgeInsets.all(16),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(4, 8, 4, 12),
+              child: Text(
+                'Hesabım',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF111827),
+                ),
+              ),
+            ),
+            _mobileCard(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
                 child: Row(
                   children: [
                     _buildAccountProfileAvatar(
                       appState.currentUser,
-                      radius: 32,
+                      radius: 26,
                     ),
                     const SizedBox(width: 12),
-                    // User Info
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             userName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 16,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF111827),
                             ),
                           ),
-                          if (heightWeightSummary != null) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              heightWeightSummary,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    // Settings Button
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        _openAccountSection(
-                          AccountSection.settings,
-                          page: const SettingsPage(),
-                        );
-                      },
-                      icon: const Icon(Icons.settings, size: 16),
-                      label: const Text(
-                        'Ayarlar',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                        side: const BorderSide(color: AppColors.primary),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Adresim
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Adresim',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey.shade300),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.location_on,
-                            color: AppColors.primary,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              appState.deliveryAddresses.isNotEmpty
-                                  ? '${appState.deliveryAddresses.first['title']} - ${appState.deliveryAddresses.first['detail']}'
-                                  : (isGuestUser
-                                        ? 'Prefabrik ev-Gökmeydan Mah. Nazım Hikmet kül...'
-                                        : 'Henüz kayıtlı adresiniz yok.'),
-                              style: const TextStyle(fontSize: 12),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          GestureDetector(
-                            onTap: () {
-                              _openAccountSection(
-                                AccountSection.addresses,
-                                page: const AddressesPage(),
-                              );
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                border: Border.all(color: AppColors.primary),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    isGuestUser ||
-                                            appState
-                                                .deliveryAddresses
-                                                .isNotEmpty
-                                        ? Icons.sync
-                                        : Icons.add,
-                                    size: 12,
-                                    color: AppColors.primary,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    isGuestUser ||
-                                            appState
-                                                .deliveryAddresses
-                                                .isNotEmpty
-                                        ? 'Değiştir'
-                                        : 'Ekle',
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      color: AppColors.primary,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _accountContactLine(appState.currentUser),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              height: 1.3,
+                              color: Color(0xFF6B7280),
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Banner
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        AppColors.primary,
-                        AppColors.primary.withValues(alpha: 0.8),
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Column(
-                    children: [
-                      Text(
-                        'Hoş Geldin, ${userName.split(' ')[0]}! 👋',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'İbul dünyasını keşfetmeye hazırsın.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 14, color: Colors.white70),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Three Buttons
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _buildActionButton(
-                        Icons.shopping_bag_outlined,
-                        'Siparişlerim',
-                        onTap: () {
-                          _openAccountSection(
-                            AccountSection.orders,
-                            page: const OrdersPage(),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildActionButton(
-                        Icons.favorite_border,
-                        'Beğendiklerim',
-                        onTap: () {
-                          _openAccountSection(
-                            AccountSection.favorites,
-                            page: const FavoritesPage(),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildActionButton(
-                        Icons.chat_bubble_outline,
-                        'Değerlendirmeler',
-                        onTap: () {
-                          _openAccountSection(
-                            AccountSection.reviews,
-                            page: const ReviewsPage(),
-                          );
-                        },
-                      ),
+                    TextButton(
+                      onPressed: () => _pushAccountPage(const SettingsPage()),
+                      child: const Text('Profili Düzenle'),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
-
-              // Menu Items
-              _buildMenuItem(
-                Icons.lightbulb_outline,
-                'Yapay Zekaya Danış',
-                subtitle: 'Ne almak istediği sor , Hızlı karşılaştırmalar yap',
-                onTap: () {
-                  _openAccountSection(
-                    AccountSection.ai,
-                    page: const AIChatPage(showAccountSidebar: true),
-                  );
-                },
-              ),
+            ),
+            const SizedBox(height: 12),
+            _mobileQuickActions(),
+            const SizedBox(height: 16),
+            _mobileGroup('Alışveriş', [
               _buildMenuItem(
                 Icons.shopping_bag_outlined,
                 'Siparişlerim',
-                subtitle: 'Aktif ve son siparişlerini takip et.',
-                onTap: () {
-                  _openAccountSection(
-                    AccountSection.orders,
-                    page: const OrdersPage(),
-                  );
-                },
+                subtitle: 'Aktif ve son siparişler',
+                onTap: () => _openAccountSection(
+                  AccountSection.orders,
+                  page: const OrdersPage(),
+                ),
               ),
               _buildMenuItem(
                 Icons.directions_car_outlined,
-                'Araç Kiralamalarım',
-                subtitle: 'Yaklaşan, aktif ve geçmiş araç kiralamaların.',
-                onTap: () {
-                  _openAccountSection(
-                    AccountSection.rentals,
-                    page: const VehicleCustomerRentalsPage(),
-                  );
-                },
+                'Kiralamalarım',
+                subtitle: 'Araç kiralama kayıtları',
+                onTap: () => _openAccountSection(
+                  AccountSection.rentals,
+                  page: const VehicleCustomerRentalsPage(),
+                ),
               ),
               _buildMenuItem(
-                Icons.history,
-                'Eski Siparişlerim',
-                subtitle: 'Geçmiş alışverişlerini gör, tekrar al.',
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const OrderHistoryPage(),
-                    ),
-                  );
-                },
-              ),
-              _buildMenuItem(
-                Icons.support_agent,
-                'Müşteri Hizmetleri',
-                subtitle: 'Şikayet, istek ve destek taleplerini bize ilet.',
-                onTap: () {
-                  _openAccountSection(
-                    AccountSection.support,
-                    page: const CustomerSupportPage(),
-                  );
-                },
-              ),
-              _buildMenuItem(
-                Icons.credit_card_outlined,
-                'Kartlarım',
-                subtitle: 'Kayıtlı ödeme kartlarını yönet.',
-                onTap: () {
-                  _openAccountSection(
-                    AccountSection.cards,
-                    page: const SavedPaymentCardsPage(),
-                  );
-                },
+                Icons.favorite_border,
+                'Favorilerim',
+                onTap: () => _openAccountSection(
+                  AccountSection.favorites,
+                  page: const FavoritesPage(),
+                ),
               ),
               _buildMenuItem(
                 Icons.local_offer_outlined,
                 'Kuponlarım',
-                onTap: () {
-                  _openAccountSection(
-                    AccountSection.coupons,
-                    page: const CouponsPage(),
-                  );
-                },
+                onTap: () => _openAccountSection(
+                  AccountSection.coupons,
+                  page: const CouponsPage(),
+                ),
               ),
               _buildMenuItem(
                 Icons.bookmark_border,
                 'Takip Ettiklerim',
-                onTap: () {
-                  _openAccountSection(
-                    AccountSection.following,
-                    page: const FollowedStoresPage(),
-                  );
-                },
-              ),
-              _buildMenuItem(
-                Icons.chat_bubble_outline,
-                'Sohbetlerim',
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const MyChatsPage(),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Hizmetler',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
+                showDivider: false,
+                onTap: () => _openAccountSection(
+                  AccountSection.following,
+                  page: const FollowedStoresPage(),
                 ),
               ),
-              const SizedBox(height: 8),
-
+            ]),
+            const SizedBox(height: 16),
+            _mobileGroup('Hesap', [
               _buildMenuItem(
-                Icons.local_shipping_outlined,
-                'Hızlı Ürün Gönder',
-                subtitle: 'İHIZ ile evden teslim al.',
-                onTap: () => AccountMenuNavigation.openFastSend(context),
+                Icons.location_on_outlined,
+                'Adreslerim',
+                onTap: () => _openAccountSection(
+                  AccountSection.addresses,
+                  page: const AddressesPage(),
+                ),
               ),
               _buildMenuItem(
-                Icons.add_circle_outline,
-                'Mağaza Başvurusu Yap',
-                onTap: () => AccountMenuNavigation.openStoreApply(context),
+                Icons.badge_outlined,
+                'Profil Bilgileri',
+                onTap: () => _pushAccountPage(const SettingsPage()),
               ),
               _buildMenuItem(
-                Icons.bolt_outlined,
-                'iHız',
-                subtitle: 'iHız hizmetlerini keşfet.',
-                onTap: () => AccountMenuNavigation.openNamed(context, '/ihiz'),
+                Icons.notifications_none_rounded,
+                'Bildirim Ayarları',
+                onTap: () => _pushAccountPage(const SettingsPage()),
               ),
+              _buildMenuItem(
+                Icons.lock_outline,
+                'Güvenlik',
+                onTap: () => _pushAccountPage(const SettingsPage()),
+              ),
+              _buildMenuItem(
+                Icons.credit_card_outlined,
+                'Kartlarım',
+                showDivider: false,
+                onTap: () => _openAccountSection(
+                  AccountSection.cards,
+                  page: const SavedPaymentCardsPage(),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 16),
+            _mobileGroup('Destek', [
               _buildMenuItem(
                 Icons.help_outline,
                 'Yardım',
                 onTap: () => AccountMenuNavigation.openHelp(context),
               ),
-
-              const SizedBox(height: 16),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Yakında',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
+              _buildMenuItem(
+                Icons.support_agent,
+                'Destek Taleplerim',
+                onTap: () => _openAccountSection(
+                  AccountSection.support,
+                  page: const CustomerSupportPage(),
                 ),
               ),
-              const SizedBox(height: 8),
               _buildMenuItem(
-                Icons.hourglass_top_rounded,
-                'Yakında',
-                subtitle: 'Premium, tamir, montaj ve barkod.',
-                onTap: () => AccountMenuNavigation.openShelf(context),
+                Icons.mail_outline,
+                'İletişim',
+                showDivider: false,
+                onTap: () => AccountMenuNavigation.openNamed(
+                  context,
+                  SiteInfoRoutes.contact,
+                ),
+              ),
+            ]),
+            const SizedBox(height: 16),
+            _mobileGroup('İşletme', [
+              _buildMenuItem(
+                Icons.storefront_outlined,
+                AccountMenuNavigation.sellerTitle,
+                subtitle: AccountMenuNavigation.sellerSubtitle,
+                onTap: () => AccountMenuNavigation.openStoreApply(context),
               ),
               _buildMenuItem(
-                Icons.key,
-                'iBul Premium',
-                subtitle: 'Üyelik henüz satışta değil.',
-                onTap: () => AccountMenuNavigation.openPremium(context),
+                Icons.location_city_outlined,
+                AccountMenuNavigation.mallTitle,
+                showDivider: false,
+                onTap: () => AccountMenuNavigation.openMallApplication(context),
               ),
-              _buildMenuItem(
-                Icons.build_outlined,
-                'Garantili Tamir',
-                subtitle: 'Yakında.',
-                onTap: () => AccountMenuNavigation.openRepair(context),
-              ),
-              _buildMenuItem(
-                Icons.format_list_bulleted,
-                'Montaj Hizmeti',
-                subtitle: 'Yakında.',
-                onTap: () => AccountMenuNavigation.openAssembly(context),
-              ),
-              _buildMenuItem(
-                Icons.star_border,
-                'Uygulama Görüşün',
-                subtitle: 'Mağaza puanı henüz bağlı değil.',
-                onTap: () => AccountMenuNavigation.openAppFeedback(context),
-              ),
-
-              const SizedBox(height: 24),
-
-              // Logout Button
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: OutlinedButton(
-                  onPressed: () async {
-                    try {
-                      await appState.logout();
-                      if (!mounted) return;
-                      HomeNavigation.openHome(context, initialIndex: 4);
-                    } catch (error) {
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Cikis yapilamadi: $error'),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
-                    }
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.primary,
-                    side: const BorderSide(
-                      color: AppColors.primary,
-                      width: 1.5,
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    minimumSize: const Size(double.infinity, 48),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        'Çıkış Yap',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
+            ]),
+            const SizedBox(height: 16),
+            _mobileCard(
+              child: _buildMenuItem(
+                Icons.logout,
+                'Çıkış Yap',
+                danger: true,
+                showDivider: false,
+                onTap: () async {
+                  try {
+                    await appState.logout();
+                    if (!mounted) return;
+                    HomeNavigation.openHome(context, initialIndex: 4);
+                  } catch (error) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Cikis yapilamadi: $error'),
+                        behavior: SnackBarBehavior.floating,
                       ),
-                      SizedBox(width: 8),
-                      Icon(Icons.arrow_forward, size: 18),
-                    ],
-                  ),
-                ),
+                    );
+                  }
+                },
               ),
-              const SizedBox(height: 32),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildActionButton(
-    IconData icon,
-    String label, {
-    VoidCallback? onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey.shade300),
-          borderRadius: BorderRadius.circular(8),
+  Widget _mobileQuickActions() {
+    final actions = <(IconData, String, VoidCallback)>[
+      (
+        Icons.shopping_bag_outlined,
+        'Siparişlerim',
+        () => _openAccountSection(
+          AccountSection.orders,
+          page: const OrdersPage(),
         ),
-        child: Column(
+      ),
+      (
+        Icons.favorite_border,
+        'Favorilerim',
+        () => _openAccountSection(
+          AccountSection.favorites,
+          page: const FavoritesPage(),
+        ),
+      ),
+      (
+        Icons.local_offer_outlined,
+        'Kuponlarım',
+        () => _openAccountSection(
+          AccountSection.coupons,
+          page: const CouponsPage(),
+        ),
+      ),
+      (
+        Icons.location_on_outlined,
+        'Adreslerim',
+        () => _openAccountSection(
+          AccountSection.addresses,
+          page: const AddressesPage(),
+        ),
+      ),
+    ];
+    return _mobileCard(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
           children: [
-            Icon(icon, color: AppColors.primary, size: 24),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 11),
-              textAlign: TextAlign.center,
-            ),
+            for (final action in actions)
+              Expanded(
+                child: InkWell(
+                  onTap: action.$3,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 8,
+                      horizontal: 4,
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(action.$1, color: AppColors.primary, size: 22),
+                        const SizedBox(height: 6),
+                        Text(
+                          action.$2,
+                          maxLines: 2,
+                          textAlign: TextAlign.center,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            height: 1.15,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF111827),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _mobileGroup(String title, List<Widget> rows) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Text(
+            title.toUpperCase(),
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+              color: Color(0xFF6B7280),
+            ),
+          ),
+        ),
+        _mobileCard(child: Column(children: rows)),
+      ],
+    );
+  }
+
+  Widget _mobileCard({required Widget child}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE6E7EE)),
+      ),
+      child: ClipRRect(borderRadius: BorderRadius.circular(16), child: child),
     );
   }
 
@@ -1769,47 +1656,65 @@ class _AccountPageState extends State<AccountPage> {
     String title, {
     String? subtitle,
     required VoidCallback onTap,
+    bool danger = false,
+    bool showDivider = true,
   }) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          border: Border(
-            bottom: BorderSide(color: Colors.grey.shade200, width: 1),
+    final titleColor = danger
+        ? const Color(0xFFB42318)
+        : const Color(0xFF111827);
+    return Column(
+      children: [
+        InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  color: danger ? titleColor : AppColors.primary,
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: titleColor,
+                        ),
+                      ),
+                      if (subtitle != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            height: 1.25,
+                            color: Color(0xFF6B7280),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (!danger)
+                  const Icon(
+                    Icons.chevron_right,
+                    size: 18,
+                    color: Color(0xFF9CA3AF),
+                  ),
+              ],
+            ),
           ),
         ),
-        child: Row(
-          children: [
-            Icon(icon, color: AppColors.primary, size: 22),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  if (subtitle != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+        if (showDivider)
+          const Divider(height: 1, thickness: 1, color: Color(0xFFE6E7EE)),
+      ],
     );
   }
 
@@ -1838,10 +1743,8 @@ class _AccountPageState extends State<AccountPage> {
             width: radius * 2,
             height: radius * 2,
             fit: BoxFit.cover,
-            errorBuilder: (_, _, _) => _buildAccountProfileFallbackAvatar(
-              currentUser,
-              radius: radius,
-            ),
+            errorBuilder: (_, _, _) =>
+                _buildAccountProfileFallbackAvatar(currentUser, radius: radius),
           ),
         ),
       );

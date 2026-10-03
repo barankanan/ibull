@@ -133,7 +133,8 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
     // rebuild olurdu. Okunan değerler (padding.left/right, size.width) aynı.
     final safeLeft = MediaQuery.paddingOf(context).left;
     final safeRight = MediaQuery.paddingOf(context).right;
-    final overlayWidth = MediaQuery.sizeOf(context).width - safeLeft - safeRight;
+    final overlayWidth =
+        MediaQuery.sizeOf(context).width - safeLeft - safeRight;
     final overlayOffsetX = safeLeft - searchLeft;
 
     _overlayEntry = OverlayEntry(
@@ -239,10 +240,8 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
     try {
       await order_service.loadLibrary();
       if (!mounted) return;
-      final notifications =
-          await order_service.OrderService.instance.getUserNotifications(
-        currentUserId,
-      );
+      final notifications = await order_service.OrderService.instance
+          .getUserNotifications(currentUserId);
       if (!mounted) return;
       setState(() {
         _unreadNotificationCount = notifications
@@ -424,8 +423,8 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
             color: accent
                 ? Colors.transparent
                 : borderless
-                    ? Colors.transparent
-                    : (filled ? AppColors.primary : Colors.white),
+                ? Colors.transparent
+                : (filled ? AppColors.primary : Colors.white),
             shape: BoxShape.circle,
             border: accent || borderless || filled
                 ? null
@@ -449,7 +448,7 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
               color: accent
                   ? AppColors.primary
                   : iconColor ??
-                      (filled ? Colors.white : const Color(0xFF545E70)),
+                        (filled ? Colors.white : const Color(0xFF545E70)),
               size: 22,
             ),
             onPressed: onPressed,

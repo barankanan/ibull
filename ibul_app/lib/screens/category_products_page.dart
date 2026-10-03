@@ -3,6 +3,7 @@ import 'package:flutter/gestures.dart'; // Scroll behavior için eklendi
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:carousel_slider/carousel_slider.dart';
 import '../core/constants.dart';
 import '../core/catalog_image_priority.dart';
@@ -1170,6 +1171,8 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
         )
         .take(10)
         .toList();
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isWeb = screenWidth > 1100;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -1200,98 +1203,137 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
       ),
       body: Column(
         children: [
-          // Sıralama ve Filtreleme Alanı
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+          // Desktop Header / Breadcrumb
+          if (isWeb)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+              child: Row(
+                children: [
+                  Text(
+                    '${widget.category} > ${widget.subCategory}',
+                    style: const TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${_filteredProducts.length} ürün bulundu',
+                    style: const TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                  const SizedBox(width: 16),
+                  // Dropdown or button for sort
+                  DropdownButton<ProductSortOption>(
+                    value: _filterState.sortOption,
+                    underline: const SizedBox(),
+                    icon: const Icon(Icons.sort, size: 20),
+                    items: ProductSortOption.values.map((opt) {
+                      return DropdownMenuItem(
+                        value: opt,
+                        child: Text(opt == ProductSortOption.recommended ? 'Sıralama' : opt.label, style: const TextStyle(fontSize: 14)),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        _updateFilterState(_filterState.copyWith(sortOption: val));
+                      }
+                    },
+                  ),
+                ],
+              ),
             ),
-            child: Row(
-              children: [
-                // Sıralama
-                Expanded(
-                  child: InkWell(
-                    onTap: _openSortSheet,
-                    child: Row(
-                      children: [
-                        const Icon(Icons.sort, size: 20),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _filterState.sortOption == ProductSortOption.recommended
-                                ? 'Sıralama'
-                                : _filterState.sortOption.label,
-                            style: const TextStyle(
+            
+          if (!isWeb) ...[
+            // Mobil: Sıralama ve Filtreleme Alanı
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+              ),
+              child: Row(
+                children: [
+                  // Sıralama
+                  Expanded(
+                    child: InkWell(
+                      onTap: _openSortSheet,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.sort, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _filterState.sortOption == ProductSortOption.recommended
+                                  ? 'Sıralama'
+                                  : _filterState.sortOption.label,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w500,
+                                fontSize: 14,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // Dikey Ayırıcı
+                  Container(height: 20, width: 1, color: Colors.grey.shade300),
+                  // Filtrele
+                  Expanded(
+                    child: InkWell(
+                      onTap: _openFilterSheet,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          if (_filterState.activeFilterCount > 0) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                _filterState.activeFilterCount.toString(),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          const Text(
+                            'Filtrele',
+                            style: TextStyle(
                               fontWeight: FontWeight.w500,
                               fontSize: 14,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                // Dikey Ayırıcı
-                Container(height: 20, width: 1, color: Colors.grey.shade300),
-                // Filtrele
-                Expanded(
-                  child: InkWell(
-                    onTap: _openFilterSheet,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        if (_filterState.activeFilterCount > 0) ...[
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.primary,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              _filterState.activeFilterCount.toString(),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
                           ),
                           const SizedBox(width: 8),
+                          const Icon(Icons.filter_list, size: 20),
                         ],
-                        const Text(
-                          'Filtrele',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 14,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        const Icon(Icons.filter_list, size: 20),
-                      ],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-
-          // Yatay Filtreler (Modeller, Renk, Fiyat, Hızlı Teslimat)
-          Container(
-            height: 50,
-            decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+  
+            // Mobil: Yatay Filtreler (Modeller, Renk, Fiyat, Hızlı Teslimat)
+            Container(
+              height: 50,
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+              ),
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                children: _buildQuickFilterChips(),
+              ),
             ),
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              children: _buildQuickFilterChips(),
-            ),
-          ),
+          ],
 
           // "Bugün Kapında" Alanı
           if (sameDayProducts.isNotEmpty &&
@@ -1520,64 +1562,63 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                   final itemCount =
                       _filteredProducts.length + (showLoadMoreFooter ? 1 : 0);
 
-                  content = GridView.builder(
-                    controller: _productGridScrollController,
-                    padding: const EdgeInsets.all(16),
-                    cacheExtent: 280,
-                    gridDelegate: isWeb
-                        ? const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 6,
-                            childAspectRatio: 0.75,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                          )
-                        : const SliverGridDelegateWithMaxCrossAxisExtent(
+                  if (isWeb) {
+                    content = _buildWebProductGrid(itemCount);
+                  } else {
+                    content = GridView.builder(
+                      controller: _productGridScrollController,
+                      padding: const EdgeInsets.all(16),
+                      cacheExtent: 280,
+                      gridDelegate:
+                          const SliverGridDelegateWithMaxCrossAxisExtent(
                             maxCrossAxisExtent: 230,
                             childAspectRatio: 0.75,
                             crossAxisSpacing: 12,
                             mainAxisSpacing: 12,
                           ),
-                    itemCount: itemCount,
-                    itemBuilder: (context, index) {
-                      if (index >= _filteredProducts.length) {
-                        return const Center(
-                          child: Padding(
-                            padding: EdgeInsets.symmetric(vertical: 16),
-                            child: SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                      itemCount: itemCount,
+                      itemBuilder: (context, index) {
+                        if (index >= _filteredProducts.length) {
+                          return const Center(
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            ),
+                          );
+                        }
+                        final product = _filteredProducts[index];
+                        return _wrapCategoryProductReveal(
+                          scope: 'product-grid',
+                          index: index,
+                          product: product,
+                          child: ProductCard(
+                            product: product,
+                            compact: false,
+                            tight: true,
+                            imagePriority: CatalogImagePriority.forGridIndex(
+                              index,
+                              crossAxisCount: 2,
                             ),
                           ),
                         );
-                      }
-                      final product = _filteredProducts[index];
-                      return _wrapCategoryProductReveal(
-                        scope: 'product-grid',
-                        index: index,
-                        product: product,
-                        child: ProductCard(
-                          product: product,
-                          compact: false,
-                          tight: true,
-                          imagePriority: CatalogImagePriority.forGridIndex(
-                            index,
-                            crossAxisCount: isWeb ? 6 : 2,
-                          ),
-                        ),
-                      );
-                    },
-                  );
+                      },
+                    );
+                  }
                 }
 
                 if (isWeb) {
                   return Center(
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 1400),
+                      constraints: const BoxConstraints(maxWidth: 1440),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           SizedBox(
+                            width: 250,
                             height: constraints.maxHeight,
                             child: ProductFilterSidebar(
                               groups: _filterGroups,
@@ -1586,7 +1627,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                               onClear: _clearFilters,
                             ),
                           ),
-                          const SizedBox(width: 16),
+                          const SizedBox(width: 24),
                           Expanded(child: content),
                         ],
                       ),
@@ -1600,6 +1641,75 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
           ),
         ],
       ),
+    );
+  }
+
+  // Same box as the home product rail (home_section_full_rail.dart) so the
+  // shared ProductCard resolves the same image area and body layout.
+  static const double _webCardWidth = 220;
+  static const double _webCardHeight = 348;
+  static const double _webCardGap = 12;
+  static const double _webGridPadding = 16;
+
+  Widget _buildWebProductGrid(int itemCount) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = math.max(
+          _webCardWidth,
+          constraints.maxWidth - _webGridPadding * 2,
+        );
+        final columns = math.max(
+          1,
+          ((available + _webCardGap) / (_webCardWidth + _webCardGap)).floor(),
+        );
+        final gridWidth =
+            columns * _webCardWidth + (columns - 1) * _webCardGap;
+        final rightInset = math.max(0.0, available - gridWidth);
+
+        return GridView.builder(
+          controller: _productGridScrollController,
+          padding: EdgeInsets.fromLTRB(
+            _webGridPadding,
+            _webGridPadding,
+            _webGridPadding + rightInset,
+            _webGridPadding,
+          ),
+          cacheExtent: _webCardHeight,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisExtent: _webCardHeight,
+            crossAxisSpacing: _webCardGap,
+            mainAxisSpacing: _webCardGap,
+          ),
+          itemCount: itemCount,
+          itemBuilder: (context, index) {
+            if (index >= _filteredProducts.length) {
+              return const Center(
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              );
+            }
+            final product = _filteredProducts[index];
+            return _wrapCategoryProductReveal(
+              scope: 'product-grid',
+              index: index,
+              product: product,
+              child: ProductCard(
+                product: product,
+                width: _webCardWidth,
+                margin: EdgeInsets.zero,
+                imagePriority: CatalogImagePriority.forGridIndex(
+                  index,
+                  crossAxisCount: columns,
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

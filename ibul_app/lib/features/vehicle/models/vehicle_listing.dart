@@ -528,7 +528,31 @@ class VehicleListing {
     return (extras['rejection_reason']?.toString() ?? '').trim().isNotEmpty;
   }
 
-  bool get isLivePublished => status.isPubliclyVisible && !isRejected;
+  String? get primaryImageUrl {
+    final cover = coverUrl?.trim() ?? '';
+    if (cover.isNotEmpty) return cover;
+    for (final item in media) {
+      final url = item.url.trim();
+      if (item.isCover && !item.isVideo && !item.is360 && url.isNotEmpty) {
+        return url;
+      }
+    }
+    for (final item in media) {
+      final url = item.url.trim();
+      if (!item.isVideo && !item.is360 && url.isNotEmpty) return url;
+    }
+    return null;
+  }
+
+  bool get isLivePublished {
+    if (!status.isPubliclyVisible || isRejected) return false;
+    final moderation = extras['moderation'];
+    if (moderation is Map) {
+      final token = moderation['status']?.toString().trim().toLowerCase() ?? '';
+      if (token.isNotEmpty && token != 'approved') return false;
+    }
+    return true;
+  }
 
   String get statusLabelTr {
     if (isRejected) return 'Reddedildi';

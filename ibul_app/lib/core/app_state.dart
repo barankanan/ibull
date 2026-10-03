@@ -1760,6 +1760,15 @@ class AppState extends ChangeNotifier {
     _cartState.updateProductServices(product, services);
     _persistCartState();
     _syncPushInterests();
+    notifyListeners();
+  }
+
+  void updateProductQuantity(Product product, int quantity) {
+    final updatedProduct = product.copyWith(cartQuantity: quantity);
+    _cartState.addOrReplace(updatedProduct);
+    _persistCartState();
+    _syncPushInterests();
+    notifyListeners();
   }
 
   void removeFromCart(Product product) => _removeFromCartImpl(product);
@@ -1771,6 +1780,7 @@ class AppState extends ChangeNotifier {
     _fastDelivery.clear();
     _persistCartState();
     _syncPushInterests();
+    notifyListeners();
   }
 
   void addFoodOrder(Map<String, dynamic> order) {

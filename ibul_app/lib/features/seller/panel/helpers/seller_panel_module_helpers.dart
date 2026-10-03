@@ -277,6 +277,7 @@ String resolveSellerPanelRenderTarget({
     case SellerModule.collections:
     case SellerModule.orders:
     case SellerModule.store:
+    case SellerModule.mallRequests:
     case SellerModule.team:
     case SellerModule.campaigns:
     case SellerModule.finance:
@@ -883,6 +884,7 @@ List<SellerModule> visibleSellerModules(
     if (SellerDashboardResolver.usesRestaurantModules(vertical))
       SellerModule.system,
     SellerModule.store,
+    SellerModule.mallRequests,
     SellerModule.contracts,
     SellerModule.team,
     SellerModule.campaigns,
@@ -910,6 +912,8 @@ String sellerModuleLabel(SellerModule module) {
       return 'Sistem';
     case SellerModule.store:
       return 'Mağaza Profili';
+    case SellerModule.mallRequests:
+      return 'AVM Talepleri';
     case SellerModule.team:
       return 'Alt Yöneticiler';
     case SellerModule.campaigns:
@@ -958,6 +962,8 @@ IconData sellerModuleIcon(SellerModule module) {
       return Icons.settings_suggest_outlined;
     case SellerModule.store:
       return Icons.store_outlined;
+    case SellerModule.mallRequests:
+      return Icons.apartment_outlined;
     case SellerModule.team:
       return Icons.people_outline;
     case SellerModule.campaigns:

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:ibul_app/core/constants.dart';
 import 'package:ibul_app/core/cart_state.dart';
+import 'package:ibul_app/core/compare_state.dart';
 import 'package:ibul_app/core/favorite_state.dart';
 import 'package:ibul_app/core/review_state.dart';
 import 'package:ibul_app/models/product_model.dart';
@@ -49,6 +50,7 @@ void main() {
       providers: [
         ChangeNotifierProvider<CartState>.value(value: CartState()),
         ChangeNotifierProvider<FavoriteState>.value(value: FavoriteState()),
+        ChangeNotifierProvider<CompareState>.value(value: CompareState()),
         ChangeNotifierProvider<ReviewState>.value(value: ReviewState()),
       ],
       child: MaterialApp(

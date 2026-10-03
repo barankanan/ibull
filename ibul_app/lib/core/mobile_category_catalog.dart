@@ -1072,7 +1072,24 @@ List<MobileCategoryNode> buildMobileCategoryTree(
   }
 
   result.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
-  return result;
+  return _deduplicateMobileCategoryNodes(result);
+}
+
+List<MobileCategoryNode> _deduplicateMobileCategoryNodes(
+  Iterable<MobileCategoryNode> categories,
+) {
+  final seen = <String>{};
+  final unique = <MobileCategoryNode>[];
+  for (final category in categories) {
+    final key = normalizeCategoryNameForLookup(category.name);
+    if (key.isEmpty || !seen.add(key)) continue;
+    unique.add(
+      category.copyWith(
+        subCategories: _deduplicateMobileCategoryNodes(category.subCategories),
+      ),
+    );
+  }
+  return unique;
 }
 
 MobileCategoryNode _mergeMainCategory(

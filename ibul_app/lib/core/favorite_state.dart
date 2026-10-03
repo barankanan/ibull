@@ -14,8 +14,12 @@ class FavoriteState extends ChangeNotifier {
 
   List<Product> get favorites => List.unmodifiable(_favorites);
 
-  static String productKey(Product product) =>
-      '${product.brand}|${product.name}';
+  static String productKey(Product product) {
+    if (product.productId != null && product.productId!.trim().isNotEmpty) {
+      return product.productId!;
+    }
+    return '${product.brand}|${product.name}';
+  }
 
   bool isFavorite(Product product) =>
       _favoriteKeys.contains(productKey(product));

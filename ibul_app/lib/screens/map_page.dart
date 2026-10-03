@@ -26,6 +26,9 @@ import '../services/supabase_service.dart';
 import '../utils/external_navigation.dart';
 import '../widgets/map_filter_bottom_sheet.dart';
 import '../utils/text_normalizer.dart';
+import '../app/ibul_router.dart';
+import '../app/marketplace_paths.dart';
+import '../features/mall/public/mall_map_layer.dart';
 import '../features/seller/domain/store_vertical.dart';
 import '../features/vehicle/domain/vehicle_compare_fields.dart';
 import '../features/vehicle/domain/vehicle_map_search.dart';
@@ -67,6 +70,7 @@ class MapPage extends StatefulWidget {
 
 class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   final MapController _mapController = MapController();
+  final MallMapPins _mallPins = MallMapPins()..load();
   final TextEditingController _searchController = TextEditingController();
   int? _selectedBusinessIndex;
   static const LatLng _initialPosition = LatLng(
@@ -622,6 +626,12 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         widget.initialSearchQuery!.isNotEmpty) {
       _searchQuery = widget.initialSearchQuery!;
       _searchController.text = _searchQuery;
+    } else if (MapViewportMemory.search.isNotEmpty) {
+      _searchQuery = MapViewportMemory.search;
+      _searchController.text = _searchQuery;
+      _filterDistance = MapViewportMemory.distance;
+      _filterCategories = List<String>.from(MapViewportMemory.categories);
+      _filterOpenNow = MapViewportMemory.openNow;
     }
 
     _businesses = [];
@@ -637,7 +647,10 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         _isMapReady = true;
       });
       RuntimeDiagnosticLogger.map('render default center');
-      _mapController.move(_initialPosition, 14.0);
+      _mapController.move(
+        MapViewportMemory.center ?? _initialPosition,
+        MapViewportMemory.zoom ?? 14.0,
+      );
       _startMapLoadingFailsafe();
     });
     scheduleMicrotask(() {
@@ -674,6 +687,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _mallPins.dispose();
     _mapLoadingFailsafeTimer?.cancel();
     _positionStreamSubscription?.cancel();
     _searchDebounce?.cancel();
@@ -693,6 +707,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       return;
     }
     _storesLoadInFlight = true;
+    await _mallPins.load();
     final queryStartedMs = DateTime.now().millisecondsSinceEpoch;
     if (mounted) {
       setState(() {
@@ -736,6 +751,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           mapCategory: _mapStoreCategoryToMap,
         );
         if (marker == null) continue;
+        if (_mallPins.hiddenStoreIds.contains(marker.sellerId)) continue;
         if (marker.fromCityFallback) cityFallbackCount++;
         newMarkers.add(marker);
       }
@@ -1368,6 +1384,34 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           businessName.contains(normalizedQuery)) {
         combinedIndices.add(i);
       }
+    }
+
+    final mall = combinedIndices.isEmpty ? _mallPins.match(trimmedQuery) : null;
+    if (mall != null) {
+      MapViewportMemory.remember(query: trimmedQuery);
+      _animatedMapMove(LatLng(mall.latitude, mall.longitude), 16.0);
+      unawaited(showMallMapCard(context, mall));
+      return;
+    }
+    final mallStore = combinedIndices.isEmpty ? _mallPins.matchStore(trimmedQuery) : null;
+    if (mallStore != null) {
+      MapViewportMemory.remember(query: trimmedQuery);
+      _animatedMapMove(LatLng(mallStore.latitude, mallStore.longitude), 16.0);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${mallStore.storeName}\n${mallStore.placeLabel}'),
+          action: SnackBarAction(
+            label: 'AVM\'yi Gör',
+            onPressed: () => IbulRouter.push(
+              context,
+              MarketplacePaths.mallProfile(mallStore.mallId, floorId: mallStore.floorId, storeId: mallStore.storeId),
+            ),
+          ),
+        ),
+      );
+      return;
     }
 
     setState(() {
@@ -2654,9 +2698,20 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                         FlutterMap(
                           mapController: _mapController,
                           options: MapOptions(
-                            initialCenter: _userLocation ?? _initialPosition,
-                            initialZoom: 14.0,
+                            initialCenter: MapViewportMemory.center ?? _userLocation ?? _initialPosition,
+                            initialZoom: MapViewportMemory.zoom ?? 14.0,
                             onTap: (_, _) {},
+                            onMapEvent: (event) {
+                              if (event is! MapEventMoveEnd) return;
+                              MapViewportMemory.remember(
+                                camera: event.camera.center,
+                                cameraZoom: event.camera.zoom,
+                                query: _searchQuery,
+                                filterDistance: _filterDistance,
+                                filterCategories: _filterCategories,
+                                filterOpenNow: _filterOpenNow,
+                              );
+                            },
                           ),
                           children: [
                             TileLayer(
@@ -2689,6 +2744,11 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                 );
                               }).toList(),
                             ),
+                            if (!_vehicleMode)
+                              MallMapLayer(
+                                pins: _mallPins,
+                                onTap: (pin) => showMallMapCard(context, pin),
+                              ),
                             if (_userLocation != null)
                               MarkerLayer(
                                 markers: [

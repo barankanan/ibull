@@ -6,6 +6,7 @@ abstract final class MarketplacePaths {
   static const productRoot = '/urun';
   static const storeRoot = '/magaza';
   static const vehicleRoot = '/arac';
+  static const categoryRoot = '/kategori';
   static const account = '/hesabim';
   static const orders = '/hesabim/siparisler';
   static const rentals = '/hesabim/kiralamalar';
@@ -18,6 +19,37 @@ abstract final class MarketplacePaths {
   static const support = '/hesabim/musteri-hizmetleri';
   static const settings = '/hesabim/ayarlar';
   static const ai = '/hesabim/yapay-zeka';
+  static const mallHub = '/avm';
+  static const mallLogin = '/avm/giris';
+  static const mallRegister = '/avm/kayit';
+  static const mallApplication = '/avm/basvuru';
+  static const legacyMallApplication = '/hesabim/avm-basvurusu';
+  static const legacyPublicMallApplication = '/avm-basvurusu';
+  static const mallManagement = '/avm/yonetim';
+  static const legacyMallManagement = '/avm-yonetim';
+
+  static String mallManagementMall(String mallId) =>
+      '$mallManagement/${Uri.encodeComponent(mallId)}';
+
+  static String mallFloor(String mallId, String floorId) =>
+      '${mallManagementMall(mallId)}/katlar/${Uri.encodeComponent(floorId)}';
+
+  static const mallProfileRoot = '/avm/profil';
+
+  static String mallProfile(String mallId, {String? floorId, String? storeId}) {
+    final path = '$mallProfileRoot/${Uri.encodeComponent(mallId)}';
+    final query = <String, String>{
+      if ((floorId ?? '').isNotEmpty) 'kat': floorId!,
+      if ((storeId ?? '').isNotEmpty) 'magaza': storeId!,
+    };
+    return query.isEmpty ? path : Uri(path: path, queryParameters: query).toString();
+  }
+
+  static bool isMallManagementPath(String path) {
+    final normalized = path.split('?').first;
+    return normalized == mallManagement ||
+        normalized.startsWith('$mallManagement/');
+  }
 
   static String product(String id, {String? slug}) =>
       _idPath(productRoot, id, slug);
@@ -27,6 +59,12 @@ abstract final class MarketplacePaths {
 
   static String vehicle(String id, {String? slug}) =>
       _idPath(vehicleRoot, id, slug);
+
+  static String category(String mainCategoryId, String subCategoryId, {String? slug}) {
+    final suffix = slugify(slug ?? '');
+    final path = '$categoryRoot/${Uri.encodeComponent(mainCategoryId)}/${Uri.encodeComponent(subCategoryId)}';
+    return suffix.isEmpty ? path : '$path/$suffix';
+  }
 
   static bool isAccountPath(String path) {
     final normalized = path.split('?').first;

@@ -1,30 +1,66 @@
 import 'package:flutter/material.dart';
 
-import '../data/blog_media_service.dart';
 import '../models/blog_content.dart';
 import '../widgets/blog_theme.dart';
-import 'blog_columns_editor.dart';
+import 'blog_block_fields.dart';
+import 'blog_block_ops.dart';
 import 'blog_editor_controls.dart';
 
 /// Ordered list of block editors with move / duplicate / delete actions.
-class BlogBlockListEditor extends StatelessWidget {
+class BlogBlockListEditor extends StatefulWidget {
   const BlogBlockListEditor({
     super.key,
     required this.blocks,
     required this.onChanged,
     this.allowColumns = true,
+    this.onUndo,
+    this.onShift,
   });
 
   final List<BlogBlock> blocks;
   final VoidCallback onChanged;
   final bool allowColumns;
+  final void Function(VoidCallback undo)? onUndo;
+
+  /// Moves a block into the previous (-1) or next (+1) column, when nested.
+  final void Function(BlogBlock block, int direction)? onShift;
+
+  @override
+  State<BlogBlockListEditor> createState() => _BlogBlockListEditorState();
+}
+
+class _BlogBlockListEditorState extends State<BlogBlockListEditor> {
+  String? _focusId;
+
+  List<BlogBlock> get blocks => widget.blocks;
+
+  void _changed() => widget.onChanged();
+
+  void _remember(int index) {
+    final copy = blocks[index].toJson();
+    widget.onUndo?.call(() {
+      if (index <= blocks.length) {
+        blocks.insert(index, BlogBlock.fromJson(copy)!);
+      }
+      _changed();
+    });
+  }
 
   void _move(int index, int delta) {
     final target = index + delta;
     if (target < 0 || target >= blocks.length) return;
     final block = blocks.removeAt(index);
     blocks.insert(target, block);
-    onChanged();
+    _changed();
+  }
+
+  void _add(BlogBlock block, int index) {
+    blocks.insert(index, block);
+    setState(() => _focusId = block.id);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _focusId == block.id) setState(() => _focusId = null);
+    });
+    _changed();
   }
 
   @override
@@ -32,36 +68,57 @@ class BlogBlockListEditor extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (var i = 0; i < blocks.length; i++)
+        for (var i = 0; i < blocks.length; i++) ...[
           _BlockFrame(
-            key: ValueKey(blocks[i].id),
+            key: ValueKey('${blocks[i].id}-${blocks[i].type.name}'),
             block: blocks[i],
-            nested: !allowColumns,
+            nested: !widget.allowColumns,
+            autofocus: blocks[i].id == _focusId,
             canMoveUp: i > 0,
             canMoveDown: i < blocks.length - 1,
             onMoveUp: () => _move(i, -1),
             onMoveDown: () => _move(i, 1),
             onDuplicate: () {
               blocks.insert(i + 1, blocks[i].duplicate());
-              onChanged();
+              _changed();
             },
             onDelete: () {
+              _remember(i);
               blocks.removeAt(i);
-              onChanged();
+              _changed();
             },
-            onChanged: onChanged,
+            onConvert: convertibleBlockTypes.contains(blocks[i].type)
+                ? (next) {
+                    _remember(i);
+                    blocks[i] = convertBlock(blocks[i], next);
+                    setState(() => _focusId = blocks[i].id);
+                    _changed();
+                  }
+                : null,
+            onShift: widget.onShift == null
+                ? null
+                : (direction) => widget.onShift!(blocks[i], direction),
+            onUndo: widget.onUndo,
+            onChanged: _changed,
           ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: BlogAddBlockButton(
-            allowColumns: allowColumns,
-            compact: !allowColumns,
-            onAdd: (block) {
-              blocks.add(block);
-              onChanged();
-            },
+          Align(
+            alignment: Alignment.centerLeft,
+            child: BlogAddBlockButton(
+              allowColumns: widget.allowColumns,
+              compact: true,
+              onAdd: (block) => _add(block, i + 1),
+            ),
           ),
-        ),
+        ],
+        if (blocks.isEmpty)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: BlogAddBlockButton(
+              allowColumns: widget.allowColumns,
+              compact: !widget.allowColumns,
+              onAdd: (block) => _add(block, 0),
+            ),
+          ),
       ],
     );
   }
@@ -79,6 +136,10 @@ class _BlockFrame extends StatelessWidget {
     required this.onDuplicate,
     required this.onDelete,
     required this.onChanged,
+    this.onConvert,
+    this.onShift,
+    this.onUndo,
+    this.autofocus = false,
   });
 
   final BlogBlock block;
@@ -90,6 +151,10 @@ class _BlockFrame extends StatelessWidget {
   final VoidCallback onDuplicate;
   final VoidCallback onDelete;
   final VoidCallback onChanged;
+  final ValueChanged<BlogBlockType>? onConvert;
+  final ValueChanged<int>? onShift;
+  final void Function(VoidCallback undo)? onUndo;
+  final bool autofocus;
 
   @override
   Widget build(BuildContext context) {
@@ -121,15 +186,48 @@ class _BlockFrame extends StatelessWidget {
                   ),
                 ),
               ),
-              _tool(Icons.arrow_upward, 'Yukarı taşı', canMoveUp ? onMoveUp : null),
-              _tool(Icons.arrow_downward, 'Aşağı taşı', canMoveDown ? onMoveDown : null),
-              _tool(Icons.copy_outlined, 'Çoğalt', onDuplicate),
-              _tool(Icons.delete_outline, 'Sil', onDelete),
+              Flexible(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (onConvert != null)
+                        PopupMenuButton<BlogBlockType>(
+                          tooltip: 'Tür değiştir',
+                          icon: const Icon(Icons.swap_horiz, size: 18),
+                          onSelected: onConvert,
+                          itemBuilder: (context) => [
+                            for (final type in convertibleBlockTypes)
+                              if (type != block.type)
+                                PopupMenuItem(
+                                  value: type,
+                                  child: Text(blogBlockMeta[type]!.$1),
+                                ),
+                          ],
+                        ),
+                      if (onShift != null) ...[
+                        _tool(Icons.west, 'Önceki sütuna', () => onShift!(-1)),
+                        _tool(Icons.east, 'Sonraki sütuna', () => onShift!(1)),
+                      ],
+                      _tool(Icons.arrow_upward, 'Yukarı taşı', canMoveUp ? onMoveUp : null),
+                      _tool(Icons.arrow_downward, 'Aşağı taşı', canMoveDown ? onMoveDown : null),
+                      _tool(Icons.copy_outlined, 'Çoğalt', onDuplicate),
+                      _tool(Icons.delete_outline, 'Sil', onDelete),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: BlogBlockFields(block: block, onChanged: onChanged),
+            child: BlogBlockFields(
+              block: block,
+              autofocus: autofocus,
+              onUndo: onUndo,
+              onChanged: onChanged,
+            ),
           ),
         ],
       ),
@@ -147,277 +245,3 @@ class _BlockFrame extends StatelessWidget {
 }
 
 /// Field editors per block type. Writes straight into [block].
-class BlogBlockFields extends StatefulWidget {
-  const BlogBlockFields({super.key, required this.block, required this.onChanged});
-
-  final BlogBlock block;
-  final VoidCallback onChanged;
-
-  @override
-  State<BlogBlockFields> createState() => _BlogBlockFieldsState();
-}
-
-class _BlogBlockFieldsState extends State<BlogBlockFields> {
-  final Map<String, TextEditingController> _controllers = {};
-  double? _uploadProgress;
-  String? _uploadError;
-
-  BlogBlock get _b => widget.block;
-
-  TextEditingController _c(String key, String initial) =>
-      _controllers.putIfAbsent(key, () => TextEditingController(text: initial));
-
-  @override
-  void dispose() {
-    for (final controller in _controllers.values) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  Widget _field(
-    String key,
-    String initial,
-    ValueChanged<String> write, {
-    String? label,
-    String? hint,
-    int? maxLines = 1,
-    TextStyle? style,
-    bool inlineTools = false,
-  }) {
-    final controller = _c(key, initial);
-    final field = TextField(
-      controller: controller,
-      maxLines: maxLines,
-      minLines: maxLines == null ? 2 : null,
-      style: style,
-      onChanged: (value) {
-        write(value);
-        widget.onChanged();
-      },
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        isDense: true,
-        border: label == null ? InputBorder.none : const OutlineInputBorder(),
-      ),
-    );
-    if (!inlineTools) return field;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        BlogInlineToolbar(
-          controller: controller,
-          onChanged: (value) {
-            write(value);
-            widget.onChanged();
-          },
-        ),
-        field,
-      ],
-    );
-  }
-
-  Future<void> _upload(BlogMediaKind kind) async {
-    setState(() {
-      _uploadProgress = 0;
-      _uploadError = null;
-    });
-    try {
-      final url = await BlogMediaService.instance.pickAndUpload(
-        kind,
-        onProgress: (value) {
-          if (mounted) setState(() => _uploadProgress = value);
-        },
-      );
-      if (url != null) {
-        _b.url = url;
-        _c('url', '').text = url;
-        if (kind == BlogMediaKind.video) _b.videoSource = BlogVideoSource.upload;
-        widget.onChanged();
-      }
-    } catch (error) {
-      _uploadError = error.toString();
-    } finally {
-      if (mounted) setState(() => _uploadProgress = null);
-    }
-  }
-
-  Widget _uploadRow(BlogMediaKind kind, String label) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          OutlinedButton.icon(
-            onPressed: _uploadProgress != null ? null : () => _upload(kind),
-            icon: const Icon(Icons.upload_outlined),
-            label: Text(label),
-          ),
-          if (_uploadProgress != null) ...[
-            const SizedBox(height: 8),
-            LinearProgressIndicator(
-              value: _uploadProgress == 0 ? null : _uploadProgress,
-              color: BlogTheme.accent,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Yükleniyor… %${((_uploadProgress ?? 0) * 100).round()}',
-              style: BlogTheme.metaStyle,
-            ),
-          ],
-          if (_uploadError != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              _uploadError!,
-              style: const TextStyle(color: Color(0xFFC62828), fontSize: 13),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final body = BlogTheme.bodyStyle(context).copyWith(fontSize: 17);
-    switch (_b.type) {
-      case BlogBlockType.paragraph:
-        return _field('text', _b.text, (v) => _b.text = v,
-            hint: 'Yazmaya başlayın…', maxLines: null, style: body, inlineTools: true);
-      case BlogBlockType.heading:
-        return Row(
-          children: [
-            SegmentedButton<int>(
-              segments: const [
-                ButtonSegment(value: 2, label: Text('H2')),
-                ButtonSegment(value: 3, label: Text('H3')),
-              ],
-              selected: {_b.level},
-              showSelectedIcon: false,
-              onSelectionChanged: (value) {
-                setState(() => _b.level = value.first);
-                widget.onChanged();
-              },
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _field('text', _b.text, (v) => _b.text = v,
-                  hint: 'Alt başlık',
-                  style: BlogTheme.headingStyle(context, _b.level)),
-            ),
-          ],
-        );
-      case BlogBlockType.list:
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SegmentedButton<bool>(
-              segments: const [
-                ButtonSegment(value: false, label: Text('Maddeli')),
-                ButtonSegment(value: true, label: Text('Numaralı')),
-              ],
-              selected: {_b.ordered},
-              showSelectedIcon: false,
-              onSelectionChanged: (value) {
-                setState(() => _b.ordered = value.first);
-                widget.onChanged();
-              },
-            ),
-            const SizedBox(height: 8),
-            _field('items', _b.items.join('\n'),
-                (v) => _b.items = v.split('\n'),
-                hint: 'Her satır bir madde', maxLines: null, style: body, inlineTools: true),
-          ],
-        );
-      case BlogBlockType.quote:
-        return Column(
-          children: [
-            _field('text', _b.text, (v) => _b.text = v,
-                hint: 'Alıntı metni', maxLines: null,
-                style: body.copyWith(fontStyle: FontStyle.italic)),
-            const SizedBox(height: 8),
-            _field('cite', _b.cite, (v) => _b.cite = v, label: 'Kaynak (isteğe bağlı)'),
-          ],
-        );
-      case BlogBlockType.image:
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (_b.url.trim().isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: SizedBox(
-                    height: 180,
-                    child: BlogImage(url: _b.url, fit: BoxFit.contain),
-                  ),
-                ),
-              ),
-            _field('url', _b.url, (v) => _b.url = v, label: 'Görsel adresi'),
-            _uploadRow(BlogMediaKind.image, 'Görsel yükle (en fazla 10 MB)'),
-            const SizedBox(height: 10),
-            _field('alt', _b.alt, (v) => _b.alt = v, label: 'Alternatif metin (zorunlu)'),
-            const SizedBox(height: 10),
-            _field('caption', _b.caption, (v) => _b.caption = v, label: 'Açıklama'),
-          ],
-        );
-      case BlogBlockType.video:
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SegmentedButton<bool>(
-              segments: const [
-                ButtonSegment(value: true, label: Text('Dosya')),
-                ButtonSegment(value: false, label: Text('YouTube / Vimeo')),
-              ],
-              selected: {_b.videoSource == BlogVideoSource.upload},
-              showSelectedIcon: false,
-              onSelectionChanged: (value) {
-                setState(() {
-                  _b.videoSource = value.first
-                      ? BlogVideoSource.upload
-                      : (BlogVideoLink.parse(_b.url)?.source ??
-                            BlogVideoSource.youtube);
-                });
-                widget.onChanged();
-              },
-            ),
-            const SizedBox(height: 10),
-            _field('url', _b.url, (v) {
-              _b.url = v;
-              final link = BlogVideoLink.parse(v);
-              if (link != null) _b.videoSource = link.source;
-            },
-                label: _b.videoSource == BlogVideoSource.upload
-                    ? 'Video adresi'
-                    : 'YouTube veya Vimeo bağlantısı'),
-            if (_b.videoSource == BlogVideoSource.upload)
-              _uploadRow(BlogMediaKind.video, 'Video yükle (mp4/webm, en fazla 30 MB)'),
-            const SizedBox(height: 10),
-            _field('caption', _b.caption, (v) => _b.caption = v, label: 'Açıklama'),
-          ],
-        );
-      case BlogBlockType.button:
-        return Column(
-          children: [
-            _field('label', _b.label, (v) => _b.label = v, label: 'Buton metni'),
-            const SizedBox(height: 10),
-            _field('url', _b.url, (v) => _b.url = v,
-                label: 'Hedef bağlantı', hint: 'https://… veya /kategori/…'),
-          ],
-        );
-      case BlogBlockType.divider:
-        return const Padding(
-          padding: EdgeInsets.symmetric(vertical: 8),
-          child: Divider(color: BlogTheme.line),
-        );
-      case BlogBlockType.columns:
-        return BlogColumnsEditor(block: _b, onChanged: () {
-          setState(() {});
-          widget.onChanged();
-        });
-    }
-  }
-}

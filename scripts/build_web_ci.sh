@@ -71,20 +71,7 @@ if [[ -f "$MAIN_JS" ]]; then
   HASH="$(shasum -a 256 "$MAIN_JS" | awk '{print substr($1,1,16)}')"
   HASHED="app.${HASH}.js"
   mv "$MAIN_JS" "$WEB_DIR/$HASHED"
-  python3 - "$WEB_DIR" "$HASHED" <<'PY'
-import pathlib, sys
-web, hashed = pathlib.Path(sys.argv[1]), sys.argv[2]
-boot = web / "flutter_bootstrap.js"
-html = web / "index.html"
-boot.write_text(
-    boot.read_text().replace('"mainJsPath":"main.dart.js"', f'"mainJsPath":"{hashed}"'),
-    encoding="utf-8",
-)
-html.write_text(
-    html.read_text().replace('href="main.dart.js"', f'href="{hashed}"'),
-    encoding="utf-8",
-)
-PY
+  python3 "$SCRIPT_DIR/fingerprint_web_js.py" "$WEB_DIR" "$HASHED" "$HASH"
 fi
 
 python3 "$SCRIPT_DIR/prerender_blog.py" "$WEB_DIR"

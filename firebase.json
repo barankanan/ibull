@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "target": "ibul",
     "public": "ibul_app/build/web",
     "trailingSlash": false,
     "ignore": [
@@ -34,11 +35,15 @@
           {
             "key": "Content-Security-Policy",
             "value": "default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; frame-ancestors 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://apis.google.com https://www.gstatic.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.googleapis.com https://*.google.com https://*.gstatic.com https://nominatim.openstreetmap.org https://*.openstreetmap.org https://tile.openstreetmap.org https://a.tile.openstreetmap.org https://b.tile.openstreetmap.org https://c.tile.openstreetmap.org; worker-src 'self' blob:; frame-src 'self' https://accounts.google.com https://*.google.com; media-src 'self' blob: data: https://*.supabase.co;"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
           }
         ]
       },
       {
-        "_comment": "HTML her zaman taze olmali. no-store yerine no-cache: ikisi de bayat HTML servis edilmesini engeller, ancak no-store tarayicinin dosyayi hic saklamamasina yol acar ve her ziyarette 14 KB'lik index.html sifirdan iner. no-cache saklatir + her istekte ETag ile revalidate ettirir; icerik degismediyse 304 Not Modified doner. Deploy sonrasi ETag degistigi icin 200 ile yeni HTML gelir. Tazelik garantisi birebir ayni. NOT: immutable BILEREK hicbir kuralda yok - bu build ciktisinda content-hash'li dosya bulunmuyor (main.dart.js, main.dart.js_N.part.js, flutter_bootstrap.js, canvaskit/* hepsi sabit isimli), immutable eklemek deploy sonrasi eski JS'in servis edilmesine yol acardi.",
+        "_comment": "Default no-cache covers SPA rewrite paths (/urun, /arac, /hesabim). Later more-specific rules override hashed JS and assets. HTML her zaman taze olmali. no-store yerine no-cache: ikisi de bayat HTML servis edilmesini engeller, ancak no-store tarayicinin dosyayi hic saklamamasina yol acar ve her ziyarette 14 KB'lik index.html sifirdan iner. no-cache saklatir + her istekte ETag ile revalidate ettirir; icerik degismediyse 304 Not Modified doner. Deploy sonrasi ETag degistigi icin 200 ile yeni HTML gelir. Tazelik garantisi birebir ayni. NOT: immutable BILEREK hicbir kuralda yok - bu build ciktisinda content-hash'li dosya bulunmuyor (main.dart.js, main.dart.js_N.part.js, flutter_bootstrap.js, canvaskit/* hepsi sabit isimli), immutable eklemek deploy sonrasi eski JS'in servis edilmesine yol acardi.",
         "source": "/**/*.html",
         "headers": [
           {
@@ -103,6 +108,16 @@
         ]
       },
       {
+        "_comment": "Hash-stamped deferred hunks (main.dart.js_N.part.<digest>.js). Filename changes every deploy, so immutable is safe.",
+        "source": "/main.dart.js_*.part.*.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
         "source": "/canvaskit/**",
         "headers": [
           {
@@ -131,6 +146,10 @@
       }
     ],
     "rewrites": [
+      {
+        "source": "**/*.js",
+        "destination": "/404.html"
+      },
       {
         "source": "**",
         "destination": "/index.html"

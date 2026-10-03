@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../../core/constants.dart';
@@ -6,6 +8,7 @@ import '../../domain/coupon_campaign.dart';
 import '../../domain/coupon_enums.dart';
 import '../../domain/coupon_models.dart';
 import '../../domain/coupon_status_labels.dart';
+import '../../widgets/coupon_home_visibility_cell.dart';
 import '../../widgets/coupon_status_chip.dart';
 import '../../widgets/coupon_summary_cards.dart';
 import 'coupon_admin_editor_page.dart';
@@ -52,9 +55,7 @@ class _CouponAdminHubPageState extends State<CouponAdminHubPage> {
         source: _source,
         discountType: _discount,
       );
-      final summary = await _repo.adminSummary(
-        await _repo.listForAdmin(),
-      );
+      final summary = await _repo.adminSummary(await _repo.listForAdmin());
       if (!mounted) return;
       setState(() {
         _all = rows;
@@ -116,9 +117,9 @@ class _CouponAdminHubPageState extends State<CouponAdminHubPage> {
       _load();
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -248,100 +249,140 @@ class _CouponAdminHubPageState extends State<CouponAdminHubPage> {
                       : 'Henüz aktif kupon bulunmuyor.',
                   'Filtreleri değiştirerek tekrar deneyebilirsiniz.',
                 )
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                  scrollDirection: Axis.horizontal,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minWidth: MediaQuery.of(context).size.width - 48,
-                    ),
-                    child: DataTable(
-                      headingTextStyle: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF6B7280),
-                        fontSize: 12,
-                      ),
-                      columns: const [
-                        DataColumn(label: Text('Kupon adı')),
-                        DataColumn(label: Text('Kod')),
-                        DataColumn(label: Text('Kaynak')),
-                        DataColumn(label: Text('Mağaza')),
-                        DataColumn(label: Text('İndirim')),
-                        DataColumn(label: Text('Min. sepet')),
-                        DataColumn(label: Text('Kota')),
-                        DataColumn(label: Text('Kullanılan')),
-                        DataColumn(label: Text('Başlangıç')),
-                        DataColumn(label: Text('Bitiş')),
-                        DataColumn(label: Text('Durum')),
-                        DataColumn(label: Text('Çark')),
-                        DataColumn(label: Text('İşlemler')),
-                      ],
-                      rows: [
-                        for (final campaign in _all)
-                          DataRow(
-                            cells: [
-                              DataCell(Text(campaign.name)),
-                              DataCell(Text(campaign.code)),
-                              DataCell(
-                                Text(CouponStatusLabels.source(campaign.sourceType)),
-                              ),
-                              DataCell(Text(campaign.storeName ?? '-')),
-                              DataCell(Text(campaign.discountLabel)),
-                              DataCell(
-                                Text(
-                                  campaign.minOrderAmount > 0
-                                      ? '${campaign.minOrderAmount.toStringAsFixed(0)} TL'
-                                      : '-',
-                                ),
-                              ),
-                              DataCell(Text('${campaign.totalUsageLimit ?? '-'}')),
-                              DataCell(Text('${campaign.usedCount}')),
-                              DataCell(Text(_fmt(campaign.startsAt))),
-                              DataCell(Text(_fmt(campaign.endsAt))),
-                              DataCell(
-                                CouponStatusChip(status: campaign.effectiveStatus),
-                              ),
-                              DataCell(Text(campaign.wheelEnabled ? 'Evet' : 'Hayır')),
-                              DataCell(
-                                PopupMenuButton<String>(
-                                  onSelected: (value) {
-                                    switch (value) {
-                                      case 'edit':
-                                        _openEditor(campaign);
-                                      case 'approve':
-                                        _moderate(campaign, 'approve');
-                                      case 'reject':
-                                        _moderate(campaign, 'reject');
-                                      case 'detail':
-                                        _showDetail(campaign);
-                                    }
-                                  },
-                                  itemBuilder: (context) => [
-                                    const PopupMenuItem(
-                                      value: 'detail',
-                                      child: Text('Detayı Aç'),
-                                    ),
-                                    const PopupMenuItem(
-                                      value: 'edit',
-                                      child: Text('Düzenle'),
-                                    ),
-                                    if (campaign.approvalStatus ==
-                                        CouponApprovalStatus.pendingReview) ...[
-                                      const PopupMenuItem(
-                                        value: 'approve',
-                                        child: Text('Onayla'),
-                                      ),
-                                      const PopupMenuItem(
-                                        value: 'reject',
-                                        child: Text('Reddet'),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                            ],
+              : LayoutBuilder(
+                  builder: (context, constraints) => SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minWidth: math.max(0, constraints.maxWidth - 48),
+                        ),
+                        child: DataTable(
+                          columnSpacing: 20,
+                          dataRowMinHeight: 52,
+                          dataRowMaxHeight: 64,
+                          headingTextStyle: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF6B7280),
+                            fontSize: 12,
                           ),
-                      ],
+                          columns: const [
+                            DataColumn(label: Text('Kupon adı')),
+                            DataColumn(label: Text('Kod')),
+                            DataColumn(label: Text('Kaynak')),
+                            DataColumn(label: Text('Mağaza')),
+                            DataColumn(label: Text('İndirim')),
+                            DataColumn(label: Text('Min. sepet')),
+                            DataColumn(label: Text('Kullanım')),
+                            DataColumn(label: Text('Yayın tarihi')),
+                            DataColumn(label: Text('Durum')),
+                            DataColumn(label: Text('Ana sayfa')),
+                            DataColumn(label: Text('Çark')),
+                            DataColumn(label: Text('İşlemler')),
+                          ],
+                          rows: [
+                            for (final campaign in _all)
+                              DataRow(
+                                cells: [
+                                  DataCell(
+                                    ConstrainedBox(
+                                      constraints: const BoxConstraints(
+                                        maxWidth: 200,
+                                      ),
+                                      child: Text(
+                                        campaign.name,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(SelectableText(campaign.code)),
+                                  DataCell(
+                                    Text(
+                                      CouponStatusLabels.source(
+                                        campaign.sourceType,
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(Text(campaign.storeName ?? '-')),
+                                  DataCell(Text(campaign.discountLabel)),
+                                  DataCell(
+                                    Text(
+                                      campaign.minOrderAmount > 0
+                                          ? '${campaign.minOrderAmount.toStringAsFixed(0)} TL'
+                                          : '-',
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      '${campaign.usedCount} / ${campaign.totalUsageLimit ?? '∞'}',
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      '${_fmt(campaign.startsAt)}\n${_fmt(campaign.endsAt)}',
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                  ),
+                                  DataCell(
+                                    CouponStatusChip(
+                                      status: campaign.effectiveStatus,
+                                    ),
+                                  ),
+                                  DataCell(
+                                    CouponHomeVisibilityCell(
+                                      campaign: campaign,
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      campaign.wheelEnabled ? 'Evet' : 'Hayır',
+                                    ),
+                                  ),
+                                  DataCell(
+                                    PopupMenuButton<String>(
+                                      onSelected: (value) {
+                                        switch (value) {
+                                          case 'edit':
+                                            _openEditor(campaign);
+                                          case 'approve':
+                                            _moderate(campaign, 'approve');
+                                          case 'reject':
+                                            _moderate(campaign, 'reject');
+                                          case 'detail':
+                                            _showDetail(campaign);
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        const PopupMenuItem(
+                                          value: 'detail',
+                                          child: Text('Detayı Aç'),
+                                        ),
+                                        const PopupMenuItem(
+                                          value: 'edit',
+                                          child: Text('Düzenle'),
+                                        ),
+                                        if (campaign.approvalStatus ==
+                                            CouponApprovalStatus
+                                                .pendingReview) ...[
+                                          const PopupMenuItem(
+                                            value: 'approve',
+                                            child: Text('Onayla'),
+                                          ),
+                                          const PopupMenuItem(
+                                            value: 'reject',
+                                            child: Text('Reddet'),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -364,8 +405,12 @@ class _CouponAdminHubPageState extends State<CouponAdminHubPage> {
               Text('Mağaza: ${campaign.storeName ?? '-'}'),
               Text('Kaynak: ${CouponStatusLabels.source(campaign.sourceType)}'),
               Text('Tür: ${campaign.discountLabel}'),
-              Text('Minimum sepet: ${campaign.minOrderAmount.toStringAsFixed(0)} TL'),
-              Text('Kota: ${campaign.totalUsageLimit ?? '-'} / ${campaign.usedCount}'),
+              Text(
+                'Minimum sepet: ${campaign.minOrderAmount.toStringAsFixed(0)} TL',
+              ),
+              Text(
+                'Kota: ${campaign.totalUsageLimit ?? '-'} / ${campaign.usedCount}',
+              ),
               Text('Kapsam: ${CouponStatusLabels.scope(campaign.scopeType)}'),
               Text('${_fmt(campaign.startsAt)} → ${_fmt(campaign.endsAt)}'),
               if ((campaign.rejectionReason ?? '').isNotEmpty)

@@ -33,12 +33,7 @@ class ProductFilterEngine {
           type: ProductFilterGroupType.priceRange,
           minPrice: min.floorToDouble(),
           maxPrice: max.ceilToDouble(),
-          quickPriceChips: const [
-            (min: 0, max: 500, label: '0-500'),
-            (min: 500, max: 1000, label: '500-1000'),
-            (min: 1000, max: 5000, label: '1000-5000'),
-            (min: 5000, max: null, label: '5000+'),
-          ],
+          quickPriceChips: const [],
         ),
       );
     }

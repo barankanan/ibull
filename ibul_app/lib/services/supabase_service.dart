@@ -13,6 +13,7 @@ import 'store/store_mapping_helpers.dart';
 import '../utils/text_normalizer.dart';
 import '../utils/category_product_filter.dart';
 import '../utils/product_visibility_helper.dart';
+import '../core/mobile_category_catalog.dart';
 import 'store_follow_service.dart';
 import '../utils/product_edit_log.dart';
 import '../core/runtime_diagnostic_logger.dart';
@@ -1632,6 +1633,77 @@ class SupabaseService {
     }
   }
 
+  Future<List<({String mainCategory, String? subCategory})>>
+  getHomeProductCategoryLabels() async {
+    const pageSize = 500;
+    const baseSelect =
+        'main_category, sub_category, status, approval_status, '
+        'admin_approval_status';
+    var select = baseSelect;
+    var offset = 0;
+    final labels = <({String mainCategory, String? subCategory})>[];
+    final seen = <String>{};
+
+    while (true) {
+      List<Map<String, dynamic>> rawRows = const <Map<String, dynamic>>[];
+      Object? lastError;
+      for (var attempt = 0; attempt <= optionalProductColumns.length; attempt++) {
+        try {
+          final response = await _supabase
+              .from('products')
+              .select(select)
+              .inFilter('status', publicCatalogProductStatuses)
+              .order('main_category', ascending: true)
+              .order('sub_category', ascending: true)
+              .range(offset, offset + pageSize - 1);
+          rawRows = (response as List)
+              .whereType<Map>()
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList(growable: false);
+          lastError = null;
+          break;
+        } catch (error) {
+          lastError = error;
+          final message = error.toString();
+          if (!isOptionalProductColumnError(message)) rethrow;
+          final stripped = _stripUnsupportedColumnsFromSelect(
+            select,
+            message: message,
+          );
+          if (stripped == select) rethrow;
+          select = stripped;
+        }
+      }
+      if (lastError != null) throw lastError;
+
+      final visibleRows = ProductVisibilityHelper.filterPublicProductMaps(
+        rawRows,
+      );
+      for (final row in visibleRows) {
+        final main = row['main_category']?.toString().trim() ?? '';
+        if (main.isEmpty) continue;
+        final sub = row['sub_category']?.toString().trim();
+        final cleanSub = sub == null || sub.isEmpty ? null : sub;
+        final key = TextNormalizer.normalize('$main|${cleanSub ?? ''}');
+        if (!seen.add(key)) continue;
+        labels.add((mainCategory: main, subCategory: cleanSub));
+      }
+
+      debugPrint(
+        '[HomeProductCategoryLabels] offset=$offset raw=${rawRows.length} '
+        'visible=${visibleRows.length} distinct=${labels.length}',
+      );
+      if (rawRows.length < pageSize) break;
+      offset += pageSize;
+    }
+
+    debugPrint(
+      '[HomeProductCategoryLabels] outcome=${labels.isEmpty ? 'empty' : 'content'} '
+      'labels=${labels.map((item) => '${item.mainCategory}/${item.subCategory ?? '*'}').join(',')}',
+    );
+    return labels;
+  }
+
   Future<PagedResult<DBProduct>> getCategoryProductsPaged({
     required String category,
     String? subCategory,
@@ -1651,7 +1723,7 @@ class SupabaseService {
           .from('products')
           .select(_categoryProductsSelectFields)
           .inFilter('status', publicCatalogProductStatuses)
-          .eq('main_category', trimmedCategory);
+          .ilike('main_category', _toOrIlikePattern(trimmedCategory));
 
       if (!CategoryProductFilter.isAllSubCategory(trimmedSubCategory)) {
         final subCategoryOrClause =
@@ -1673,13 +1745,18 @@ class SupabaseService {
       final items = ProductVisibilityHelper.filterPublicProductMaps(
         List<Map<String, dynamic>>.from(response as List),
       ).map(_mapToDBProduct).toList(growable: false);
+      debugPrint(
+        '[HomeCategoryProducts] category="$trimmedCategory" '
+        'subcategory="${trimmedSubCategory.isEmpty ? '*' : trimmedSubCategory}" '
+        'outcome=${items.isEmpty ? 'empty' : 'content'} count=${items.length}',
+      );
       final nextCursor = items.length < limit
           ? null
           : '${offset + items.length}';
       return PagedResult(items: items, nextCursor: nextCursor);
     } catch (e) {
       debugPrint('Error getting category products paged: $e');
-      return const PagedResult(items: <DBProduct>[]);
+      rethrow;
     }
   }
 
@@ -2147,6 +2224,84 @@ class SupabaseService {
           ),
         )
         .toList(growable: false);
+  }
+
+  Future<List<CategoryWithSubcategories>> getCategoriesWithSubsStrict() async {
+    // 1. Fetch raw categories from DB (like AdminService.getManagedCategoriesWithSubs)
+    Future<List<Map<String, dynamic>>> fetchRows({required bool roots}) async {
+      const pageSize = 500;
+      final rows = <Map<String, dynamic>>[];
+      var offset = 0;
+      while (true) {
+        final response = roots
+            ? await _supabase
+                .from('categories')
+                .select()
+                .filter('parent_id', 'is', null)
+                .order('order_index', ascending: true)
+                .range(offset, offset + pageSize - 1)
+            : await _supabase
+                .from('categories')
+                .select()
+                .not('parent_id', 'is', null)
+                .order('order_index', ascending: true)
+                .range(offset, offset + pageSize - 1);
+        final page = (response as List)
+            .whereType<Map>()
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList(growable: false);
+        rows.addAll(page);
+        if (page.length < pageSize) break;
+        offset += pageSize;
+      }
+      return rows;
+    }
+
+    final rawCategories = await Future.wait([
+      fetchRows(roots: true),
+      fetchRows(roots: false),
+    ]);
+
+    final mainCategories = rawCategories[0].map(_mapToDBCategory).toList(growable: false);
+    final subCategories = rawCategories[1].map(_mapToDBCategory).toList(growable: false);
+
+    final subsByParentId = <int, List<DBCategory>>{};
+    for (final sub in subCategories) {
+      final parentId = sub.parentId;
+      if (parentId != null) {
+        subsByParentId.putIfAbsent(parentId, () => []).add(sub);
+      }
+    }
+
+    final dbGroups = mainCategories
+        .map(
+          (main) => CategoryWithSubcategories(
+            mainCategory: main,
+            subCategories: subsByParentId[main.id] ?? const <DBCategory>[],
+          ),
+        )
+        .toList(growable: false);
+
+    // 2. Merge with seeds just like Admin panel
+    final mobileNodes = buildMobileCategoryTree(dbGroups, includeMissingDefaultCategories: true);
+
+    // 3. Filter active ones and map back to CategoryWithSubcategories
+    final result = <CategoryWithSubcategories>[];
+    for (final node in mobileNodes) {
+      if (node.isActive) {
+        final activeSubs = node.subCategories
+            .where((sub) => sub.isActive)
+            .map((sub) => sub.toDbCategory())
+            .toList(growable: false);
+        result.add(CategoryWithSubcategories(
+          mainCategory: node.toDbCategory(),
+          subCategories: activeSubs,
+        ));
+      }
+    }
+
+    debugPrint('[HomeCategories] outcome=${result.isEmpty ? 'empty' : 'content'} parents=${result.length}');
+    return result;
   }
 
   // ==================== MAPPERS ====================

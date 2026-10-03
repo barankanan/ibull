@@ -23,6 +23,10 @@ class _HomeVehicleBlockState extends State<HomeVehicleBlock> {
   }
 
   Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final listings = await HomeDiscoveryLoader.loadVehicles();
       if (!mounted) return;

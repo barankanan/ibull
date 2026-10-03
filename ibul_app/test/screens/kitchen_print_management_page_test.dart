@@ -53,8 +53,8 @@ void main() {
         orchestrator: orchestrator,
       );
 
-      expect(find.text('Baskı Sistemi'), findsOneWidget);
-      expect(find.text('Baskı Sistemini Aç'), findsOneWidget);
+      expect(find.text('Otomatik Baskı'), findsOneWidget);
+      expect(tester.widget<Switch>(_printSystemSwitch).value, isFalse);
     },
   );
 
@@ -73,7 +73,7 @@ void main() {
         orchestrator: orchestrator,
       );
 
-      await tester.tap(find.text('Baskı Sistemini Aç'));
+      await tester.tap(_printSystemSwitch);
       await tester.pumpAndSettle();
 
       expect(stationService.toggleCalls, isNotEmpty);
@@ -125,9 +125,9 @@ void main() {
         orchestrator: orchestrator,
       );
 
-      expect(find.text('Baskı Sistemini Kapat'), findsOneWidget);
+      expect(tester.widget<Switch>(_printSystemSwitch).value, isTrue);
 
-      await tester.tap(find.text('Baskı Sistemini Kapat'));
+      await tester.tap(_printSystemSwitch);
       await tester.pumpAndSettle();
 
       expect(stationService.toggleCalls, isNotEmpty);
@@ -152,11 +152,11 @@ void main() {
         orchestrator: orchestrator,
       );
 
-      await tester.tap(find.text('Baskı Sistemini Aç'));
+      await tester.tap(_printSystemSwitch);
       await tester.pumpAndSettle();
 
       expect(find.textContaining('Bridge toggle rejected'), findsWidgets);
-      expect(find.text('Baskı Sistemini Aç'), findsOneWidget);
+      expect(tester.widget<Switch>(_printSystemSwitch).value, isFalse);
     },
   );
 
@@ -247,11 +247,15 @@ void main() {
 
       expect(find.text('Bu eşleştirme eski formatta'), findsOneWidget);
       // Active printer rows should not resolve to a DB UUID, so mapping CTA is visible.
-      expect(find.text('Yazıcı Eşleştir'), findsWidgets);
+      expect(find.text('Eşleştirmeyi Yönet'), findsWidgets);
       expect(find.text('Onar ve eşleştir'), findsOneWidget);
     },
   );
 }
+
+final Finder _printSystemSwitch = find.byKey(
+  const ValueKey<String>('print-system-switch'),
+);
 
 Future<void> _settle(WidgetTester tester) async {
   // Avoid pumpAndSettle timeouts due to background async tasks.

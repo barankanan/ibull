@@ -61,6 +61,47 @@ class FeatureMenu extends StatelessWidget {
     ),
   ];
 
+  /// Yalnızca admin `app_categories` kaydını aktif ettiğinde gösterilir.
+  static const List<HomeFeatureMenuConfig> optionalConfigs = [
+    HomeFeatureMenuConfig(
+      key: 'ibul_premium',
+      label: 'İBUL Premium',
+      assetPath: 'assets/images/features/ibul-premium.png',
+      comingSoon: true,
+      icon: Icons.workspace_premium_outlined,
+    ),
+  ];
+
+  /// [remoteCategories] sırasıyla (bkz. `HomeShortcutsFetch.sortShortcutRows`)
+  /// kısayolları dizer; uzak kayıt yoksa varsayılan sıra korunur.
+  static List<HomeFeatureMenuConfig> resolveConfigs(
+    List<Map<String, dynamic>> remoteCategories,
+  ) {
+    if (remoteCategories.isEmpty) return featureConfigs;
+    final remoteIndex = <String, int>{};
+    for (var i = 0; i < remoteCategories.length; i++) {
+      final key = remoteCategories[i]['category_key']?.toString() ?? '';
+      if (key.isNotEmpty) remoteIndex.putIfAbsent(key, () => i);
+    }
+    final configs = <HomeFeatureMenuConfig>[
+      ...featureConfigs,
+      for (final optional in optionalConfigs)
+        if (remoteCategories.any(
+          (row) =>
+              row['category_key']?.toString() == optional.key &&
+              row['is_active'] == true,
+        ))
+          optional,
+    ];
+    final fallbackIndex = {
+      for (var i = 0; i < configs.length; i++) configs[i].key: i,
+    };
+    int rank(HomeFeatureMenuConfig c) =>
+        remoteIndex[c.key] ?? remoteCategories.length + fallbackIndex[c.key]!;
+    configs.sort((a, b) => rank(a).compareTo(rank(b)));
+    return configs;
+  }
+
   @override
   Widget build(BuildContext context) {
     return BuildProfileCollector.measure('FeatureMenu', () {
@@ -85,7 +126,7 @@ class FeatureMenu extends StatelessWidget {
           childAspectRatio: isSmallScreen ? 0.75 : 0.7,
           padding: EdgeInsets.zero,
           shrinkWrap: true,
-          children: featureConfigs.map((config) {
+          children: resolveConfigs(remoteCategories).map((config) {
             final remote = remoteByKey[config.key];
             final remoteUrl = remote?['image_url']?.toString();
             final displayName = remote?['display_name']?.toString();

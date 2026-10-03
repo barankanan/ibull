@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/app/ibul_go_router.dart';
+import 'package:ibul_app/app/marketplace_paths.dart';
 import 'package:ibul_app/core/qr_initial_params.dart';
 
 const _deadHomeFiles = <String>[
@@ -127,6 +128,35 @@ void main() {
     expect(
       ibulGoRouterRedirect(
         path: '/hesabim/favoriler',
+        includeAuthRoutes: true,
+        authenticated: true,
+      ),
+      isNull,
+    );
+    expect(
+      ibulGoRouterRedirect(
+        path: MarketplacePaths.legacyMallApplication,
+        includeAuthRoutes: true,
+      ),
+      MarketplacePaths.mallApplication,
+    );
+    expect(
+      ibulGoRouterRedirect(
+        path: MarketplacePaths.mallApplication,
+        includeAuthRoutes: true,
+      ),
+      isNull,
+    );
+    expect(
+      ibulGoRouterRedirect(
+        path: MarketplacePaths.mallManagement,
+        includeAuthRoutes: true,
+      ),
+      isNull,
+    );
+    expect(
+      ibulGoRouterRedirect(
+        path: MarketplacePaths.mallManagementMall('mall-1'),
         includeAuthRoutes: true,
         authenticated: true,
       ),

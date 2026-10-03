@@ -14,6 +14,7 @@ import '../../../../screens/admin/map_admin_page.dart';
 import '../../../../screens/admin/permission_system_page.dart';
 import '../../../../screens/admin/product_approval/product_approval_page.dart';
 import '../../../../screens/admin/brand_verification_admin_page.dart';
+import '../../../mall/admin/mall_application_admin_page.dart';
 import '../../../../screens/admin/store_management_page.dart';
 import '../../../../screens/admin/vehicle_listing_approval_page.dart';
 import '../../../../screens/admin/vehicle_rental_ops_page.dart';
@@ -42,6 +43,8 @@ Widget buildAdminPanelContent({
       return const StoreManagementPage();
     case 'Marka Onay Başvuruları':
       return const BrandVerificationAdminPage();
+    case 'AVM Başvuruları':
+      return const MallApplicationAdminPage();
     case 'Ürün Onay':
       return const ProductApprovalPage();
     case 'Araç İlanları':

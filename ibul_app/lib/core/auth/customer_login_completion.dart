@@ -24,17 +24,17 @@ abstract final class CustomerLoginCompletion {
       debugPrint('[Auth][postLogin] navigationResult=blocked_stale_state');
       return;
     }
-    if (canPop) {
-      AuthFlowLogger.redirect(target: 'pop:login');
-      nav.pop(true);
-      debugPrint('[Auth][postLogin] navigationResult=pop');
-      return;
-    }
     final next = GoRouter.maybeOf(context)?.state.uri.queryParameters['next'];
     if (next != null && next.startsWith('/') && !next.startsWith('//')) {
       AuthFlowLogger.redirect(target: next);
       IbulRouter.go(context, next);
       debugPrint('[Auth][postLogin] navigationResult=next');
+      return;
+    }
+    if (canPop) {
+      AuthFlowLogger.redirect(target: 'pop:login');
+      nav.pop(true);
+      debugPrint('[Auth][postLogin] navigationResult=pop');
       return;
     }
     AuthFlowLogger.redirect(target: '/home?tab=4');

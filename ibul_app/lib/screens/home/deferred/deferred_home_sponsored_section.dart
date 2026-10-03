@@ -57,7 +57,8 @@ class _DeferredHomeSponsoredSectionState extends State<DeferredHomeSponsoredSect
       await Future<void>.delayed(widget.delay);
     }
     if (!mounted) return;
-    setState(() => _loadFuture = _loadLibrary());
+    _loadFuture = _loadLibrary();
+    setState(() {});
   }
 
   Future<void> _loadLibrary() async {
@@ -66,7 +67,10 @@ class _DeferredHomeSponsoredSectionState extends State<DeferredHomeSponsoredSect
   }
 
   void _retry() {
-    setState(() => _loadFuture = _loadLibrary());
+    _loadFuture = _loadLibrary();
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -113,6 +117,7 @@ class _DeferredHomeSponsoredSectionState extends State<DeferredHomeSponsoredSect
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
+          if (widget.suppressSkeleton) return const SizedBox.shrink();
           if (!_shouldShowSkeleton) {
             return HomeSectionError(
               message: 'Sponsorlu bölüm yüklenirken zaman aşımına uğradı.',

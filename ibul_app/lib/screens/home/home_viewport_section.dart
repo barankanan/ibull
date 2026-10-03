@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
@@ -41,6 +43,7 @@ class _HomeViewportSectionState extends State<HomeViewportSection> {
   bool _failed = false;
   Widget? _child;
   DateTime? _prefetchStart;
+  Timer? _fallbackTimer;
 
   @override
   void initState() {
@@ -49,11 +52,18 @@ class _HomeViewportSectionState extends State<HomeViewportSection> {
     // Fallback: ensure all sections trigger within 3 seconds even if
     // the scroll-proximity logic fails to reach them (e.g., user doesn't
     // scroll and the section is outside the no-scroll threshold).
-    Future<void>.delayed(const Duration(seconds: 3), () {
+    _fallbackTimer = Timer(const Duration(seconds: 3), () {
       if (!mounted || _dataTriggered) return;
       debugPrint('[Phase17] ${widget.debugName} fallback_trigger (3s)');
       _triggerCodeAndData();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant HomeViewportSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Keep the mounted section's state, but pass current category/filter props.
+    if (_ready) _child = widget.builder();
   }
 
   @override
@@ -65,6 +75,7 @@ class _HomeViewportSectionState extends State<HomeViewportSection> {
 
   @override
   void dispose() {
+    _fallbackTimer?.cancel();
     _detachScroll();
     super.dispose();
   }
@@ -118,12 +129,12 @@ class _HomeViewportSectionState extends State<HomeViewportSection> {
       _triggerCodeAndData();
       return;
     }
-    
+
     // Code prefetch occurs earlier (1.5 viewports)
     if (!_codeTriggered && distanceAhead <= viewportExtent * 1.5) {
       _triggerCode();
     }
-    
+
     // P1 section threshold without scroll
     if (!_userScrolled) {
       if (distanceAhead <= viewportExtent * 0.25) {
@@ -131,7 +142,7 @@ class _HomeViewportSectionState extends State<HomeViewportSection> {
       }
       return;
     }
-    
+
     // Data prefetch occurs later (widget.prefetchViewports, usually 0.75-1.0)
     if (distanceAhead <= viewportExtent * widget.prefetchViewports) {
       _triggerCodeAndData();
@@ -143,34 +154,39 @@ class _HomeViewportSectionState extends State<HomeViewportSection> {
     _codeTriggered = true;
     _prefetchStart = DateTime.now();
     debugPrint('[Phase17] ${widget.debugName} code_prefetch_trigger');
-    widget.loadLibrary().then((_) {
-      if (!mounted) return;
-      _codeReady = true;
-      final ms = DateTime.now().difference(_prefetchStart!).inMilliseconds;
-      debugPrint('[Phase17] ${widget.debugName} loadLibrary_complete in ${ms}ms');
-      if (_dataTriggered && !_ready) {
-        _mountData();
-      }
-    }).catchError((Object error, StackTrace stackTrace) {
-      debugPrint('[HomeViewportSection] loadLibrary failed: $error');
-      if (!mounted) return;
-      setState(() {
-        _codeTriggered = false;
-        _dataTriggered = false;
-        _failed = true;
-      });
-      _bindScroll();
-    });
+    widget
+        .loadLibrary()
+        .then((_) {
+          if (!mounted) return;
+          _codeReady = true;
+          final ms = DateTime.now().difference(_prefetchStart!).inMilliseconds;
+          debugPrint(
+            '[Phase17] ${widget.debugName} loadLibrary_complete in ${ms}ms',
+          );
+          if (_dataTriggered && !_ready) {
+            _mountData();
+          }
+        })
+        .catchError((Object error, StackTrace stackTrace) {
+          debugPrint('[HomeViewportSection] loadLibrary failed: $error');
+          if (!mounted) return;
+          setState(() {
+            _codeTriggered = false;
+            _dataTriggered = false;
+            _failed = true;
+          });
+          _bindScroll();
+        });
   }
 
   void _triggerCodeAndData() {
     if (!_codeTriggered) _triggerCode();
     if (_dataTriggered) return;
     _dataTriggered = true;
-    
+
     // Trigger sonrası listener'a ihtiyaç yok
     _detachScroll();
-    
+
     debugPrint('[Phase17] ${widget.debugName} data_prefetch_trigger');
     if (_codeReady) {
       _mountData();
@@ -198,10 +214,7 @@ class _HomeViewportSectionState extends State<HomeViewportSection> {
     if (_failed) {
       return SizedBox(
         height: widget.placeholderHeight,
-        child: HomeSectionError(
-          message: widget.errorMessage,
-          onRetry: _retry,
-        ),
+        child: HomeSectionError(message: widget.errorMessage, onRetry: _retry),
       );
     }
     return SizedBox(height: widget.placeholderHeight);
