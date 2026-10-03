@@ -15,7 +15,7 @@ class FullApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return IbulMaterialApp(
       navigatorKey: appNavigatorKey,
-      includeAuthRoutes: false,
+      includeAuthRoutes: true,
       navigatorObservers: [routeObserver, fullSeoRouteObserver],
       builder: (context, child) {
         return OfflineListener(child: child ?? const SizedBox());

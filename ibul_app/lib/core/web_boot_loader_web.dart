@@ -14,6 +14,12 @@ void markFlutterFirstFrame() {
   html.window.performance.mark('ibul_flutter_first_frame');
 }
 
+void recordRouteRedirectDecision(String decision) {
+  try {
+    html.window.sessionStorage['ibul_route_redirect'] = decision;
+  } catch (_) {}
+}
+
 void dismissWebBootLoader() {
   final loader = html.document.getElementById('ibul-loader');
   if (loader == null) return;

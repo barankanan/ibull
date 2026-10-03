@@ -25,7 +25,7 @@ void main() {
     expect(customer, contains('includeAuthRoutes: true'));
     expect(customer, isNot(contains('seller_panel_page')));
     expect(full, contains('IbulMaterialApp'));
-    expect(full, contains('includeAuthRoutes: false'));
+    expect(full, contains('includeAuthRoutes: true'));
     expect(root, contains('IbulMaterialApp'));
     expect(root, contains('includeAuthRoutes: true'));
     final shell = File('lib/app/ibul_material_app.dart').readAsStringSync();

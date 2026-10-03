@@ -5,3 +5,6 @@ import 'web_boot_loader_stub.dart'
 void dismissWebBootLoader() => impl.dismissWebBootLoader();
 
 void markFlutterFirstFrame() => impl.markFlutterFirstFrame();
+
+void recordRouteRedirectDecision(String decision) =>
+    impl.recordRouteRedirectDecision(decision);

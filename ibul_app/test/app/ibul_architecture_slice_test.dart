@@ -41,7 +41,7 @@ void main() {
 
     final full = File('lib/app/full_app.dart').readAsStringSync();
     expect(full, contains('IbulMaterialApp('));
-    expect(full, contains('includeAuthRoutes: false'));
+    expect(full, contains('includeAuthRoutes: true'));
     expect(full, isNot(contains('buildLaunchHome()')));
 
     final root = File('../lib/main.dart').readAsStringSync();

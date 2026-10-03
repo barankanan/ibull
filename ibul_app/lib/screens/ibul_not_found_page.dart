@@ -3,19 +3,31 @@ import 'package:flutter/material.dart';
 import '../app/marketplace_paths.dart';
 import '../core/constants.dart';
 import '../core/home_navigation.dart';
+import '../core/web_boot_loader.dart';
 import '../core/web_seo.dart';
 
-class IbulNotFoundPage extends StatelessWidget {
+class IbulNotFoundPage extends StatefulWidget {
   const IbulNotFoundPage({super.key, this.path});
 
   final String? path;
+
+  @override
+  State<IbulNotFoundPage> createState() => _IbulNotFoundPageState();
+}
+
+class _IbulNotFoundPageState extends State<IbulNotFoundPage> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => dismissWebBootLoader());
+  }
 
   @override
   Widget build(BuildContext context) {
     setSeoMeta(
       title: 'Sayfa bulunamadı | İBUL',
       description: 'Aradığınız İBUL sayfası bulunamadı.',
-      canonicalPath: path ?? MarketplacePaths.home,
+      canonicalPath: widget.path ?? MarketplacePaths.home,
     );
     return Scaffold(
       backgroundColor: AppColors.background,

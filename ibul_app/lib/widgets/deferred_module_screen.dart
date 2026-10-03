@@ -61,6 +61,13 @@ class _DeferredModuleScreenState extends State<DeferredModuleScreen> {
   @override
   void initState() {
     super.initState();
+    // Direct URLs such as /hesabim never mount HomeInitialPage, which is the
+    // only other normal-boot path that removes #ibul-loader. Until this runs
+    // the static HTML chrome stays on top of a painted (often zero-height)
+    // Flutter view, so the tab looks like a white shell even though the route
+    // already built. Reveal on the first frame of this screen — loading,
+    // content, or error — so the overlay cannot outlive the route.
+    _revealHtmlShell();
     // Modül hazırsa `_loadFuture` (late) hiç okunmaz → _startLoad() çalışmaz,
     // FutureBuilder kurulmaz, `loading` widget'ı build/layout/paint edilmez.
     // Trace zinciri değişmiyor: build() yine _TracedDeferredChild döndürüyor,

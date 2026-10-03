@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/qr_initial_params.dart';
+import '../core/web_boot_loader.dart';
 import '../core/route_trace_logger.dart';
 import '../features/blog/blog_paths.dart';
 import '../features/ihiz/delivery/ihiz_route_paths.dart';
@@ -34,6 +35,7 @@ GoRouter createIbulGoRouter({
     initialLocation: '/',
     redirect: (context, state) => ibulGoRouterRedirect(
       path: state.uri.path,
+      next: state.uri.queryParameters['next'],
       includeAuthRoutes: includeAuthRoutes,
       authenticated: _isAuthenticated(),
     ),
@@ -238,9 +240,37 @@ bool _isAuthenticated() {
 /// Redirect rules shared by [createIbulGoRouter] and architecture tests.
 String? ibulGoRouterRedirect({
   required String path,
+  String? next,
   required bool includeAuthRoutes,
   bool authenticated = false,
 }) {
+  final target = _ibulGoRouterRedirect(
+    path: path,
+    next: next,
+    includeAuthRoutes: includeAuthRoutes,
+    authenticated: authenticated,
+  );
+  recordRouteRedirectDecision(
+    'path=$path auth=$authenticated includeAuth=$includeAuthRoutes '
+    'target=${target ?? '-'}',
+  );
+  return target;
+}
+
+String? _ibulGoRouterRedirect({
+  required String path,
+  String? next,
+  required bool includeAuthRoutes,
+  bool authenticated = false,
+}) {
+  if (includeAuthRoutes &&
+      authenticated &&
+      (path == '/login' || path == '/register')) {
+    if (next != null && next.startsWith('/') && !next.startsWith('//')) {
+      return next;
+    }
+    return MarketplacePaths.home;
+  }
   if (path == '/home') {
     return MarketplacePaths.home;
   }

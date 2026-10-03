@@ -150,9 +150,20 @@ class IbulProgressiveBootApp extends StatelessWidget {
       builder: (context, _) {
         switch (controller.status) {
           case IbulBootStatus.loading:
+            // `home:` only owns `/`. On a cold /hesabim or /login load the
+            // shell navigator reports `/` and drops the deep link before
+            // GoRouter exists. Accept the browser path as this shell's route
+            // so the URL survives until the real router redirects.
             return MaterialApp(
               debugShowCheckedModeBanner: false,
-              home: IbulBootShellScreen(currentStep: controller.currentStep),
+              onGenerateRoute: (settings) {
+                return MaterialPageRoute<void>(
+                  settings: settings,
+                  builder: (_) => IbulBootShellScreen(
+                    currentStep: controller.currentStep,
+                  ),
+                );
+              },
             );
           case IbulBootStatus.error:
             return WebBootFatalScreen(
