@@ -3,6 +3,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+HOSTING_ONLY=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --hosting-only) HOSTING_ONLY=1 ;;
+    *)
+      echo "Bilinmeyen argüman: $arg"
+      echo "Kullanım: scripts/build_customer_web_hosting.sh [--hosting-only]"
+      exit 1
+      ;;
+  esac
+done
 IBUL_PUBLIC_DOWNLOADS_BASE="https://github.com/barankanan/ibull/releases/download/ibul-public-downloads"
 
 load_dotenv_fill_missing() {
@@ -169,12 +181,11 @@ flutter build web --release \
   "${DART_DEFINES[@]}"
 
 MAIN_JS="build/web/main.dart.js"
-if [[ -f "$MAIN_JS" ]]; then
-  echo "[WebPerf] main js size hint: $(du -h "$MAIN_JS" | awk '{print $1}')"
-else
-  echo "❌ $MAIN_JS bulunamadı; build başarısız sayılıyor."
+if [[ ! -f "$MAIN_JS" || ! -f "build/web/index.html" ]]; then
+  echo "❌ Hosting çıktısı eksik: index.html veya main.dart.js yok."
   exit 1
 fi
+echo "[WebPerf] main js size hint: $(du -h "$MAIN_JS" | awk '{print $1}')"
 
 # ── Post-build link doğrulaması (main.dart.js + part dosyaları) ──────────────
 # Eski/kırık release linki bundle'a sızarsa build burada durur.
@@ -200,12 +211,21 @@ for token in "${FORBIDDEN_TOKENS[@]}"; do
 done
 echo "✓ Yasaklı token yok (v1.0.2-windows-seller, releases/latest/download)"
 
+# IbulCustomer.apk is a GitHub release asset, not a file in Firebase hosting.
+# hosting:ibul publishes ibul_app/build/web only. The customer entry can drop
+# the APK filename from the JS bundle; that must not fail a hosting build.
+# The default mode still requires the filename so a full release bundle check
+# can catch a missing download URL.
 REQUIRED_TOKENS=(
   "ibul-public-downloads"
-  "IbulCustomer.apk"
   "IbulSellerDesktop.dmg"
   "IbulSellerSetup.exe"
 )
+if [[ "$HOSTING_ONLY" -eq 0 ]]; then
+  REQUIRED_TOKENS+=("IbulCustomer.apk")
+else
+  echo "✓ hosting-only: IbulCustomer.apk bundle token zorunlu değil"
+fi
 for token in "${REQUIRED_TOKENS[@]}"; do
   if ! grep -F -q -- "$token" "${JS_BUNDLE_FILES[@]}"; then
     echo "❌ Beklenen token bundle'da yok: '$token'"

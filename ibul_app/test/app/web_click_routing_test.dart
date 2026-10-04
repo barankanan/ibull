@@ -183,8 +183,8 @@ void main() {
     await tester.pumpAndSettle();
 
     final categoryPath = MarketplacePaths.category(
-      1,
-      2,
+      '1',
+      '2',
       slug: 'Elektronik Telefonlar',
     );
     expect(path(), categoryPath);
@@ -287,7 +287,7 @@ class _ClickHarness extends StatelessWidget {
           ),
           TextButton(
             onPressed: () => GoRouter.of(context).push(
-              MarketplacePaths.category(1, 2, slug: 'Elektronik Telefonlar'),
+              MarketplacePaths.category('1', '2', slug: 'Elektronik Telefonlar'),
             ),
             child: const Text('Telefonlar'),
           ),

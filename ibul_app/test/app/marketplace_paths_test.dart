@@ -10,7 +10,7 @@ void main() {
     expect(MarketplacePaths.store('seller-1', slug: 'Cafe'), '/magaza/seller-1/cafe');
     expect(MarketplacePaths.vehicle('veh-9'), '/arac/veh-9');
     expect(
-      MarketplacePaths.category(4, 12, slug: 'Elektronik Telefonlar'),
+      MarketplacePaths.category('4', '12', slug: 'Elektronik Telefonlar'),
       '/kategori/4/12/elektronik-telefonlar',
     );
     expect(

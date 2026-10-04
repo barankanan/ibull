@@ -289,7 +289,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
             : (quote.error ?? 'Kupon uygulanamadı.'),
         isError: !quote.ok,
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'Checkout',
+        error,
+        stackTrace,
+        context: 'applyCouponCode',
+      );
       if (!mounted) return;
       await _showCheckoutFeedback('Kupon doğrulanamadı.', isError: true);
     }

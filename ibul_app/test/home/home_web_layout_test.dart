@@ -187,8 +187,8 @@ void main() {
                     onSelected: (_, _) => fail('Parent tap changed home state'),
                     onOpenSubCategory: (mainCategory, subCategory) {
                       selectedRoute = MarketplacePaths.category(
-                        mainCategory.id!,
-                        subCategory.id!,
+                        mainCategory.id!.toString(),
+                        subCategory.id!.toString(),
                         slug: '${mainCategory.name}-${subCategory.name}',
                       );
                     },
