@@ -1,7 +1,7 @@
 -- categories bucket + RLS policies
--- Bu proje Supabase Auth kullanmadan da admin panelden upload yapabildiği için
--- insert/update/delete policy'lerini PUBLIC olarak aciyoruz.
--- Uretimde istenirse sadece authenticated role'a daraltilabilir.
+-- Public read stays. Write, update, and delete require public.is_admin_user(),
+-- which reads public.users.role. Anonymous clients cannot upload or delete.
+-- Live enforcement is Stage B: manual_patches/20261004_p0_money_authority_stage_b_enforce.sql.
 
 insert into storage.buckets (id, name, public)
 values ('categories', 'categories', true)
@@ -15,23 +15,30 @@ to public
 using (bucket_id = 'categories');
 
 drop policy if exists "categories_public_insert" on storage.objects;
-create policy "categories_public_insert"
+drop policy if exists "categories_public_update" on storage.objects;
+drop policy if exists "categories_public_delete" on storage.objects;
+
+drop policy if exists "categories_admin_insert" on storage.objects;
+create policy "categories_admin_insert"
 on storage.objects
 for insert
-to public
-with check (bucket_id = 'categories');
+to authenticated
+with check (
+  bucket_id = 'categories'
+  and public.is_admin_user()
+);
 
-drop policy if exists "categories_public_update" on storage.objects;
-create policy "categories_public_update"
+drop policy if exists "categories_admin_update" on storage.objects;
+create policy "categories_admin_update"
 on storage.objects
 for update
-to public
-using (bucket_id = 'categories')
-with check (bucket_id = 'categories');
+to authenticated
+using (bucket_id = 'categories' and public.is_admin_user())
+with check (bucket_id = 'categories' and public.is_admin_user());
 
-drop policy if exists "categories_public_delete" on storage.objects;
-create policy "categories_public_delete"
+drop policy if exists "categories_admin_delete" on storage.objects;
+create policy "categories_admin_delete"
 on storage.objects
 for delete
-to public
-using (bucket_id = 'categories');
+to authenticated
+using (bucket_id = 'categories' and public.is_admin_user());

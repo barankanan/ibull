@@ -21904,15 +21904,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: () => _updateOrderStatus(
-                  order,
-                  status: 'refunded',
-                  title: 'İade tamamlandı',
-                  description:
-                      'İade süreci tamamlandı ve geri ödeme akışına aktarıldı.',
-                ),
+                onPressed: () => _requestSellerRefund(order),
                 icon: const Icon(Icons.verified_rounded),
-                label: const Text('İade Tamamlandı'),
+                label: const Text('İade Talebini Onayla'),
               ),
             ),
           ],
@@ -23253,6 +23247,29 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         child: const Icon(Icons.broken_image_outlined),
       ),
     );
+  }
+
+  Future<void> _requestSellerRefund(Map<String, dynamic> order) async {
+    final itemId = order['id']?.toString() ?? '';
+    try {
+      await OrderService.instance.requestMarketplaceRefund(orderItemId: itemId);
+      if (itemId.isNotEmpty) {
+        await _reloadAndKeepSellerOrderDetail(itemId);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'İade işlemi başlatıldı. Ödeme sağlayıcı onayı bekleniyor.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('İade talebi başlatılamadı: $e')),
+      );
+    }
   }
 
   Future<void> _updateOrderStatus(

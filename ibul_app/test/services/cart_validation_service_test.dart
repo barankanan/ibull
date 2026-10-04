@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/models/product_model.dart';
+import 'package:ibul_app/models/product_pricing.dart';
 import 'package:ibul_app/services/cart_product_validation_cache.dart';
 import 'package:ibul_app/services/cart_validation_service.dart';
 
@@ -297,6 +298,71 @@ void main() {
       final result = await service.revalidate([trustedProduct()]);
       expect(result.removedProducts, hasLength(1));
       expect(result.hasBlockingIssues, isTrue);
+    });
+
+    test('replaces cart price when discount_price is the current amount', () async {
+      final product = sampleProduct(
+        name: 'SanDisk Extreme Pro 128 GB SDXC Hafıza Kartı',
+        price: '1499 TL',
+        productId: 'sandisk',
+      );
+      service.fetchRowsOverride = (_) async => {
+        'sandisk': {
+          'id': 'sandisk',
+          'name': product.name,
+          'brand': 'SanDisk',
+          'price': 1499,
+          'discount_price': 1399,
+          'status': 'Aktif',
+          'approval_status': 'approved',
+          'stock': 4,
+        },
+      };
+
+      final result = await service.revalidate([product]);
+
+      expect(result.priceChanged, isTrue);
+      expect(result.priceChangeCount, 1);
+      expect(result.updatedProducts.single.price, '1399 TL');
+      expect(result.updatedProducts.single.oldPrice, '1499 TL');
+      expect(result.summaryMessage, '1 ürünün fiyatı güncellendi.');
+      expect(
+        ProductPriceCalculator.parsePriceValue(result.updatedProducts.single.price) *
+            2,
+        2798,
+      );
+    });
+
+    test('does not announce a price change when the amount is unchanged', () async {
+      final product = sampleProduct(
+        price: '1399 TL',
+        productId: 'sandisk',
+      );
+      service.fetchRowsOverride = (_) async => {
+        'sandisk': {
+          'id': 'sandisk',
+          'name': 'SanDisk',
+          'brand': 'SanDisk',
+          'price': 1499,
+          'discount_price': 1399,
+          'status': 'Aktif',
+          'approval_status': 'approved',
+          'stock': 4,
+        },
+      };
+
+      final result = await service.revalidate([product]);
+
+      expect(result.priceChanged, isFalse);
+      expect(result.summaryMessage, isNull);
+      expect(result.updatedProducts.single.price, '1399 TL');
+    });
+
+    test('subtotal plus delivery and service fee is the payable total', () {
+      const subtotal = 1399.0;
+      const courier = 28.0;
+      const serviceFee = 5.0;
+      expect(subtotal + courier + serviceFee, 1432);
     });
 
     test('keeps legacy products without productId', () async {

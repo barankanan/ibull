@@ -1,4 +1,5 @@
 import '../models/product_model.dart';
+import '../models/product_pricing.dart';
 import '../utils/product_visibility_helper.dart';
 import 'cart_product_validation_cache.dart';
 import 'supabase_service.dart';
@@ -36,12 +37,14 @@ class CartRevalidationResult {
     required this.removedProducts,
     required this.priceChanged,
     required this.hasBlockingIssues,
+    this.priceChangeCount = 0,
     this.summaryMessage,
   });
 
   final List<Product> updatedProducts;
   final List<Product> removedProducts;
   final bool priceChanged;
+  final int priceChangeCount;
   final bool hasBlockingIssues;
   final String? summaryMessage;
 
@@ -139,7 +142,8 @@ class CartValidationService {
       category: refreshed.category ?? product.category,
       subCategory: refreshed.subCategory ?? product.subCategory,
       price: refreshed.price,
-      oldPrice: refreshed.oldPrice ?? product.oldPrice,
+      oldPrice: refreshed.oldPrice ?? '',
+      cartQuantity: product.cartQuantity,
       images: refreshed.images.isNotEmpty ? refreshed.images : product.images,
       variantOptions: refreshed.variantOptions ?? product.variantOptions,
       catalogStatus: refreshed.catalogStatus ?? product.catalogStatus,
@@ -235,7 +239,7 @@ class CartValidationService {
 
     final updated = <Product>[];
     final removed = <Product>[];
-    var priceChanged = false;
+    var priceChangeCount = 0;
     final messages = <String>[];
 
     for (final product in products) {
@@ -258,8 +262,10 @@ class CartValidationService {
       }
 
       final refreshed = applyRowToProduct(product, row);
-      if (refreshed.price.trim() != product.price.trim()) {
-        priceChanged = true;
+      final previous = ProductPriceCalculator.parsePriceValue(product.price);
+      final next = ProductPriceCalculator.parsePriceValue(refreshed.price);
+      if ((previous - next).abs() >= 0.01) {
+        priceChangeCount++;
       }
       updated.add(refreshed);
     }
@@ -267,14 +273,17 @@ class CartValidationService {
     if (removed.isNotEmpty) {
       messages.add('Sepetindeki bazı ürünler artık satışta değil.');
     }
-    if (priceChanged) {
+    if (priceChangeCount == 1) {
+      messages.add('1 ürünün fiyatı güncellendi.');
+    } else if (priceChangeCount > 1) {
       messages.add('Bazı ürünlerin fiyatı güncellendi.');
     }
 
     return CartRevalidationResult(
       updatedProducts: updated,
       removedProducts: removed,
-      priceChanged: priceChanged,
+      priceChanged: priceChangeCount > 0,
+      priceChangeCount: priceChangeCount,
       hasBlockingIssues: updated.isEmpty && products.isNotEmpty,
       summaryMessage: messages.isEmpty ? null : messages.join(' '),
     );

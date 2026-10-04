@@ -1,27 +1,32 @@
-import { callRpc, getAuthedContext, jsonResponse, mapCaughtError, parseJson } from '../_shared/http.ts';
-
-type RequestBody = {
-  return_id: string;
-  provider: string;
-  provider_refund_id?: string;
-  amount: number;
-  success: boolean;
-  raw?: Record<string, unknown>;
-};
+import { callRpc, errorResponse, getAuthedContext, jsonResponse, mapCaughtError } from '../_shared/http.ts';
 
 Deno.serve(async (req) => {
   try {
     const { user, serviceClient } = await getAuthedContext(req);
-    const body = await parseJson<RequestBody>(req);
-    const data = await callRpc<Record<string, unknown>>(serviceClient, 'seller_ops.refund_order_return', {
-      p_actor_user_id: user.id,
-      p_return_id: body.return_id,
-      p_provider: body.provider,
-      p_provider_refund_id: body.provider_refund_id ?? null,
-      p_amount: body.amount,
-      p_success: body.success,
-      p_raw: body.raw ?? {},
-    });
+    const raw = await req.text();
+    if (raw.length > 16384) {
+      return errorResponse('BODY_TOO_LARGE', 'İstek gövdesi çok büyük.', 413);
+    }
+    const body = raw.trim() === '' ? {} : JSON.parse(raw) as Record<string, unknown>;
+    if ('amount' in body || 'p_amount' in body || 'success' in body || 'p_success' in body) {
+      return errorResponse(
+        'CLIENT_REFUND_REJECTED',
+        'İade tutarı ve başarı durumu istemciden kabul edilmez.',
+        403,
+      );
+    }
+    const returnId = body.return_id;
+    if (typeof returnId !== 'string' || returnId.trim() === '') {
+      return errorResponse('RETURN_ID_REQUIRED', 'İade kaydı gerekli.', 400);
+    }
+    const data = await callRpc<Record<string, unknown>>(
+      serviceClient,
+      'seller_ops.request_return_refund',
+      {
+        p_actor_user_id: user.id,
+        p_return_id: returnId,
+      },
+    );
     return jsonResponse({ ok: true, data });
   } catch (error) {
     return mapCaughtError(error);
