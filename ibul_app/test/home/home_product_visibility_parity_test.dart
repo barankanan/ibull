@@ -84,6 +84,7 @@ void main() {
       );
       expect(menuBlock, isNot(contains('approval_status')));
       expect(menuBlock, contains('filterPublicProductMaps'));
+      expect(menuBlock, contains('discount_price'));
     });
 
     test('home_screen_core uses fetchInitialHomeProductsReport not preview DTO', () {

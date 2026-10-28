@@ -14,6 +14,8 @@ class AllReviewsPage extends StatefulWidget {
   final String brand;
   final String? storeName;
   final List<String> images;
+  final String? productId;
+  final String? sellerId;
 
   const AllReviewsPage({
     super.key,
@@ -21,6 +23,8 @@ class AllReviewsPage extends StatefulWidget {
     required this.brand,
     required this.storeName,
     required this.images,
+    this.productId,
+    this.sellerId,
   });
 
   @override
@@ -55,6 +59,8 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
       final summary = await ReviewRepository.instance.getProductReviewSummary(
         productName: widget.productName,
         storeName: widget.storeName,
+        productId: widget.productId,
+        sellerId: widget.sellerId,
         localReviews: localReviews,
       );
       if (!mounted) return;

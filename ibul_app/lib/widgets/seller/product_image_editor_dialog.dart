@@ -55,6 +55,17 @@ Future<Uint8List?> showProductImageEditorDialog(
   );
 }
 
+/// Görsel kırpma diyaloğu — ProductImageEditorDialog sarmalayıcısı
+class ImageCropDialog extends StatelessWidget {
+  final Uint8List imageBytes;
+  const ImageCropDialog({super.key, required this.imageBytes});
+
+  @override
+  Widget build(BuildContext context) {
+    return ProductImageEditorDialog(initialBytes: imageBytes);
+  }
+}
+
 class ProductImageEditorDialog extends StatefulWidget {
   const ProductImageEditorDialog({super.key, required this.initialBytes});
 

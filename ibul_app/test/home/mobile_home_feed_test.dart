@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/core/app_state.dart';
 import 'package:ibul_app/core/cart_state.dart';
@@ -10,8 +13,11 @@ import 'package:ibul_app/features/vehicle/models/vehicle_enums.dart';
 import 'package:ibul_app/features/vehicle/models/vehicle_listing.dart';
 import 'package:ibul_app/models/db_category.dart';
 import 'package:ibul_app/models/product_model.dart';
+import 'package:ibul_app/screens/home/mobile/mobile_home_catalog.dart';
+import 'package:ibul_app/screens/home/mobile/mobile_home_collections.dart';
 import 'package:ibul_app/screens/home/mobile/mobile_home_feed.dart';
 import 'package:ibul_app/screens/home/mobile/mobile_home_models.dart';
+import 'package:ibul_app/screens/home/mobile/mobile_home_store_previews.dart';
 import 'package:ibul_app/screens/home/mobile/mobile_home_nav.dart';
 import 'package:ibul_app/widgets/custom_header.dart';
 import 'package:ibul_app/widgets/product_card.dart';
@@ -191,6 +197,12 @@ void main() {
       tester.getSize(find.byKey(const ValueKey('mobile-home-banner'))).height,
       loading.height,
     );
+    final nearby = find.byKey(
+      const ValueKey('mobile-home-nearby'),
+      skipOffstage: false,
+    );
+    expect(nearby, findsOneWidget);
+    await tester.ensureVisible(nearby);
     expect(find.text('Teknosa'), findsOneWidget);
     expect(find.text('Primall new • 1. Kat'), findsOneWidget);
     expect(find.text('Elektronik • 374 m'), findsOneWidget);
@@ -277,8 +289,23 @@ void main() {
       );
       expect(
         tester.getSize(find.byKey(const ValueKey('mobile-home-chips'))).height,
-        38,
+        32,
       );
+      if (width == 390) {
+        final header = tester.getRect(
+          find.byKey(const ValueKey('mobile-home-header')),
+        );
+        final chips = tester.getRect(
+          find.byKey(const ValueKey('mobile-home-chips')),
+        );
+        final banner = tester.getRect(
+          find.byKey(const ValueKey('mobile-home-banner')),
+        );
+        final above = chips.top - header.bottom;
+        final below = banner.top - chips.bottom;
+        expect(above, 12);
+        expect(below, 12);
+      }
       expect(
         find.byKey(const ValueKey('mobile-nav-home-active')),
         findsOneWidget,
@@ -323,7 +350,7 @@ void main() {
         (widget) =>
             widget is Text &&
             widget.data == 'Sana Özel' &&
-            widget.style?.fontSize == 22,
+            widget.style?.fontSize == 19,
         skipOffstage: false,
       );
       expect(sectionTitle, findsWidgets);
@@ -379,8 +406,11 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     await tester.pumpWidget(
-      ChangeNotifierProvider<AppState>.value(
-        value: AppState(),
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppState>.value(value: AppState()),
+          ChangeNotifierProvider<FavoriteState>.value(value: FavoriteState()),
+        ],
         child: MaterialApp(
           onGenerateRoute: (settings) => MaterialPageRoute<void>(
             builder: (_) => Text('route ${settings.name}'),
@@ -425,7 +455,7 @@ void main() {
     tester,
   ) async {
     final products = [
-      for (var i = 0; i < 4; i++)
+      for (var i = 0; i < 12; i++)
         Product(
           productId: 'e$i',
           name: 'Elektronik $i',
@@ -453,7 +483,7 @@ void main() {
     );
     expect(
       find.byKey(
-        const ValueKey('mobile-product-rail-Elektronik'),
+        const ValueKey('mobile-product-rail-Elektronik Dünyası'),
         skipOffstage: false,
       ),
       findsOneWidget,
@@ -463,7 +493,7 @@ void main() {
         const ValueKey('mobile-product-rail-Telefonlar'),
         skipOffstage: false,
       ),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.byKey(const ValueKey('mobile-product-rail-Moda')),
@@ -712,5 +742,268 @@ void main() {
       expect(search.width, greaterThan(120));
       expect(tester.takeException(), isNull);
     });
+  }
+
+  test('smart collections mix categories and do not repeat products', () {
+    final pool = [
+      for (var i = 0; i < 8; i++)
+        Product(
+          productId: 'feat$i',
+          name: 'Öne Çıkan $i',
+          brand: 'Marka',
+          price: '100 TL',
+          rating: 4,
+          reviewCount: 1,
+          tags: const [],
+          images: const [],
+          category: 'Market',
+        ),
+      Product(
+        productId: 'phone',
+        name: 'Telefon',
+        brand: 'Marka',
+        price: '100 TL',
+        rating: 5,
+        reviewCount: 9,
+        tags: const [],
+        images: const [],
+        category: 'Elektronik',
+        subCategory: 'Akıllı Telefonlar',
+      ),
+      Product(
+        productId: 'tv',
+        name: 'Televizyon',
+        brand: 'Marka',
+        price: '100 TL',
+        rating: 4,
+        reviewCount: 4,
+        tags: const [],
+        images: const [],
+        category: 'Elektronik',
+        subCategory: 'Televizyon',
+      ),
+      Product(
+        productId: 'tablet',
+        name: 'Tablet',
+        brand: 'Marka',
+        price: '100 TL',
+        rating: 4,
+        reviewCount: 3,
+        tags: const [],
+        images: const [],
+        category: 'Elektronik',
+        subCategory: 'Tablet',
+      ),
+      Product(
+        productId: 'dress',
+        name: 'Elbise',
+        brand: 'Marka',
+        price: '100 TL',
+        rating: 4,
+        reviewCount: 2,
+        tags: const [],
+        images: const [],
+        category: 'Giyim',
+        subCategory: 'Kadın',
+      ),
+      Product(
+        productId: 'shoe',
+        name: 'Ayakkabı',
+        brand: 'Marka',
+        price: '100 TL',
+        rating: 4,
+        reviewCount: 2,
+        tags: const [],
+        images: const [],
+        category: 'Giyim',
+        subCategory: 'Ayakkabı',
+      ),
+      Product(
+        productId: 'bag',
+        name: 'Çanta',
+        brand: 'Marka',
+        price: '100 TL',
+        rating: 4,
+        reviewCount: 2,
+        tags: const [],
+        images: const [],
+        category: 'Giyim',
+        subCategory: 'Çanta',
+      ),
+    ];
+    final plan = planMobileHomeCollections(pool: pool);
+    final titles = plan.collections.map((item) => item.title).toList();
+    expect(titles, contains('Elektronik Dünyası'));
+    expect(titles, contains('Tarzına Uygun Kıyafetler'));
+    expect(titles, isNot(contains('Akıllı Telefonlar')));
+    expect(titles, isNot(contains('Televizyon')));
+    final electronics = plan.collections
+        .firstWhere((item) => item.title == 'Elektronik Dünyası')
+        .products;
+    expect(
+      electronics.map((item) => item.subCategory).toSet().length,
+      greaterThan(1),
+    );
+    final ids = [
+      for (final collection in plan.collections)
+        for (final product in collection.products) product.productId,
+    ];
+    expect(ids.toSet().length, ids.length);
+    expect(ids, isNot(contains('feat0')));
+  });
+
+  test('personalized title uses the profile first name or falls back', () {
+    expect(mobilePersonalizedTitle(null), 'Sana Özel');
+    expect(mobilePersonalizedTitle({'name': 'Kullanıcı'}), 'Sana Özel');
+    expect(
+      mobilePersonalizedTitle({'display_name': 'Baran Kanan'}),
+      'Baran Sana Özel',
+    );
+  });
+
+  test('store preview fit keeps one bulk cap and shows overflow', () {
+    final wide = MobileStorePreviewFit.measure(innerWidth: 320, available: 8);
+    expect(wide.visible, greaterThan(0));
+    expect(wide.visible + wide.hidden, 8);
+    final narrow = MobileStorePreviewFit.measure(innerWidth: 180, available: 8);
+    expect(narrow.hidden, greaterThan(0));
+    expect(narrow.visible + narrow.hidden, 8);
+  });
+
+  test('store preview loader sends one bulk call for many stores', () async {
+    MobileHomeQueryLog.reset();
+    var calls = 0;
+    final loader = MobileStorePreviewLoader(
+      fetch: (stores) async {
+        calls++;
+        return {
+          for (final store in stores) store.id: const <Product>[],
+        };
+      },
+    );
+    final stores = [
+      for (var i = 0; i < 8; i++)
+        MobileNearbyStore(id: 's$i', name: 'Magaza $i'),
+    ];
+    final first = loader.load(stores);
+    final second = loader.load(stores);
+    await Future.wait([first, second]);
+    expect(calls, 1);
+    expect(MobileHomeQueryLog.storePreviewQueries, 1);
+  });
+
+  testWidgets('mobile home pull refresh does not overlap fetches', (
+    tester,
+  ) async {
+    final gate = _HoldGate(MobileHomeBundle.empty);
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    var companion = 0;
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppState>.value(value: AppState()),
+          ChangeNotifierProvider<FavoriteState>.value(value: FavoriteState()),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: MobileHomeFeed(
+              bannerUrls: const [],
+              heroLoading: false,
+              gateway: gate,
+              onPullRefresh: () async => companion++,
+              onSearch: (_) {},
+              onOpenMap: () {},
+              onOpenCategories: () {},
+              onOpenCategory: (_) {},
+              onOpenVehicles: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(gate.calls, 1);
+    expect(gate.maxInFlight, 1);
+    final indicator = tester.widget<RefreshIndicator>(
+      find.byKey(const ValueKey('mobile-home-refresh')),
+    );
+    final joined = indicator.onRefresh();
+    await tester.pump();
+    expect(gate.calls, 1);
+    expect(gate.maxInFlight, 1);
+    gate.release();
+    await joined;
+    await tester.pump();
+    expect(companion, 0);
+    final again = indicator.onRefresh();
+    final overlap = indicator.onRefresh();
+    await tester.pump();
+    expect(gate.maxInFlight, 1);
+    gate.release();
+    await Future.wait([again, overlap]);
+    await tester.pump();
+    expect(gate.calls, 2);
+    expect(companion, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mobile home sections follow the requested order', (tester) async {
+    await _pump(tester, size: const Size(390, 844), bundle: _bundle());
+    double offsetOf(Finder finder) {
+      final box = tester.renderObject<RenderBox>(finder);
+      return RenderAbstractViewport.of(box).getOffsetToReveal(box, 0).offset;
+    }
+
+    final personal = offsetOf(
+      find.byKey(
+        const ValueKey('mobile-product-rail-Sana Özel'),
+        skipOffstage: false,
+      ),
+    );
+    final malls = offsetOf(
+      find.byKey(const ValueKey('mobile-home-malls'), skipOffstage: false),
+    );
+    final stores = offsetOf(
+      find.byKey(const ValueKey('mobile-home-nearby'), skipOffstage: false),
+    );
+    expect(personal, lessThan(malls));
+    expect(malls, lessThan(stores));
+    expect(find.text('Yakınındaki AVM\'ler', skipOffstage: false), findsOneWidget);
+    expect(
+      find.text('Yakınındaki Mağazalar', skipOffstage: false),
+      findsOneWidget,
+    );
+    expect(find.text('Yakındaki Mağazalar'), findsNothing);
+    await tester.pump(const Duration(seconds: 9));
+  });
+}
+
+class _HoldGate implements MobileHomeGateway {
+  _HoldGate(this.bundle);
+
+  final MobileHomeBundle bundle;
+  var calls = 0;
+  var inFlight = 0;
+  var maxInFlight = 0;
+  Completer<void>? _hold;
+
+  void release() {
+    final hold = _hold;
+    _hold = null;
+    if (hold != null && !hold.isCompleted) hold.complete();
+  }
+
+  @override
+  Future<MobileHomeBundle> load() async {
+    calls++;
+    inFlight++;
+    if (inFlight > maxInFlight) maxInFlight = inFlight;
+    final hold = Completer<void>();
+    _hold = hold;
+    await hold.future;
+    inFlight--;
+    return bundle;
   }
 }

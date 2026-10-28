@@ -49,6 +49,24 @@ class ProductFilterAttributeExtractor {
       'Ekran Kartı',
       'İşletim Sistemi',
     ],
+    'elektronik::televizyon': [
+      'Marka',
+      'Model',
+      'Ekran Boyutu',
+      'Çözünürlük',
+      'Panel Tipi',
+      'Smart TV',
+      'Garanti',
+    ],
+    'elektronik::tv': [
+      'Marka',
+      'Model',
+      'Ekran Boyutu',
+      'Çözünürlük',
+      'Panel Tipi',
+      'Smart TV',
+      'Garanti',
+    ],
     'erkek::giyim': ['Beden', 'Renk', 'Kumaş', 'Cinsiyet', 'Sezon', 'Kalıp', 'Marka'],
     'kadin::giyim': ['Beden', 'Renk', 'Kumaş', 'Cinsiyet', 'Sezon', 'Kalıp', 'Marka'],
     'erkek::ayakkabi': [
@@ -87,12 +105,15 @@ class ProductFilterAttributeExtractor {
   };
 
   static final Map<String, RegExp> _patternExtractors = {
-    'Depolama': RegExp(r'\b(\d+)\s*(?:GB|TB)\b', caseSensitive: false),
-    'RAM': RegExp(r'\b(\d+)\s*GB\s*RAM\b', caseSensitive: false),
+    'Depolama': RegExp(r'\b(\d+(?:[.,]\d+)?\s*(?:GB|TB))\b', caseSensitive: false),
+    'RAM': RegExp(r'\b(\d+(?:[.,]\d+)?\s*GB(?:\s*RAM)?)\b', caseSensitive: false),
     'Beden': RegExp(r'\b(XXS|XS|S|M|L|XL|XXL|XXXL)\b', caseSensitive: false),
-    'Numara': RegExp(r'\b(\d{2}(?:[.,]\d)?)\s*(?:numara|no)?\b', caseSensitive: false),
+    'Numara': RegExp(
+      r'\b(\d{2}(?:[.,]\d)?(?:\s*(?:numara|no))?)\b',
+      caseSensitive: false,
+    ),
     'Ekran Boyutu': RegExp(
-      r'\b(\d{1,2}(?:[.,]\d)?)\s*(?:inç|inch|")\b',
+      r'\b(\d{1,2}(?:[.,]\d)?\s*(?:inç|inch|"))(?![a-zA-Z0-9])',
       caseSensitive: false,
     ),
   };
@@ -132,6 +153,9 @@ class ProductFilterAttributeExtractor {
     if (key.contains('bilgisayar') || key.contains('laptop')) {
       return _categoryHints['elektronik::bilgisayar']!;
     }
+    if (key.contains('televizyon') || key.contains('tv')) {
+      return _categoryHints['elektronik::televizyon']!;
+    }
     if (key.contains('yemek') || mainCategory.toLowerCase().contains('yemek')) {
       return const [
         'Yemek Türü',
@@ -141,7 +165,7 @@ class ProductFilterAttributeExtractor {
       ];
     }
 
-    return const ['Renk', 'Marka', 'Model', 'Beden', 'Depolama', 'RAM'];
+    return const ['Renk', 'Marka', 'Model', 'Beden', 'Depolama', 'RAM', 'Ekran Boyutu'];
   }
 
   static Map<String, Set<String>> extractDynamicAttributes({
@@ -238,10 +262,19 @@ class ProductFilterAttributeExtractor {
     switch (hint) {
       case 'Depolama':
         final upper = (fullMatch ?? captured).toUpperCase();
-        if (upper.contains('TB')) return '${captured.replaceAll(',', '.')}TB';
-        return '${captured.replaceAll(',', '.')}GB';
+        final numPart = RegExp(r'\d+(?:[.,]\d+)?').firstMatch(captured)?.group(0)?.replaceAll(',', '.') ?? captured;
+        if (upper.contains('TB')) return '$numPart TB';
+        if (upper.contains('GB')) return '$numPart GB';
+        return captured;
       case 'RAM':
-        return '${captured.replaceAll(',', '.')}GB';
+        final numPart = RegExp(r'\d+(?:[.,]\d+)?').firstMatch(captured)?.group(0)?.replaceAll(',', '.') ?? captured;
+        return '$numPart GB';
+      case 'Ekran Boyutu':
+        final numPart = RegExp(r'\d{1,2}(?:[.,]\d)?').firstMatch(captured)?.group(0)?.replaceAll(',', '.') ?? captured;
+        return '$numPart inç';
+      case 'Numara':
+        final numPart = RegExp(r'\d{2}(?:[.,]\d)?').firstMatch(captured)?.group(0)?.replaceAll(',', '.') ?? captured;
+        return numPart;
       case 'Beden':
         return captured.toUpperCase();
       default:

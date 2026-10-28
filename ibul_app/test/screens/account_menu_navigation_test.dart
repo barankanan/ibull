@@ -7,7 +7,7 @@ import 'package:ibul_app/screens/cart/cart_premium_banner.dart';
 import 'package:ibul_app/screens/coming_soon/coming_soon_catalog.dart';
 import 'package:ibul_app/screens/coming_soon/coming_soon_shelf_page.dart';
 import 'package:ibul_app/screens/feature_coming_soon_page.dart';
-import 'package:ibul_app/screens/legal/legal_document_page.dart';
+import 'package:ibul_app/screens/account/help_center_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -81,7 +81,7 @@ void main() {
     expect(find.text('BecomeSellerStub'), findsOneWidget);
   });
 
-  testWidgets('help opens FAQ legal page', (tester) async {
+  testWidgets('help opens the help center', (tester) async {
     await tester.pumpWidget(
       harness(
         home: Builder(
@@ -96,7 +96,7 @@ void main() {
     await tester.tap(find.text('open-help'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(LegalDocumentPage), findsOneWidget);
+    expect(find.byType(HelpCenterPage), findsOneWidget);
   });
 
   testWidgets('fast send opens live İHIZ package page', (tester) async {

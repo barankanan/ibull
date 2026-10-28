@@ -6,16 +6,10 @@ import '../widgets/ihiz_landing_widgets.dart';
 class IhizHeroSection extends StatelessWidget {
   const IhizHeroSection({
     super.key,
-    required this.onLogin,
-    required this.onCourierApply,
-    required this.onBusinessJoin,
-    required this.onHowItWorks,
+    required this.onTrack,
   });
 
-  final VoidCallback onLogin;
-  final VoidCallback onCourierApply;
-  final VoidCallback onBusinessJoin;
-  final VoidCallback onHowItWorks;
+  final VoidCallback onTrack;
 
   @override
   Widget build(BuildContext context) {
@@ -23,7 +17,7 @@ class IhizHeroSection extends StatelessWidget {
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         final mobile = IhizBrand.isMobile(width);
-        final desktop = IhizBrand.isDesktop(width);
+        final titleSize = mobile ? 32.0 : (width >= 1100 ? 48.0 : 40.0);
 
         final copy = Column(
           crossAxisAlignment:
@@ -32,147 +26,85 @@ class IhizHeroSection extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.12),
+                color: IhizBrand.blue.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
               ),
               child: const Text(
                 'İHIZ · TESLİMAT PLATFORMU',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: IhizBrand.blue,
                   fontWeight: FontWeight.w800,
                   fontSize: 12,
-                  letterSpacing: 1.1,
+                  letterSpacing: 0.8,
                 ),
-              ),
-            ),
-            SizedBox(height: mobile ? 18 : 22),
-            Text(
-              'Teslimatın yeni hızı: İhız.',
-              textAlign: mobile ? TextAlign.center : TextAlign.start,
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: mobile ? 32 : (desktop ? 48 : 40),
-                height: 1.08,
-                letterSpacing: -0.8,
               ),
             ),
             SizedBox(height: mobile ? 14 : 18),
             Text(
-              'Mağazalardan müşterilere hızlı, güvenli ve takip edilebilir teslimat. İhız, siparişini en yakın uygun kuryeyle buluşturur; sen satışına, biz teslimata odaklanırız.',
+              'Teslimatın yeni hızı:',
               textAlign: mobile ? TextAlign.center : TextAlign.start,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.86),
-                fontWeight: FontWeight.w600,
-                fontSize: mobile ? 15 : 17,
-                height: 1.55,
+                color: IhizBrand.ink,
+                fontWeight: FontWeight.w900,
+                fontSize: titleSize,
+                height: 1.05,
+                letterSpacing: -0.8,
               ),
             ),
-            SizedBox(height: mobile ? 22 : 28),
-            if (mobile)
-              Column(
-                children: [
-                  IhizSecondaryButton(
-                    label: 'Giriş Yap',
-                    icon: Icons.login_rounded,
-                    onPressed: onLogin,
-                    expanded: true,
-                    onDark: true,
-                  ),
-                  const SizedBox(height: 12),
-                  IhizPrimaryButton(
-                    label: 'Kurye Ol',
-                    icon: Icons.two_wheeler_rounded,
-                    onPressed: onCourierApply,
-                    expanded: true,
-                  ),
-                  const SizedBox(height: 12),
-                  IhizSecondaryButton(
-                    label: 'Nasıl Çalışır?',
-                    icon: Icons.play_circle_outline_rounded,
-                    onPressed: onHowItWorks,
-                    expanded: true,
-                    onDark: true,
-                  ),
-                  const SizedBox(height: 12),
-                  IhizSecondaryButton(
-                    label: 'İşletme Olarak Kullan',
-                    icon: Icons.storefront_rounded,
-                    onPressed: onBusinessJoin,
-                    expanded: true,
-                    onDark: true,
-                  ),
-                ],
-              )
-            else
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  IhizSecondaryButton(
-                    label: 'Giriş Yap',
-                    icon: Icons.login_rounded,
-                    onPressed: onLogin,
-                    onDark: true,
-                  ),
-                  IhizPrimaryButton(
-                    label: 'Kurye Ol',
-                    icon: Icons.two_wheeler_rounded,
-                    onPressed: onCourierApply,
-                  ),
-                  IhizSecondaryButton(
-                    label: 'Nasıl Çalışır?',
-                    icon: Icons.play_circle_outline_rounded,
-                    onPressed: onHowItWorks,
-                    onDark: true,
-                  ),
-                  IhizSecondaryButton(
-                    label: 'İşletme Olarak Kullan',
-                    icon: Icons.storefront_rounded,
-                    onPressed: onBusinessJoin,
-                    onDark: true,
-                  ),
-                ],
+            Text(
+              'İHIZ.',
+              textAlign: mobile ? TextAlign.center : TextAlign.start,
+              style: TextStyle(
+                color: IhizBrand.ink,
+                fontWeight: FontWeight.w900,
+                fontSize: titleSize,
+                height: 1.05,
+                letterSpacing: -0.8,
               ),
+            ),
+            SizedBox(height: mobile ? 12 : 16),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Text(
+                'Mağazalardan müşterilere hızlı, güvenli ve takip edilebilir teslimat. İHIZ, siparişini en yakın uygun kuryeyle buluşturur; sen satışına, biz teslimata odaklanırız.',
+                textAlign: mobile ? TextAlign.center : TextAlign.start,
+                style: TextStyle(
+                  color: IhizBrand.inkSoft,
+                  fontWeight: FontWeight.w600,
+                  fontSize: mobile ? 14.5 : 16,
+                  height: 1.5,
+                ),
+              ),
+            ),
+            SizedBox(height: mobile ? 18 : 24),
+            IhizPrimaryButton(
+              label: 'Teslimatını Takip Et',
+              icon: Icons.route_rounded,
+              onPressed: onTrack,
+              expanded: mobile,
+            ),
           ],
         );
 
-        return Container(
-          width: double.infinity,
-          padding: EdgeInsets.fromLTRB(
-            mobile ? 18 : 36,
-            mobile ? 22 : 36,
-            mobile ? 18 : 36,
-            mobile ? 20 : 32,
-          ),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(mobile ? 24 : 32),
-            gradient: IhizBrand.heroGradient,
-            boxShadow: [
-              BoxShadow(
-                color: IhizBrand.navy.withValues(alpha: 0.28),
-                blurRadius: 40,
-                offset: const Offset(0, 18),
-              ),
+        final map = const _HeroRouteVisual();
+
+        if (mobile) {
+          return Column(
+            children: [
+              copy,
+              const SizedBox(height: 18),
+              SizedBox(height: 210, child: map),
             ],
-          ),
-          child: mobile
-              ? Column(
-                  children: [
-                    copy,
-                    const SizedBox(height: 20),
-                    const _HeroRouteVisual(compact: true),
-                  ],
-                )
-              : Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(flex: 11, child: copy),
-                    const SizedBox(width: 28),
-                    const Expanded(flex: 10, child: _HeroRouteVisual(compact: false)),
-                  ],
-                ),
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(flex: 11, child: copy),
+            const SizedBox(width: 28),
+            Expanded(flex: 10, child: SizedBox(height: 340, child: map)),
+          ],
         );
       },
     );
@@ -180,132 +112,129 @@ class IhizHeroSection extends StatelessWidget {
 }
 
 class _HeroRouteVisual extends StatelessWidget {
-  const _HeroRouteVisual({required this.compact});
-
-  final bool compact;
+  const _HeroRouteVisual();
 
   @override
   Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: compact ? 1.45 : 1.1,
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(compact ? 20 : 26),
-          color: Colors.white.withValues(alpha: 0.08),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
-        ),
-        clipBehavior: Clip.antiAlias,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: IhizBrand.line),
+        boxShadow: IhizBrand.cardShadow,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
         child: Stack(
           children: [
             const Positioned.fill(child: CustomPaint(painter: _RouteMapPainter())),
-            Positioned(
-              left: 16,
-              top: 16,
-              child: _chip(Icons.storefront_outlined, 'Mağaza'),
-            ),
-            Positioned(
-              right: 16,
-              top: 16,
-              child: _chip(Icons.inventory_2_outlined, 'Paket'),
-            ),
-            Positioned(
-              left: compact ? 28 : 48,
-              bottom: compact ? 72 : 88,
-              child: _pin(Icons.store_mall_directory_rounded, const Color(0xFF5B9CFF)),
-            ),
-            Positioned(
-              right: compact ? 36 : 56,
-              bottom: compact ? 48 : 56,
-              child: _pin(Icons.home_rounded, Colors.white),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              top: 0,
-              bottom: 0,
-              child: Align(
-                alignment: const Alignment(0.05, -0.05),
-                child: _pin(Icons.two_wheeler_rounded, IhizBrand.blueBright),
+            const Positioned(
+              left: 14,
+              top: 14,
+              child: _MapChip(
+                icon: Icons.storefront_outlined,
+                title: 'Mağaza',
+                caption: 'Paket hazır',
               ),
             ),
-            Positioned(
-              left: 16,
-              right: 16,
+            const Positioned(
+              right: 14,
               bottom: 14,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.94),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.route_rounded, color: IhizBrand.blue, size: 18),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Canlı rota · 12 dk tahmini teslimat',
-                        style: TextStyle(
-                          color: IhizBrand.ink,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+              child: _MapChip(
+                icon: Icons.home_outlined,
+                title: 'Müşteri',
+                caption: 'Teslimat noktası',
               ),
+            ),
+            const Align(
+              alignment: Alignment(0.05, -0.08),
+              child: _RouteBubble(),
             ),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _chip(IconData icon, String label) {
+class _MapChip extends StatelessWidget {
+  const _MapChip({
+    required this.icon,
+    required this.title,
+    required this.caption,
+  });
+
+  final IconData icon;
+  final String title;
+  final String caption;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(999),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: IhizBrand.line),
+        boxShadow: [
+          BoxShadow(
+            color: IhizBrand.navy.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: IhizBrand.blue),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              color: IhizBrand.ink,
-              fontWeight: FontWeight.w800,
-              fontSize: 12,
-            ),
+          Icon(icon, size: 16, color: IhizBrand.blue),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: IhizBrand.ink,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12.5,
+                ),
+              ),
+              Text(
+                caption,
+                style: const TextStyle(
+                  color: IhizBrand.inkSoft,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _pin(IconData icon, Color color) {
+class _RouteBubble extends StatelessWidget {
+  const _RouteBubble();
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      width: 46,
-      height: 46,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.18),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        color: IhizBrand.blue,
+        borderRadius: BorderRadius.circular(12),
       ),
-      child: Icon(
-        icon,
-        color: color == Colors.white ? IhizBrand.navy : Colors.white,
-        size: 22,
+      child: const Text(
+        'Yolda',
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
       ),
     );
   }
@@ -316,44 +245,62 @@ class _RouteMapPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final road = Paint()
-      ..color = Colors.white.withValues(alpha: 0.12)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 14
-      ..strokeCap = StrokeCap.round;
-    final route = Paint()
-      ..color = const Color(0xFF7EB6FF)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.5
-      ..strokeCap = StrokeCap.round;
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFFF4F8FC),
+    );
 
+    final park = Paint()..color = const Color(0xFFD7EEDC);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * 0.06, size.height * 0.55, size.width * 0.28, size.height * 0.28),
+        const Radius.circular(18),
+      ),
+      park,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * 0.62, size.height * 0.12, size.width * 0.26, size.height * 0.22),
+        const Radius.circular(18),
+      ),
+      park,
+    );
+
+    final road = Paint()
+      ..color = const Color(0xFFE3EAF3)
+      ..strokeWidth = 18
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
     final path = Path()
-      ..moveTo(size.width * 0.12, size.height * 0.72)
+      ..moveTo(size.width * 0.18, size.height * 0.28)
       ..quadraticBezierTo(
-        size.width * 0.35,
-        size.height * 0.42,
-        size.width * 0.52,
-        size.height * 0.48,
+        size.width * 0.42,
+        size.height * 0.22,
+        size.width * 0.48,
+        size.height * 0.46,
       )
       ..quadraticBezierTo(
-        size.width * 0.72,
-        size.height * 0.56,
-        size.width * 0.88,
+        size.width * 0.56,
+        size.height * 0.72,
+        size.width * 0.82,
         size.height * 0.68,
       );
-
     canvas.drawPath(path, road);
+
+    final route = Paint()
+      ..color = IhizBrand.blue
+      ..strokeWidth = 4
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
     canvas.drawPath(path, route);
 
-    final grid = Paint()
-      ..color = Colors.white.withValues(alpha: 0.05)
-      ..strokeWidth = 1;
-    for (var i = 1; i < 5; i++) {
-      final x = size.width * i / 5;
-      final y = size.height * i / 5;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
-    }
+    _dot(canvas, Offset(size.width * 0.18, size.height * 0.28), IhizBrand.blue);
+    _dot(canvas, Offset(size.width * 0.82, size.height * 0.68), const Color(0xFFE85D4C));
+  }
+
+  void _dot(Canvas canvas, Offset center, Color color) {
+    canvas.drawCircle(center, 8, Paint()..color = Colors.white);
+    canvas.drawCircle(center, 5.5, Paint()..color = color);
   }
 
   @override

@@ -15,27 +15,18 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 DEVICE_ID="${IBUL_IOS_DEVICE_ID:-00008030-001610AC14BB802E}"
-PLIST="$PROJECT_DIR/ios/Runner/GoogleService-Info.plist"
 
-if [[ ! -f "$PLIST" ]]; then
-  echo "Firebase plist bulunamadı: $PLIST"
-  exit 1
-fi
+# shellcheck disable=SC1091
+source "$PROJECT_DIR/ios_runtime_env.sh"
+ios_runtime_prepare
+ios_runtime_status
 
-FIREBASE_IOS_API_KEY=$(/usr/libexec/PlistBuddy -c "Print :API_KEY" "$PLIST")
-FIREBASE_IOS_APP_ID=$(/usr/libexec/PlistBuddy -c "Print :GOOGLE_APP_ID" "$PLIST")
-FIREBASE_PROJECT_ID=$(/usr/libexec/PlistBuddy -c "Print :PROJECT_ID" "$PLIST")
-FIREBASE_MESSAGING_SENDER_ID=$(/usr/libexec/PlistBuddy -c "Print :GCM_SENDER_ID" "$PLIST")
-FIREBASE_STORAGE_BUCKET=$(/usr/libexec/PlistBuddy -c "Print :STORAGE_BUCKET" "$PLIST")
-FIREBASE_IOS_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :BUNDLE_ID" "$PLIST")
-
-if [[ -z "${IBUL_SUPABASE_URL:-}" || -z "${IBUL_SUPABASE_ANON_KEY:-}" ]]; then
-  echo "IBUL_SUPABASE_URL ve IBUL_SUPABASE_ANON_KEY gerekli (.env veya export)."
+if ! ios_runtime_ready; then
+  echo "iOS runtime config eksik. flutter run başlatılmadı."
   exit 1
 fi
 
 echo "Customer iOS release — target lib/main_customer.dart"
-echo "Firebase PROJECT_ID=$FIREBASE_PROJECT_ID"
 
 cd "$PROJECT_DIR"
 

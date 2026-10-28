@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../core/favorite_state.dart';
+import '../models/product_model.dart';
+import '../models/product_pricing.dart';
 import '../services/ai_assistant_service.dart';
 import '../widgets/web_header.dart';
 import '../widgets/account_sidebar.dart';
@@ -40,17 +45,22 @@ class _AIChatPageState extends State<AIChatPage> {
 
     _scrollToBottom();
 
-    // Simulate AI thinking delay
-    await Future.delayed(const Duration(seconds: 1));
+    if (!AiAssistantService.isDiscoverChatLive) {
+      if (!mounted) return;
+      setState(() {
+        _messages.add({
+          'text':
+              'Yapay zeka servisi şu an bağlı değil. Karşılaştırma, keşif ve yardım kısayollarını kullanabilirsin.',
+          'isUser': false,
+        });
+        _isTyping = false;
+      });
+      _scrollToBottom();
+      return;
+    }
 
     if (!mounted) return;
-
-    final response = AiAssistantService.buildResponse(text);
-
-    setState(() {
-      _messages.add({'text': response, 'isUser': false});
-      _isTyping = false;
-    });
+    setState(() => _isTyping = false);
 
     _scrollToBottom();
   }
@@ -370,7 +380,11 @@ class _AIChatPageState extends State<AIChatPage> {
                       _buildWebActionButton(
                         'İndirim Takibi',
                         Icons.notifications_active,
-                        () {},
+                        () => Navigator.of(context, rootNavigator: true).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const _DiscountTrackingPage(),
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 12),
                       _buildWebActionButton(
@@ -591,7 +605,13 @@ class _AIChatPageState extends State<AIChatPage> {
                               const SizedBox(height: 12),
                               _buildActionButton(
                                 'İndirim Takibi',
-                                onTap: () {},
+                                onTap: () {
+                                  Navigator.of(context, rootNavigator: true).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => const _DiscountTrackingPage(),
+                                    ),
+                                  );
+                                },
                               ),
                               const SizedBox(height: 12),
                               _buildActionButton(
@@ -797,6 +817,60 @@ class _AIChatPageState extends State<AIChatPage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+bool _productIsDiscounted(Product product) {
+  final current = ProductPriceCalculator.parsePriceValue(product.price);
+  final previous = ProductPriceCalculator.parsePriceValue(product.oldPrice ?? '');
+  return previous > current && current > 0;
+}
+
+class _DiscountTrackingPage extends StatelessWidget {
+  const _DiscountTrackingPage();
+
+  @override
+  Widget build(BuildContext context) {
+    final favorites = context.watch<FavoriteState>().favorites;
+    final recent = context.watch<AppState>().recentlyViewedProducts;
+    final seen = <String>{};
+    final discounted = <Product>[];
+    for (final product in [...favorites, ...recent]) {
+      final key = FavoriteState.productKey(product);
+      if (!seen.add(key) || !_productIsDiscounted(product)) continue;
+      discounted.add(product);
+    }
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        title: const Text('İndirim Takibi'),
+        backgroundColor: Colors.white,
+        foregroundColor: AppColors.ink,
+      ),
+      body: discounted.isEmpty
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  'Beğendiklerin ve son gezdiklerin arasında şu an indirimde ürün yok.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: discounted.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final product = discounted[index];
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(product.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  subtitle: Text('${product.oldPrice} → ${product.price}'),
+                );
+              },
+            ),
     );
   }
 }

@@ -3,6 +3,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/app/app_providers.dart';
+import 'package:ibul_app/core/cart_state.dart';
+import 'package:ibul_app/core/compare_state.dart';
+import 'package:ibul_app/core/favorite_state.dart';
+import 'package:ibul_app/core/providers/connectivity_provider.dart';
+import 'package:ibul_app/core/review_state.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -16,9 +21,23 @@ import 'package:ibul_app/screens/home/home_initial_page.dart';
 import 'package:ibul_app/widgets/home_boot_timeout_banner.dart';
 import 'package:ibul_app/widgets/web_header.dart';
 
-void main() {
-  late final AppState testAppState;
+/// Production mounts these notifiers. `.value` keeps the singletons alive
+/// across tests; `create:` would dispose [AppState] when the tree unmounts.
+Widget customerHome(Widget home) {
+  return MultiProvider(
+    providers: [
+      ChangeNotifierProvider.value(value: CartState()),
+      ChangeNotifierProvider.value(value: FavoriteState()),
+      ChangeNotifierProvider.value(value: CompareState()),
+      ChangeNotifierProvider.value(value: ReviewState()),
+      ChangeNotifierProvider.value(value: AppState()),
+      ChangeNotifierProvider.value(value: ConnectivityProvider()),
+    ],
+    child: home,
+  );
+}
 
+void main() {
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -26,7 +45,7 @@ void main() {
       url: 'https://example.supabase.co',
       anonKey: 'test-anon-key',
     );
-    testAppState = AppState();
+    AppState();
   });
 
   group('Home boot core guards', () {
@@ -85,8 +104,8 @@ void main() {
     test('customer app does not mount seller/admin/print providers', () {
       IbulAppModeRegistry.current = IbulAppMode.customer;
       final providers = buildCustomerProviders();
-      expect(providers.length, 5);
-      expect(countMountedProviders(IbulAppMode.customer), 5);
+      expect(providers.length, 6);
+      expect(countMountedProviders(IbulAppMode.customer), 6);
     });
 
     test('home deferred entry uses HomeScreenCore on all viewports', () {
@@ -174,9 +193,8 @@ void main() {
 
     testWidgets('mobile bottom nav updates selected tab index', (tester) async {
       await tester.pumpWidget(
-        ChangeNotifierProvider.value(
-          value: testAppState,
-          child: MaterialApp(
+        customerHome(
+          MaterialApp(
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
             home: MediaQuery(
@@ -198,16 +216,17 @@ void main() {
     });
 
     testWidgets('web category pills update the selected category', (tester) async {
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
       await tester.pumpWidget(
-        ChangeNotifierProvider.value(
-          value: testAppState,
-          child: MaterialApp(
+        customerHome(
+          MaterialApp(
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
-            home: MediaQuery(
-              data: const MediaQueryData(size: Size(1280, 900)),
-              child: const HomeInitialPage(),
-            ),
+            home: const HomeInitialPage(),
           ),
         ),
       );

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/marketplace_paths.dart';
+import '../../../core/public_seo.dart';
 import '../../../core/web_seo.dart';
 import '../blog_paths.dart';
 import '../data/blog_repository.dart';
@@ -93,7 +94,7 @@ class _BlogPostPageState extends State<BlogPostPage> {
       return null;
     }
     setSeoMeta(
-      title: '${post.seoTitle ?? post.title} | İBUL Blog',
+      title: blogSeoTitle(post.seoTitle ?? post.title),
       description: post.metaDescription ?? post.excerpt ?? post.subtitle,
       canonicalPath: BlogPaths.post(post.slug),
       imageUrl: post.coverUrl,

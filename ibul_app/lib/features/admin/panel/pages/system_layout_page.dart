@@ -14,6 +14,7 @@ import '../widgets/system_layout_managed_category_widgets.dart';
 import '../widgets/system_layout_section.dart';
 import 'system_layout_brand_tab.dart';
 import 'system_layout_campaign_images_tab.dart';
+import 'system_layout_seo_tab.dart';
 import 'system_layout_shortcuts_tab.dart';
 import '../../../coupon/screens/admin/coupon_admin_hub_page.dart';
 import '../../../coupon/screens/admin/reward_wheel_settings_page.dart';
@@ -40,7 +41,7 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 8, vsync: this);
+    _tabController = TabController(length: 9, vsync: this);
     _fetchHairCareLayouts();
     _fetchManagedCategories();
   }
@@ -544,7 +545,7 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
                             ),
                           ),
                           Text(
-                            'Ana sayfa içerikleri, kategoriler, kuponlar ve hediye çarkı',
+                            'Ana sayfa içerikleri, kategoriler, SEO, kuponlar ve hediye çarkı',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -586,6 +587,7 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
                   Tab(text: 'Ana Sayfa ve Reklam Sıralaması'),
                   Tab(text: 'Kuponlar'),
                   Tab(text: 'Hediye Çarkı'),
+                  Tab(text: 'SEO'),
                 ],
               ),
             ],
@@ -605,6 +607,7 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
                 const HomeFeatureSortingPanel(),
                 const CouponAdminHubPage(),
                 const RewardWheelSettingsPage(),
+                const SystemLayoutSeoTab(),
               ],
             ),
           ),

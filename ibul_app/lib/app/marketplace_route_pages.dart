@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/public_seo.dart';
 import '../core/web_boot_loader.dart';
 import '../core/web_seo.dart';
 import '../features/customer_support/screens/customer_support_page.dart';
@@ -18,9 +19,12 @@ import '../screens/ibul_not_found_page.dart';
 import '../screens/orders_page.dart';
 import '../screens/product_detail_page.dart';
 import '../screens/reviews_page.dart';
+import '../screens/account/account_security_page.dart';
+import '../screens/account/notification_settings_page.dart';
 import '../screens/settings_page.dart';
 import '../services/store_service.dart';
 import '../services/supabase_service.dart';
+import '../widgets/common/product_card_skeleton.dart';
 import 'account_sections.dart';
 import 'marketplace_paths.dart';
 
@@ -77,6 +81,21 @@ class _CategoryRoutePageState extends State<CategoryRoutePage> {
           category: node.mainCategory.name,
           limit: 24,
         );
+        setSeoMeta(
+          title: categorySeoTitle(node.mainCategory.name),
+          description: clipMetaDescription(
+            '${node.mainCategory.name} kategorisindeki ürünler.',
+          ),
+          canonicalPath: MarketplacePaths.category(
+            widget.mainCategoryId,
+            widget.subCategoryId.isEmpty ? '-' : widget.subCategoryId,
+            slug: node.mainCategory.name,
+          ),
+          jsonLd: breadcrumbJsonLd([
+            (name: 'İBUL', path: '/'),
+            (name: node.mainCategory.name, path: MarketplacePaths.categoryRoot),
+          ]),
+        );
         return CategoryProductsPage(
           category: node.mainCategory.name,
           subCategory: '', // Main category only
@@ -96,6 +115,23 @@ class _CategoryRoutePageState extends State<CategoryRoutePage> {
           subCategory: sub.name,
           limit: 24,
         );
+        final categoryPath = MarketplacePaths.category(
+          widget.mainCategoryId,
+          widget.subCategoryId,
+          slug: sub.name,
+        );
+        setSeoMeta(
+          title: categorySeoTitle(sub.name),
+          description: clipMetaDescription(
+            '${sub.name} ürünleri, ${node.mainCategory.name} kategorisinde.',
+          ),
+          canonicalPath: categoryPath,
+          jsonLd: breadcrumbJsonLd([
+            (name: 'İBUL', path: '/'),
+            (name: node.mainCategory.name, path: MarketplacePaths.categoryRoot),
+            (name: sub.name, path: categoryPath),
+          ]),
+        );
         return CategoryProductsPage(
           category: node.mainCategory.name,
           subCategory: sub.name,
@@ -114,8 +150,10 @@ class _CategoryRoutePageState extends State<CategoryRoutePage> {
     return FutureBuilder<Widget>(
       future: _future,
       builder: (context, snapshot) {
+        Widget content;
         if (snapshot.hasError) {
-          return Scaffold(
+          content = Scaffold(
+            key: const ValueKey('category-route-error'),
             body: Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -129,13 +167,24 @@ class _CategoryRoutePageState extends State<CategoryRoutePage> {
               ),
             ),
           );
-        }
-        if (!snapshot.hasData) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+        } else if (!snapshot.hasData) {
+          content = const Scaffold(
+            key: ValueKey('category-route-loading'),
+            body: SafeArea(
+              child: ProductCardSkeletonGrid(itemCount: 8),
+            ),
+          );
+        } else {
+          content = KeyedSubtree(
+            key: const ValueKey('category-route-data'),
+            child: snapshot.data!,
           );
         }
-        return snapshot.data!;
+
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: content,
+        );
       },
     );
   }
@@ -190,13 +239,21 @@ class _ProductRoutePageState extends State<ProductRoutePage> {
             path: MarketplacePaths.product(widget.productId),
           );
         }
+        final canonicalPath = MarketplacePaths.product(
+          widget.productId,
+          slug: widget.slug ?? product.name,
+        );
+        final images = productHttpImages(product);
         setSeoMeta(
-          title: '${product.name} | İBUL',
-          description: product.shortDescription ?? product.name,
-          canonicalPath: MarketplacePaths.product(
-            widget.productId,
-            slug: widget.slug ?? product.name,
+          title: productSeoTitle(product.name),
+          description: clipMetaDescription(
+            product.shortDescription ?? product.description,
+            fallback: product.name,
           ),
+          canonicalPath: canonicalPath,
+          imageUrl: images.isEmpty ? null : images.first,
+          ogType: 'product',
+          jsonLd: productJsonLd(product, canonicalPath: canonicalPath),
         );
         return ProductDetailPage(product: product);
       },
@@ -259,13 +316,19 @@ class _StoreRoutePageState extends State<StoreRoutePage> {
           );
         }
         final name = business['name']?.toString() ?? 'Mağaza';
+        final canonicalPath = MarketplacePaths.store(
+          widget.storeId,
+          slug: widget.slug ?? name,
+        );
         setSeoMeta(
-          title: '$name | İBUL',
-          description: '$name mağaza sayfası',
-          canonicalPath: MarketplacePaths.store(
-            widget.storeId,
-            slug: widget.slug ?? name,
-          ),
+          title: storeSeoTitle(name),
+          description: clipMetaDescription('$name mağazasının ürünleri ve bilgileri.'),
+          canonicalPath: canonicalPath,
+          imageUrl: business['logo']?.toString(),
+          jsonLd: breadcrumbJsonLd([
+            (name: 'İBUL', path: '/'),
+            (name: name, path: canonicalPath),
+          ]),
         );
         return BusinessDetailPage(business: business);
       },
@@ -284,6 +347,7 @@ class AccountSectionRoutePage extends StatelessWidget {
       title: AccountSections.documentTitleOf(section),
       description: 'İBUL hesap, sipariş ve kiralama yönetimi.',
       canonicalPath: AccountSections.pathOf(section),
+      noIndex: true,
     );
     return _pageFor(section);
   }
@@ -299,7 +363,7 @@ class AccountSectionRoutePage extends StatelessWidget {
       case AccountSection.rentals:
         return const VehicleCustomerRentalsPage();
       case AccountSection.favorites:
-        return const FavoritesPage();
+        return const FavoritesPage(showAccountSidebar: false);
       case AccountSection.coupons:
         return const CouponsPage();
       case AccountSection.following:
@@ -314,6 +378,10 @@ class AccountSectionRoutePage extends StatelessWidget {
         return const CustomerSupportPage();
       case AccountSection.settings:
         return const SettingsPage();
+      case AccountSection.notifications:
+        return const NotificationSettingsPage();
+      case AccountSection.security:
+        return const AccountSecurityPage();
     }
   }
 }

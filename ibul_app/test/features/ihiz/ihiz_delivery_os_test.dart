@@ -464,7 +464,6 @@ void main() {
                     maxWidth: IhizBrand.contentMaxWidth,
                   ),
                   child: IhizLandingBody(
-                    onLogin: () {},
                     onCourierApply: () {},
                     onBusinessJoin: () {},
                     onBindBusiness: (_) {},

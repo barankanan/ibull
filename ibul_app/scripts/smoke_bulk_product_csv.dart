@@ -35,7 +35,7 @@ Future<void> main(List<String> args) async {
   // 1. CSV indirme (macOS/desktop kod yolu)
   stdout.writeln('--- 1. CSV İndirme ---');
   try {
-    final bytes = buildBulkProductImportTemplateBytes();
+    final bytes = buildBulkProductImportTemplateBytes(false);
     if (bytes.length < 4 ||
         bytes[0] != 0xEF ||
         bytes[1] != 0xBB ||
@@ -128,7 +128,7 @@ Future<void> main(List<String> args) async {
   // 2. CSV tekrar yükleme / önizleme
   stdout.writeln('\n--- 2. CSV Önizleme ---');
   try {
-    final templateBytes = buildBulkProductImportTemplateBytes();
+    final templateBytes = buildBulkProductImportTemplateBytes(false);
     final doc = _parser.parseBytes(templateBytes);
     final preview = _validator.validate(
       fileName: 'roundtrip.csv',

@@ -68,6 +68,20 @@ void main() {
     expect(category, isNot(contains('cacheExtent: 900')));
   });
 
+  test('home does not prefetch every deferred section at startup', () {
+    final home = File('lib/screens/home/home_initial_page.dart').readAsStringSync();
+    final viewport = File(
+      'lib/screens/home/home_viewport_section.dart',
+    ).readAsStringSync();
+    expect(home, isNot(contains('_scheduleIdleCodePrefetch')));
+    expect(home, isNot(contains('Duration(milliseconds: 1500)')));
+    expect(viewport, isNot(contains('fallback_trigger')));
+    expect(viewport, isNot(contains('Duration(seconds: 3)')));
+    expect(viewport, contains('distanceAhead <= 0'));
+    expect(viewport, isNot(contains('viewportExtent * 0.5')));
+    expect(viewport, isNot(contains('viewportExtent * 1.5')));
+  });
+
   test('home idles prefetch of search cart and PDP without pulling map', () {
     final routes =
         File('lib/screens/home_lazy_routes.dart').readAsStringSync();

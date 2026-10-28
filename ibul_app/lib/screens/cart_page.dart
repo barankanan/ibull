@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
@@ -6,6 +8,7 @@ import 'dart:ui';
 import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../core/cart_state.dart';
+import '../core/home_navigation.dart';
 import '../core/store_logo_helper.dart';
 import '../features/coupon/data/coupon_repository.dart';
 import '../features/coupon/domain/coupon_models.dart';
@@ -14,12 +17,15 @@ import '../models/product_model.dart';
 import '../models/product_pricing.dart';
 import '../services/store_service.dart';
 import '../utils/dynamic_value_helpers.dart';
+import '../screens/home/mobile/mobile_home_nav.dart';
 import 'business_detail_page.dart';
+import 'cart/cart_selection_page.dart';
 import 'checkout_page.dart';
 import 'product_detail_page.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/ibul_page_state.dart';
+import '../widgets/product_discount_price.dart';
 import 'cart/cart_premium_banner.dart';
 
 class CartPage extends StatefulWidget {
@@ -44,6 +50,8 @@ class _CartPageState extends State<CartPage>
   final Map<int, int> _dynamicQuantities = {};
   final ScrollController _couponScrollController = ScrollController();
   String _selectedDeliveryMode = 'fast';
+  bool _mobileSummaryExpanded = false;
+  bool _summaryVisible = true;
 
   // Kupon değişkenleri
   final Map<int, Map<String, dynamic>> _appliedCoupons = {};
@@ -290,6 +298,7 @@ class _CartPageState extends State<CartPage>
     );
   }
 
+  // ignore: unused_element
   void _showMobileSummarySheet() {
     showModalBottomSheet(
       context: context,
@@ -751,18 +760,24 @@ class _CartPageState extends State<CartPage>
   }
 
   double _parseProductPrice(Product product) {
-    try {
-      final priceStr = product.price
-          .replaceAll('₺', '')
-          .replaceAll('TL', '')
-          .replaceAll('.', '')
-          .replaceAll(',', '.')
-          .replaceAll(' ', '')
-          .trim();
-      return double.parse(priceStr);
-    } catch (_) {
-      return 0.0;
+    return ProductPriceCalculator.parsePriceValue(product.price);
+  }
+
+  String? _catalogDiscountLabel(Object? product) {
+    if (product is! Product) return null;
+    final view = ProductDiscountView.resolve(
+      price: product.price,
+      oldPrice: product.oldPrice,
+    );
+    return view.hasDiscount ? view.oldLabel : null;
+  }
+
+  void _leaveCart() {
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+      return;
     }
+    HomeNavigation.openHome(context, initialIndex: 0, replaceStack: true);
   }
 
   Map<String, String?> _extractProductMetadata(Product product) {
@@ -1083,6 +1098,13 @@ class _CartPageState extends State<CartPage>
       initialIndex: _activeTabIndex,
     );
     _tabController.addListener(_onCartTabInteraction);
+    if (kDebugMode) {
+      final ids = _appState.cart.map((item) => item.productId ?? item.name).join(',');
+      debugPrint(
+        '[CART_TRACE] cart_page instance=${identityHashCode(_appState)} '
+        'count=${_appState.cart.length} ids=$ids',
+      );
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_revalidateCartOnOpen());
       unawaited(_loadAvailableCoupons());
@@ -1135,10 +1157,14 @@ class _CartPageState extends State<CartPage>
     required double payableTotal,
     required List<Map<String, dynamic>> selectedProducts,
   }) async {
-    if (_appState.isCartRevalidating) return;
+    if (_appState.isCartRevalidating || _appState.cartRevalidationFailed) {
+      return;
+    }
     final result = await _appState.revalidateCart();
     if (!mounted) return;
-    if (_appState.cart.isEmpty || (result?.hasBlockingIssues ?? false)) {
+    if (_appState.cartRevalidationFailed ||
+        _appState.cart.isEmpty ||
+        (result?.hasBlockingIssues ?? false)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -1154,13 +1180,15 @@ class _CartPageState extends State<CartPage>
         SnackBar(content: Text(result!.summaryMessage!)),
       );
     }
-    if (!mounted) return;
+    if (!mounted || _appState.cartRevalidationFailed) return;
+    final latestTotal = payableTotal;
+    final latestSelection = this.selectedProducts;
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => CheckoutPage(
-          totalPrice: payableTotal,
-          selectedProducts: selectedProducts,
+          totalPrice: latestTotal,
+          selectedProducts: latestSelection,
         ),
       ),
     );
@@ -1603,16 +1631,47 @@ class _CartPageState extends State<CartPage>
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
       body: SafeArea(
-        child: widget.usedAsTab
-            ? Column(
-                children: [
-                  Expanded(child: _buildMobileLayout()),
-                  _buildMobileBottomBar(),
-                ],
-              )
-            : _buildMobileLayout(),
+        bottom: widget.usedAsTab,
+        child: Column(
+          children: [
+            Expanded(
+              child: NotificationListener<UserScrollNotification>(
+                onNotification: (notification) {
+                  final hide = notification.direction == ScrollDirection.reverse;
+                  final show = notification.direction == ScrollDirection.forward;
+                  if (hide && _summaryVisible) {
+                    setState(() => _summaryVisible = false);
+                  } else if (show && !_summaryVisible) {
+                    setState(() => _summaryVisible = true);
+                  }
+                  return false;
+                },
+                child: _buildMobileLayout(),
+              ),
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              alignment: Alignment.bottomCenter,
+              child: _summaryVisible
+                  ? _buildMobileBottomBar()
+                  : const SizedBox(width: double.infinity),
+            ),
+          ],
+        ),
       ),
-      bottomNavigationBar: widget.usedAsTab ? null : _buildMobileBottomBar(),
+      bottomNavigationBar: widget.usedAsTab
+          ? null
+          : MobileHomeBottomNav(
+              stackIndex: 3,
+              onStack: (index) {
+                HomeNavigation.openHome(
+                  context,
+                  initialIndex: index,
+                  replaceStack: true,
+                );
+              },
+            ),
     );
   }
 
@@ -1634,6 +1693,14 @@ class _CartPageState extends State<CartPage>
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  IconButton(
+                    key: const ValueKey('cart-back'),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                    icon: const Icon(Icons.arrow_back, color: AppColors.primary),
+                    onPressed: _leaveCart,
+                  ),
                   Expanded(
                     child: Semantics(
                       header: true,
@@ -1647,7 +1714,18 @@ class _CartPageState extends State<CartPage>
                     ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: _appState.cart.isEmpty
+                        ? null
+                        : () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => const CartSelectionPage(),
+                              ),
+                            );
+                          },
+                    child: const Text('Seç'),
+                  ),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
@@ -2573,13 +2651,15 @@ class _CartPageState extends State<CartPage>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (coupon != null)
+                  if (coupon != null || _catalogDiscountLabel(productObject) != null)
                     Text(
-                      _formatPrice(productPrice),
+                      coupon != null
+                          ? _formatPrice(productPrice)
+                          : _catalogDiscountLabel(productObject)!,
                       style: _softTextStyle(
                         size: 10.5,
                         weight: FontWeight.w500,
-                        color: Colors.grey.shade500,
+                        color: const Color(0xFFE53935),
                       ).copyWith(decoration: TextDecoration.lineThrough),
                     ),
                   Text(
@@ -2953,8 +3033,10 @@ class _CartPageState extends State<CartPage>
 
   Widget _buildMobileBottomBar() {
     final isNarrow = _isNarrowPhone(context);
+    final feeTotal = deliveryFee + serviceFee;
     return SafeArea(
       top: false,
+      bottom: false,
       child: Container(
         padding: EdgeInsets.fromLTRB(
           isNarrow ? 14 : 18,
@@ -3006,12 +3088,18 @@ class _CartPageState extends State<CartPage>
                           ),
                           const SizedBox(width: 4),
                           InkWell(
-                            onTap: _showMobileSummarySheet,
+                            key: const ValueKey('cart-summary-toggle'),
+                            onTap: () => setState(
+                              () => _mobileSummaryExpanded =
+                                  !_mobileSummaryExpanded,
+                            ),
                             borderRadius: BorderRadius.circular(10),
-                            child: const Padding(
-                              padding: EdgeInsets.all(2),
+                            child: Padding(
+                              padding: const EdgeInsets.all(2),
                               child: Icon(
-                                Icons.keyboard_arrow_up_rounded,
+                                _mobileSummaryExpanded
+                                    ? Icons.keyboard_arrow_down_rounded
+                                    : Icons.keyboard_arrow_up_rounded,
                                 size: 20,
                                 color: AppColors.primary,
                               ),
@@ -3030,6 +3118,19 @@ class _CartPageState extends State<CartPage>
                               : AppColors.primary,
                         ),
                       ),
+                      if (_mobileSummaryExpanded && feeTotal > 0)
+                        Text(
+                          'Ara toplam ${_formatPrice(totalPrice)} · $deliveryModeTitle ${_formatPrice(deliveryFee)} · Hizmet ${_formatPrice(serviceFee)}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: _softTextStyle(
+                            size: 11,
+                            weight: FontWeight.w500,
+                            color: Colors.grey.shade700,
+                            height: 1.25,
+                          ),
+                        ),
+                      if (_mobileSummaryExpanded)
                       Text(
                         selectedProducts.isEmpty
                             ? 'Ürün seçiniz'
@@ -3045,8 +3146,8 @@ class _CartPageState extends State<CartPage>
                 ),
                 const SizedBox(width: 12),
                 SizedBox(
-                  width: isNarrow ? 156 : 172,
-                  height: isNarrow ? 46 : 48,
+                  width: (MediaQuery.sizeOf(context).width * 0.34).clamp(120, 148),
+                  height: 40,
                   child: ElevatedButton(
                     onPressed: selectedProducts.isNotEmpty &&
                             !_appState.isCartCheckoutBlocked
@@ -4129,6 +4230,25 @@ class _CartPageState extends State<CartPage>
   }
 
   Widget _buildCartAttentionBanner() {
+    if (_appState.isCartRevalidating) {
+      return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.softPurple,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Text(
+          'Fiyatlar kontrol ediliyor',
+          style: TextStyle(
+            color: AppColors.primary,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
     final message = _appState.cartAttentionMessage;
     if (message == null || message.trim().isEmpty) {
       return const SizedBox.shrink();
@@ -4157,6 +4277,11 @@ class _CartPageState extends State<CartPage>
               ),
             ),
           ),
+          if (_appState.cartRevalidationFailed)
+            TextButton(
+              onPressed: _revalidateCartOnOpen,
+              child: const Text('Tekrar dene'),
+            ),
         ],
       ),
     );

@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../../models/courier_application_data.dart';
+import '../../../screens/legal/legal_document.dart';
+import '../../../screens/legal/legal_document_page.dart';
 import '../../../services/ihiz_courier_auth_service.dart';
 import '../apply/ihiz_courier_apply_page.dart';
+import '../theme/ihiz_brand.dart';
 import 'ihiz_courier_dashboard_page.dart';
 import 'models/ihiz_pricing_config.dart';
 import 'widgets/ihiz_courier_login_chrome.dart';
@@ -26,6 +29,8 @@ class _IhizCourierLoginPageState extends State<IhizCourierLoginPage> {
   final _identifierController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
+  bool _obscure = true;
+  String? _formError;
 
   @override
   void dispose() {
@@ -40,21 +45,20 @@ class _IhizCourierLoginPageState extends State<IhizCourierLoginPage> {
     final password = _passwordController.text.trim();
 
     if (identifier.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('E-posta ve şifre zorunlu.')),
-      );
+      setState(() => _formError = 'E-posta ve şifre zorunlu.');
       return;
     }
     if (!identifier.contains('@')) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Giriş için başvurudaki e-posta adresinizi kullanın.'),
-        ),
+      setState(
+        () => _formError = 'Giriş için başvurudaki e-posta adresinizi kullanın.',
       );
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _formError = null;
+    });
     try {
       final data = await _auth.signInApprovedCourier(
         email: identifier,
@@ -76,14 +80,32 @@ class _IhizCourierLoginPageState extends State<IhizCourierLoginPage> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_auth.cleanErrorMessage(error)),
-          backgroundColor: Colors.red,
-        ),
-      );
+      setState(() => _formError = _auth.cleanErrorMessage(error));
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _forgotPassword() async {
+    final email = _identifierController.text.trim();
+    if (!email.contains('@')) {
+      setState(
+        () => _formError = 'Şifre sıfırlama için e-posta adresinizi yazın.',
+      );
+      return;
+    }
+    try {
+      await _auth.sendPasswordResetEmail(email);
+      if (!mounted) return;
+      setState(() => _formError = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sıfırlama bağlantısı e-posta adresine gönderildi.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _formError = _auth.cleanErrorMessage(error));
     }
   }
 
@@ -93,56 +115,47 @@ class _IhizCourierLoginPageState extends State<IhizCourierLoginPage> {
     );
   }
 
+  void _openLegal(LegalDocumentId id) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => LegalDocumentPage(documentId: id),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F7FD),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF163B73),
-        elevation: 0,
-        leading: IconButton(
-          onPressed: () => Navigator.of(context).maybePop(),
-          icon: const Icon(Icons.arrow_back_rounded),
-          tooltip: 'Geri',
-        ),
-        title: const Text(
-          'Giriş Yap',
-          style: TextStyle(fontWeight: FontWeight.w800),
-        ),
-      ),
+      backgroundColor: IhizBrand.surface,
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1080),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final isMobile = constraints.maxWidth < 900;
-                  return isMobile
-                      ? Column(
-                          children: [
-                            _loginForm(),
-                            const SizedBox(height: 18),
-                            const IhizCourierLoginMarketingSection(),
-                          ],
-                        )
-                      : Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 900;
+            final form = _loginForm();
+            return SingleChildScrollView(
+              padding: EdgeInsets.symmetric(
+                horizontal: wide ? 32 : 20,
+                vertical: wide ? 28 : 16,
+              ),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1040),
+                  child: wide
+                      ? Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             const Expanded(
-                              flex: 6,
                               child: IhizCourierLoginMarketingSection(),
                             ),
-                            const SizedBox(width: 18),
-                            Expanded(flex: 5, child: _loginForm()),
+                            const SizedBox(width: 28),
+                            Expanded(child: form),
                           ],
-                        );
-                },
+                        )
+                      : form,
+                ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
@@ -151,51 +164,94 @@ class _IhizCourierLoginPageState extends State<IhizCourierLoginPage> {
   Widget _loginForm() {
     return IhizCourierSectionShell(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: IhizLogoLockup(size: 22, color: IhizBrand.ink),
+          ),
+          const SizedBox(height: 18),
           const Text(
-            'Giriş Yap',
+            'Tekrar hoş geldin',
             style: TextStyle(
-              fontSize: 26,
+              color: IhizBrand.ink,
               fontWeight: FontWeight.w900,
-              color: Color(0xFF163B73),
+              fontSize: 28,
+              height: 1.1,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           const Text(
-            'Onaylı kurye hesabınızla giriş yapın. Onaylanmayan hesaplar panele erişemez.',
-            style: TextStyle(color: Color(0xFF5B6B86), height: 1.5),
+            'Kurye hesabına giriş yap',
+            style: TextStyle(
+              color: IhizBrand.inkSoft,
+              fontWeight: FontWeight.w600,
+              height: 1.4,
+            ),
           ),
-          const SizedBox(height: 20),
-          const IhizCourierFieldLabel('E-posta'),
-          const SizedBox(height: 8),
-          IhizCourierInput(
-            hint: 'ornek@ihiz.com',
+          const SizedBox(height: 18),
+          TextField(
             controller: _identifierController,
             keyboardType: TextInputType.emailAddress,
             textInputAction: TextInputAction.next,
+            autofillHints: const [AutofillHints.email],
+            cursorColor: IhizBrand.blue,
+            decoration: _fieldDecoration('ornek@ihiz.com').copyWith(
+              labelText: 'Telefon / E-posta',
+            ),
           ),
-          const SizedBox(height: 14),
-          const IhizCourierFieldLabel('Şifre'),
-          const SizedBox(height: 8),
-          IhizCourierInput(
-            hint: '••••••••',
-            obscure: true,
+          const SizedBox(height: 12),
+          TextField(
             controller: _passwordController,
+            obscureText: _obscure,
             textInputAction: TextInputAction.done,
+            autofillHints: const [AutofillHints.password],
+            cursorColor: IhizBrand.blue,
             onSubmitted: (_) => _handleLogin(),
+            decoration: _fieldDecoration('Şifre').copyWith(
+              labelText: 'Şifre',
+              suffixIcon: IconButton(
+                tooltip: _obscure ? 'Şifreyi göster' : 'Şifreyi gizle',
+                color: IhizBrand.blue,
+                onPressed: () => setState(() => _obscure = !_obscure),
+                icon: Icon(
+                  _obscure
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                ),
+              ),
+            ),
           ),
-          const SizedBox(height: 18),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _isLoading ? null : _forgotPassword,
+              style: TextButton.styleFrom(foregroundColor: IhizBrand.blue),
+              child: const Text('Şifremi Unuttum'),
+            ),
+          ),
+          if (_formError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                _formError!,
+                style: const TextStyle(
+                  color: Color(0xFFB42318),
+                  fontWeight: FontWeight.w700,
+                  height: 1.35,
+                ),
+              ),
+            ),
           SizedBox(
             width: double.infinity,
-            child: ElevatedButton(
+            child: FilledButton(
               onPressed: _isLoading ? null : _handleLogin,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF163B73),
+              style: FilledButton.styleFrom(
+                backgroundColor: IhizBrand.blue,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
+                minimumSize: const Size.fromHeight(52),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(14),
                 ),
               ),
               child: _isLoading
@@ -208,18 +264,69 @@ class _IhizCourierLoginPageState extends State<IhizCourierLoginPage> {
                       ),
                     )
                   : const Text(
-                      'Kurye Paneline Gir',
+                      'Giriş Yap',
                       style: TextStyle(fontWeight: FontWeight.w800),
                     ),
             ),
           ),
-          const SizedBox(height: 12),
-          TextButton(
-            onPressed: _openApply,
-            child: const Text('Kayıt Ol / Başvur'),
+          const SizedBox(height: 10),
+          OutlinedButton(
+            onPressed: _isLoading ? null : _openApply,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: IhizBrand.blue,
+              minimumSize: const Size.fromHeight(52),
+              side: const BorderSide(color: IhizBrand.blue),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: const Text(
+              'Kurye Ol',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 4,
+            children: [
+              TextButton(
+                onPressed: () => _openLegal(LegalDocumentId.privacy),
+                style: TextButton.styleFrom(foregroundColor: IhizBrand.blue),
+                child: const Text('Gizlilik'),
+              ),
+              TextButton(
+                onPressed: () => _openLegal(LegalDocumentId.terms),
+                style: TextButton.styleFrom(foregroundColor: IhizBrand.blue),
+                child: const Text('Kullanım Şartları'),
+              ),
+            ],
           ),
         ],
       ),
+    );
+  }
+
+  InputDecoration _fieldDecoration(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      filled: true,
+      fillColor: IhizBrand.surfaceAlt,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: IhizBrand.line),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: IhizBrand.line),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: IhizBrand.blue, width: 1.4),
+      ),
+      labelStyle: const TextStyle(color: IhizBrand.inkSoft),
+      floatingLabelStyle: const TextStyle(color: IhizBrand.blue),
     );
   }
 }

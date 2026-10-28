@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
@@ -31,6 +33,7 @@ import '../../widgets/seller/rich_product_description_editor.dart';
 import '../../widgets/seller/service_control_selector.dart';
 import '../../widgets/seller/service_stepper_fields.dart';
 import '../../widgets/seller/weight_pricing_fields.dart';
+import '../../widgets/seller/product_color_picker.dart';
 import 'product_management/bulk_product_import_mapping.dart';
 
 class _EditableProductSizeOption {
@@ -81,6 +84,7 @@ class _AddProductPageState extends State<AddProductPage> {
   final _productNameController = TextEditingController();
   final _brandController = TextEditingController();
   final _productColorController = TextEditingController();
+  final _productColorHexController = TextEditingController();
   final _longDescController = TextEditingController();
   final _portionPriceController = TextEditingController();
   final _pricePerKgController = TextEditingController();
@@ -142,6 +146,9 @@ class _AddProductPageState extends State<AddProductPage> {
   /// Düzenleme modunda mevcut görsellerin URL'leri (yeni yükleme yoksa bunlar kullanılır).
   List<String> _existingImageUrls = [];
 
+  /// Sürükle-bırak ile sıralanan birleşik görsel listesi (URL veya XFile).
+  List<Object> _orderedImages = [];
+
   /// Önizleme ve cache bust için görsel state sürümü.
   int _productImagePreviewVersion = 0;
 
@@ -174,6 +181,7 @@ class _AddProductPageState extends State<AddProductPage> {
 
   // Varyantlar (Kategoriye göre)
   List<ProductVariant> _variants = []; // Removed final keyword
+  final Set<String> _customOptionTypes = {};
   List<Map<String, dynamic>> _complementaryCandidates = [];
   final Set<String> _selectedAccessoryIds = <String>{};
   bool _isLoadingComplementaryCandidates = false;
@@ -806,6 +814,24 @@ class _AddProductPageState extends State<AddProductPage> {
             _productColorController.text = colorAttr.substring(idx + 1).trim();
           }
         }
+        
+        try {
+          if (product.specifications != null && product.specifications!.isNotEmpty) {
+            final specMap = jsonDecode(product.specifications!);
+            if (specMap is Map) {
+              if (_productColorController.text.isEmpty) {
+                final c = specMap['color'] ?? specMap['renk'];
+                if (c != null) {
+                  _productColorController.text = c.toString().trim();
+                }
+              }
+              final hex = specMap['color_hex'] ?? specMap['colorHex'];
+              if (hex != null) {
+                _productColorHexController.text = hex.toString().trim();
+              }
+            }
+          }
+        } catch (_) {}
         _hydrateNonFoodAttributeRows();
         _existingImageUrls = List<String>.from(
           product.imageUrls.isNotEmpty
@@ -814,6 +840,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     ? [product.imageUrl!]
                     : const []),
         );
+        _syncOrderedImagesFromState();
         _existingVideoUrl = product.videoUrl;
         _existingVideoPath = product.videoPath;
         _existingThumbnailPath = product.thumbnailPath;
@@ -850,9 +877,20 @@ class _AddProductPageState extends State<AddProductPage> {
                     map['imagePath'] ??
                     map['image_path'];
                 final imageUrl = rawUrl?.toString();
+
+                Map<String, String>? parsedOptions;
+                if (map['options'] is Map) {
+                  parsedOptions = (map['options'] as Map).map(
+                    (k, v) => MapEntry(k.toString(), v.toString()),
+                  );
+                }
+
                 return ProductVariant(
                   color: map['color'] ?? '',
+                  colorHex: map['colorHex'] ?? map['color_hex'],
                   size: map['size'] ?? '',
+                  optionType: map['optionType'] ?? map['option_type'],
+                  options: parsedOptions,
                   ram: map['ram'],
                   storage: map['storage'],
                   sku: map['sku'] ?? '',
@@ -1025,6 +1063,7 @@ class _AddProductPageState extends State<AddProductPage> {
     _productNameController.dispose();
     _brandController.dispose();
     _productColorController.dispose();
+    _productColorHexController.dispose();
     _longDescController.dispose();
     _portionPriceController.dispose();
     _pricePerKgController.dispose();
@@ -1534,12 +1573,17 @@ class _AddProductPageState extends State<AddProductPage> {
                 ),
                 if (!isFood) ...[
                   const SizedBox(height: 18),
-                  _buildTextField(
-                    controller: _productColorController,
-                    label: 'Ürün Rengi',
-                    hint: 'Örn: Beyaz, Siyah, Titanyum Mavi',
-                    helperText: 'Varyant yoksa ana rengi burada belirtin',
-                    onChanged: (_) => setState(() {}),
+                  ProductColorPicker(
+                    initialColorName: _productColorController.text,
+                    initialColorHex: _productColorHexController.text,
+                    onChanged: (name, hex) {
+                      setState(() {
+                        _productColorController.text = name;
+                        if (hex != null) {
+                          _productColorHexController.text = hex;
+                        }
+                      });
+                    },
                   ),
                 ],
               ],
@@ -3262,28 +3306,23 @@ class _AddProductPageState extends State<AddProductPage> {
           spacing: 16,
           runSpacing: 16,
           children: [
-            ...List.generate(_existingImageUrls.length, (index) {
-              return _buildImageUploadBox(
-                index: null,
-                existingUrlIndex: index,
-                isMain: index == 0 && _productImages.every((x) => x == null),
-                imageFile: null,
-                imageUrl: _existingImageUrls[index],
-                onRemoveExisting: () => setState(() {
-                  _existingImageUrls.removeAt(index);
-                  _productImagePreviewVersion++;
-                }),
+            ...List.generate(_orderedImages.length, (index) {
+              final item = _orderedImages[index];
+              return _buildDraggableImageBox(
+                combinedIndex: index,
+                isMain: index == 0,
+                imageFile: item is XFile ? item : null,
+                imageUrl: item is String ? item : null,
               );
             }),
-            ...List.generate(8, (index) {
-              return _buildImageUploadBox(
-                index: index,
-                existingUrlIndex: null,
-                isMain: _existingImageUrls.isEmpty && index == 0,
-                imageFile: _productImages[index],
-                imageUrl: null,
-              );
-            }),
+            if (_orderedImages.length < 8)
+              ...List.generate(8 - _orderedImages.length, (slotOffset) {
+                final slotIndex = _orderedImages.length + slotOffset;
+                return _buildEmptyImageUploadBox(
+                  slotIndex: slotIndex,
+                  isMain: _orderedImages.isEmpty && slotOffset == 0,
+                );
+              }),
           ],
         ),
 
@@ -3825,51 +3864,135 @@ class _AddProductPageState extends State<AddProductPage> {
 
   // Ürün Özellikleri artık Temel Bilgiler adımında
 
-  Widget _buildImageUploadBox({
-    required int? index,
-    required int? existingUrlIndex,
+  Widget _buildDraggableImageBox({
+    required int combinedIndex,
     required bool isMain,
     XFile? imageFile,
     String? imageUrl,
-    VoidCallback? onRemoveExisting,
+  }) {
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (details) => details.data != combinedIndex,
+      onAcceptWithDetails: (details) {
+        _reorderCombinedImages(details.data, combinedIndex);
+      },
+      builder: (context, candidateData, rejectedData) {
+        final isHovered = candidateData.isNotEmpty;
+        return LongPressDraggable<int>(
+          delay: const Duration(milliseconds: 150),
+          data: combinedIndex,
+          feedback: Material(
+            elevation: 8,
+            borderRadius: BorderRadius.circular(10),
+            color: Colors.transparent,
+            child: Opacity(
+              opacity: 0.9,
+              child: _buildImageTile(
+                isMain: isMain,
+                imageFile: imageFile,
+                imageUrl: imageUrl,
+                showActions: false,
+              ),
+            ),
+          ),
+          childWhenDragging: Opacity(
+            opacity: 0.25,
+            child: _buildImageTile(
+              isMain: isMain,
+              imageFile: imageFile,
+              imageUrl: imageUrl,
+              showActions: false,
+            ),
+          ),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: isHovered
+                  ? Border.all(color: AppColors.primary, width: 2.5)
+                  : null,
+            ),
+            child: _buildImageTile(
+              isMain: isMain,
+              imageFile: imageFile,
+              imageUrl: imageUrl,
+              combinedIndex: combinedIndex,
+              onRemove: () => _removeCombinedImageAt(combinedIndex),
+              showActions: true,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyImageUploadBox({
+    required int slotIndex,
+    required bool isMain,
+  }) {
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (details) => details.data < _orderedImages.length,
+      onAcceptWithDetails: (details) {
+        _reorderCombinedImages(details.data, _orderedImages.length - 1);
+      },
+      builder: (context, candidateData, rejectedData) {
+        return GestureDetector(
+          onTap: () => _pickImage(slotIndex),
+          child: _buildImageTile(
+            isMain: isMain,
+            imageFile: null,
+            imageUrl: null,
+            combinedIndex: slotIndex,
+            showActions: false,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildImageTile({
+    required bool isMain,
+    XFile? imageFile,
+    String? imageUrl,
+    int? combinedIndex,
+    VoidCallback? onRemove,
+    bool showActions = true,
   }) {
     final hasImage = imageFile != null || imageUrl != null;
-    return GestureDetector(
-      onTap: index != null && !hasImage ? () => _pickImage(index) : null,
-      child: Container(
-        width: 140,
-        height: 140,
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: isMain ? AppColors.primary : const Color(0xFFE2E8F0),
-            width: isMain ? 1.5 : 1,
-          ),
-          borderRadius: BorderRadius.circular(10),
-          color: hasImage ? Colors.white : const Color(0xFFFAFBFC),
+    return Container(
+      width: 140,
+      height: 140,
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: isMain ? AppColors.primary : const Color(0xFFE2E8F0),
+          width: isMain ? 2 : 1,
         ),
-        child: hasImage
-            ? Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(11),
-                    child: imageFile != null
-                        ? ProductListThumbnail(
-                            imageFile: imageFile,
-                            width: 140,
-                            height: 140,
-                            borderRadius: BorderRadius.circular(11),
-                            padding: const EdgeInsets.all(8),
-                            fallbackIconSize: 40,
-                          )
-                        : ProductListThumbnail(
-                            imageUrlOrPath: imageUrl,
-                            width: 140,
-                            height: 140,
-                            borderRadius: BorderRadius.circular(11),
-                            padding: const EdgeInsets.all(8),
-                            fallbackIconSize: 40,
-                          ),
-                  ),
+        borderRadius: BorderRadius.circular(10),
+        color: hasImage ? Colors.white : const Color(0xFFFAFBFC),
+      ),
+      child: hasImage
+          ? Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  child: imageFile != null
+                      ? ProductListThumbnail(
+                          imageFile: imageFile,
+                          width: 140,
+                          height: 140,
+                          borderRadius: BorderRadius.circular(9),
+                          padding: const EdgeInsets.all(8),
+                          fallbackIconSize: 40,
+                        )
+                      : ProductListThumbnail(
+                          imageUrlOrPath: imageUrl,
+                          width: 140,
+                          height: 140,
+                          borderRadius: BorderRadius.circular(9),
+                          padding: const EdgeInsets.all(8),
+                          fallbackIconSize: 40,
+                        ),
+                ),
+                if (showActions)
                   Positioned(
                     top: 4,
                     right: 4,
@@ -3879,8 +4002,9 @@ class _AddProductPageState extends State<AddProductPage> {
                         IconButton(
                           tooltip: 'Düzenle',
                           onPressed: () => _openProductImageEditor(
-                            productImageIndex: index,
-                            existingUrlIndex: existingUrlIndex,
+                            combinedIndex: combinedIndex,
+                            productImageIndex: imageFile != null && combinedIndex != null ? combinedIndex : null,
+                            existingUrlIndex: imageUrl != null && combinedIndex != null ? combinedIndex : null,
                             imageFile: imageFile,
                             imageUrl: imageUrl,
                           ),
@@ -3895,11 +4019,7 @@ class _AddProductPageState extends State<AddProductPage> {
                         const SizedBox(width: 4),
                         IconButton(
                           tooltip: 'Sil',
-                          onPressed: imageUrl != null
-                              ? onRemoveExisting
-                              : (index != null
-                                    ? () => _removeImage(index)
-                                    : null),
+                          onPressed: onRemove,
                           icon: const Icon(Icons.close, size: 16),
                           style: IconButton.styleFrom(
                             backgroundColor: Colors.black54,
@@ -3911,60 +4031,59 @@ class _AddProductPageState extends State<AddProductPage> {
                       ],
                     ),
                   ),
-                  if (isMain)
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary,
-                          borderRadius: const BorderRadius.vertical(
-                            bottom: Radius.circular(11),
-                          ),
-                        ),
-                        child: const Text(
-                          'Ana Görsel',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          textAlign: TextAlign.center,
+                if (isMain)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      decoration: const BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.vertical(
+                          bottom: Radius.circular(9),
                         ),
                       ),
-                    ),
-                ],
-              )
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.add_photo_alternate_outlined,
-                    size: 32,
-                    color: isMain ? AppColors.primary : Colors.grey.shade400,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    isMain ? 'Ana Görsel' : 'Görsel Ekle',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: isMain ? AppColors.primary : Colors.grey.shade600,
-                      fontWeight: isMain ? FontWeight.w600 : FontWeight.normal,
-                    ),
-                  ),
-                  if (isMain)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 4),
-                      child: Text(
-                        '(Zorunlu)',
-                        style: TextStyle(fontSize: 9, color: Colors.red),
+                      child: const Text(
+                        'Ana Görsel',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
                       ),
                     ),
-                ],
-              ),
-      ),
+                  ),
+              ],
+            )
+          : Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.add_photo_alternate_outlined,
+                  size: 32,
+                  color: isMain ? AppColors.primary : Colors.grey.shade400,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  isMain ? 'Ana Görsel' : 'Görsel Ekle',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: isMain ? AppColors.primary : Colors.grey.shade600,
+                    fontWeight: isMain ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                ),
+                if (isMain)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 4),
+                    child: Text(
+                      '(Zorunlu)',
+                      style: TextStyle(fontSize: 9, color: Colors.red),
+                    ),
+                  ),
+              ],
+            ),
     );
   }
 
@@ -3982,7 +4101,7 @@ class _AddProductPageState extends State<AddProductPage> {
         (variant.imagePath ?? '').trim().isNotEmpty &&
         !(variant.imagePath!.startsWith('http'));
     final displayXFile =
-        variant.imageFile ?? (isLocalPath ? XFile(variant.imagePath!) : null);
+        variant.imageFile ?? (isLocalPath && !kIsWeb ? XFile(variant.imagePath!) : null);
 
     final storage = (variant.storage ?? '').trim();
     final ram = (variant.ram ?? '').trim();
@@ -4013,18 +4132,23 @@ class _AddProductPageState extends State<AddProductPage> {
                 borderRadius: BorderRadius.circular(10),
                 color: Colors.grey.shade50,
               ),
-              child: (displayNetworkUrl != null || displayXFile != null)
+              child: (displayNetworkUrl != null || displayXFile != null || variant.imageBytes != null)
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(10),
-                      child: displayNetworkUrl != null
-                          ? OptimizedImage(
-                              imageUrlOrPath: displayNetworkUrl,
+                      child: variant.imageBytes != null
+                          ? Image.memory(
+                              variant.imageBytes!,
                               fit: BoxFit.cover,
                             )
-                          : Image(
-                              image: xFileImageProvider(displayXFile!),
-                              fit: BoxFit.cover,
-                            ),
+                          : displayNetworkUrl != null
+                              ? OptimizedImage(
+                                  imageUrlOrPath: displayNetworkUrl,
+                                  fit: BoxFit.cover,
+                                )
+                              : Image(
+                                  image: xFileImageProvider(displayXFile!),
+                                  fit: BoxFit.cover,
+                                ),
                     )
                   : const Icon(Icons.add_a_photo_outlined, color: Colors.grey),
             ),
@@ -4034,18 +4158,33 @@ class _AddProductPageState extends State<AddProductPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (isElectronics)
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      if (storage.isNotEmpty)
-                        _variantBadge('Kapasite: $storage'),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    if (variant.options != null &&
+                        variant.options!.isNotEmpty)
+                      ...variant.options!.entries.map(
+                        (e) => _variantBadge('${e.key}: ${e.value}'),
+                      )
+                    else if (variant.optionType != null &&
+                        variant.optionType!.trim().isNotEmpty &&
+                        size != '-')
+                      _variantBadge('${variant.optionType}: $size')
+                    else if (isElectronics &&
+                        (storage.isNotEmpty || ram.isNotEmpty)) ...[
+                      if (storage.isNotEmpty) _variantBadge('Kapasite: $storage'),
                       if (ram.isNotEmpty) _variantBadge('RAM: $ram'),
-                    ],
-                  )
-                else
-                  _variantBadge('Boyut: $size'),
+                    ] else if (size != '-')
+                      _variantBadge(
+                        _selectedMainCategory == 'Giyim & Aksesuar'
+                            ? 'Beden: $size'
+                            : (_selectedMainCategory == 'Yemek'
+                                ? 'Porsiyon: $size'
+                                : 'Seçenek: $size'),
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 8),
                 Text(
                   'Renk: $color',
@@ -4801,8 +4940,14 @@ class _AddProductPageState extends State<AddProductPage> {
         (key) => (key ?? '').trim().toLowerCase() == 'renk',
         orElse: () => null,
       );
-      if (selectedColor.isNotEmpty && colorKey != null) {
-        values[colorKey] = selectedColor;
+      if (selectedColor.isNotEmpty) {
+        if (colorKey != null) {
+          values[colorKey] = selectedColor;
+        } else {
+          values['Renk'] = selectedColor;
+        }
+      } else if (colorKey != null) {
+        values.remove(colorKey);
       }
       return values;
     }
@@ -4844,6 +4989,12 @@ class _AddProductPageState extends State<AddProductPage> {
 
       _applyRichDescriptionToSpecifications(foodSpecs);
 
+      if (_productColorHexController.text.trim().isNotEmpty) {
+        foodSpecs['color_hex'] = _productColorHexController.text.trim();
+      } else {
+        foodSpecs.remove('color_hex');
+      }
+
       return foodSpecs.isEmpty ? null : jsonEncode(foodSpecs);
     }
     final values = _finalStructuredAttributesMap();
@@ -4878,6 +5029,12 @@ class _AddProductPageState extends State<AddProductPage> {
     };
 
     _applyRichDescriptionToSpecifications(specs);
+
+    if (_productColorHexController.text.trim().isNotEmpty) {
+      specs['color_hex'] = _productColorHexController.text.trim();
+    } else {
+      specs.remove('color_hex');
+    }
 
     if (specs.isEmpty) return null;
     return jsonEncode(specs);
@@ -5513,6 +5670,13 @@ class _AddProductPageState extends State<AddProductPage> {
           _showError('Detaylı açıklama zorunludur');
           return false;
         }
+        
+        final hexText = _productColorHexController.text.trim();
+        if (!ProductColorPicker.isValidHex(hexText, allowEmpty: true)) {
+          _showError('Ürün rengi için geçersiz HEX kodu girildi (#RRGGBB veya #RRGGBBAA olmalıdır)');
+          return false;
+        }
+
         return true;
 
       case 1: // Fiyat & Stok
@@ -5996,12 +6160,17 @@ class _AddProductPageState extends State<AddProductPage> {
         },
       );
 
+      final newFile = editedBytesToXFile(
+        edited,
+        slotIndex: index,
+      );
       setState(() {
-        _productImages[index] = editedBytesToXFile(
-          edited,
-          slotIndex: index,
-        );
-        _productImagePreviewVersion++;
+        if (index < _orderedImages.length) {
+          _orderedImages[index] = newFile;
+        } else {
+          _orderedImages.add(newFile);
+        }
+        _syncStateFromOrderedImages();
       });
       return true;
     } catch (e, stack) {
@@ -6124,12 +6293,24 @@ class _AddProductPageState extends State<AddProductPage> {
     try {
       final XFile? image = await _pickSingleImageFile();
       if (image != null) {
+        final bytes = await image.readAsBytes();
+        if (!mounted || bytes.isEmpty) return;
+        final croppedBytes = await showDialog<Uint8List>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => ImageCropDialog(imageBytes: bytes),
+        );
+        if (croppedBytes == null || !mounted) return;
+        final xFile = XFile.fromData(
+          croppedBytes,
+          name: 'variant_cropped_${DateTime.now().millisecondsSinceEpoch}.jpg',
+          mimeType: 'image/jpeg',
+        );
         setState(() {
           if (variantIndex < _variants.length) {
-            _variants[variantIndex].imagePath = image.path.isNotEmpty
-                ? image.path
-                : image.name;
-            _variants[variantIndex].imageFile = image;
+            _variants[variantIndex].imageBytes = croppedBytes;
+            _variants[variantIndex].imagePath = kIsWeb ? null : xFile.path;
+            _variants[variantIndex].imageFile = xFile;
             _variants[variantIndex].imageUrl = null;
           }
         });
@@ -6148,8 +6329,7 @@ class _AddProductPageState extends State<AddProductPage> {
 
       var uploadedCount = 0;
       for (final image in images) {
-        final emptyIndex = _productImages.indexOf(null);
-        if (emptyIndex == -1) break;
+        if (_orderedImages.length >= 8) break;
 
         final bytes = await image.readAsBytes();
         if (!mounted) return;
@@ -6161,12 +6341,13 @@ class _AddProductPageState extends State<AddProductPage> {
         );
         if (edited == null || !mounted) continue;
 
+        final newFile = editedBytesToXFile(
+          edited,
+          slotIndex: _orderedImages.length,
+        );
         setState(() {
-          _productImages[emptyIndex] = editedBytesToXFile(
-            edited,
-            slotIndex: emptyIndex,
-          );
-          _productImagePreviewVersion++;
+          _orderedImages.add(newFile);
+          _syncStateFromOrderedImages();
         });
         uploadedCount++;
       }
@@ -6197,14 +6378,47 @@ class _AddProductPageState extends State<AddProductPage> {
     }
   }
 
-  void _removeImage(int index) {
+  void _syncOrderedImagesFromState() {
+    _orderedImages = [
+      ..._existingImageUrls,
+      ..._productImages.whereType<XFile>(),
+    ];
+  }
+
+  void _syncStateFromOrderedImages() {
+    _existingImageUrls = _orderedImages.whereType<String>().toList();
+    final localFiles = _orderedImages.whereType<XFile>().toList();
+    _productImages.fillRange(0, _productImages.length, null);
+    for (var i = 0; i < localFiles.length && i < _productImages.length; i++) {
+      _productImages[i] = localFiles[i];
+    }
+    _productImagePreviewVersion++;
+  }
+
+  void _reorderCombinedImages(int oldIndex, int newIndex) {
+    if (oldIndex < 0 || oldIndex >= _orderedImages.length) return;
+    if (newIndex < 0 || newIndex >= _orderedImages.length) return;
+    if (oldIndex == newIndex) return;
+
     setState(() {
-      _productImages[index] = null;
-      _productImagePreviewVersion++;
+      final item = _orderedImages.removeAt(oldIndex);
+      _orderedImages.insert(newIndex, item);
+      _syncStateFromOrderedImages();
+    });
+  }
+
+  void _removeCombinedImageAt(int index) {
+    if (index < 0 || index >= _orderedImages.length) return;
+    setState(() {
+      _orderedImages.removeAt(index);
+      _syncStateFromOrderedImages();
     });
   }
 
   List<Object> _combinedProductImages() {
+    if (_orderedImages.isNotEmpty) {
+      return List<Object>.from(_orderedImages);
+    }
     final items = <Object>[];
     items.addAll(_existingImageUrls);
     for (final image in _productImages) {
@@ -6227,30 +6441,11 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   void _replaceCombinedImageAt(int combinedIndex, XFile file) {
-    final items = _combinedProductImages();
-    if (combinedIndex < 0 || combinedIndex >= items.length) return;
-
-    items[combinedIndex] = file;
-    _writeBackCombinedImages(items);
-  }
-
-  void _writeBackCombinedImages(List<Object> items) {
-    _existingImageUrls = <String>[];
-    final locals = <XFile>[];
-
-    for (final item in items) {
-      if (item is String) {
-        _existingImageUrls.add(item);
-      } else if (item is XFile) {
-        locals.add(item);
-      }
-    }
-
-    _productImages.fillRange(0, _productImages.length, null);
-    for (var i = 0; i < locals.length && i < _productImages.length; i++) {
-      _productImages[i] = locals[i];
-    }
-    _productImagePreviewVersion++;
+    if (combinedIndex < 0 || combinedIndex >= _orderedImages.length) return;
+    setState(() {
+      _orderedImages[combinedIndex] = file;
+      _syncStateFromOrderedImages();
+    });
   }
 
   /// Ana ürün görseli — sol slotlarla aynı sıra: combined listenin ilk öğesi.
@@ -6358,6 +6553,7 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   Future<void> _openProductImageEditor({
+    int? combinedIndex,
     required int? productImageIndex,
     required int? existingUrlIndex,
     XFile? imageFile,
@@ -6376,18 +6572,17 @@ class _AddProductPageState extends State<AddProductPage> {
       );
       if (edited == null || !mounted) return;
 
-      final combinedIndex = _combinedImageIndex(
-        productImageIndex: productImageIndex,
-        existingUrlIndex: existingUrlIndex,
-      );
+      final targetIndex = combinedIndex ??
+          _combinedImageIndex(
+            productImageIndex: productImageIndex,
+            existingUrlIndex: existingUrlIndex,
+          );
       final replacement = editedBytesToXFile(
         edited,
-        slotIndex: productImageIndex ?? existingUrlIndex,
+        slotIndex: targetIndex,
       );
 
-      setState(() {
-        _replaceCombinedImageAt(combinedIndex, replacement);
-      });
+      _replaceCombinedImageAt(targetIndex, replacement);
     } on ProductImageDownloadException catch (error) {
       if (mounted) _showError(error.toString());
     } on FormatException catch (error) {
@@ -6409,7 +6604,7 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   Future<void> _addVariant() async {
-    final result = await showDialog<ProductVariant>(
+    final result = await showDialog<dynamic>(
       context: context,
       builder: (context) => _AddVariantDialog(
         isElectronics: _selectedMainCategory == 'Elektronik',
@@ -6417,12 +6612,19 @@ class _AddProductPageState extends State<AddProductPage> {
             _selectedMainCategory == 'Giyim & Aksesuar' ||
             _selectedSubCategory == 'Ayakkabı',
         isFood: _selectedMainCategory == 'Yemek',
+        productImages: _productImages,
+        existingImageUrls: _existingImageUrls,
+        customOptionTypes: _customOptionTypes,
       ),
     );
 
     if (result != null) {
       setState(() {
-        _variants.add(result);
+        if (result is List<ProductVariant>) {
+          _variants.addAll(result);
+        } else if (result is ProductVariant) {
+          _variants.add(result);
+        }
       });
     }
   }
@@ -6430,7 +6632,7 @@ class _AddProductPageState extends State<AddProductPage> {
   Future<void> _editVariant(int index) async {
     if (index < 0 || index >= _variants.length) return;
     final current = _variants[index];
-    final result = await showDialog<ProductVariant>(
+    final result = await showDialog<dynamic>(
       context: context,
       builder: (context) => _AddVariantDialog(
         isElectronics: _selectedMainCategory == 'Elektronik',
@@ -6440,22 +6642,21 @@ class _AddProductPageState extends State<AddProductPage> {
         isFood: _selectedMainCategory == 'Yemek',
         initialVariant: current,
         submitLabel: 'Güncelle',
+        productImages: _productImages,
+        existingImageUrls: _existingImageUrls,
+        customOptionTypes: _customOptionTypes,
       ),
     );
     if (result != null) {
       setState(() {
-        _variants[index] = ProductVariant(
-          color: result.color,
-          size: result.size,
-          ram: result.ram,
-          storage: result.storage,
-          sku: result.sku,
-          stock: result.stock,
-          priceDifference: result.priceDifference,
-          imagePath: result.imagePath ?? current.imagePath,
-          imageFile: result.imageFile ?? current.imageFile,
-          imageUrl: result.imageUrl ?? current.imageUrl,
-        );
+        if (result is List<ProductVariant> && result.isNotEmpty) {
+          _variants[index] = result.first;
+          if (result.length > 1) {
+            _variants.insertAll(index + 1, result.sublist(1));
+          }
+        } else if (result is ProductVariant) {
+          _variants[index] = result;
+        }
       });
     }
   }
@@ -7132,9 +7333,8 @@ class _AddProductPageState extends State<AddProductPage> {
     );
 
     try {
-      final List<XFile> validImages = _productImages
-          .where((i) => i != null)
-          .cast<XFile>()
+      final List<XFile> validImages = _orderedImages
+          .whereType<XFile>()
           .toList();
       productCreateLog(
         'product_save_start',
@@ -7149,21 +7349,16 @@ class _AddProductPageState extends State<AddProductPage> {
 
       if (widget.isEdit && widget.productId != null) {
         // GÜNCELLEME İŞLEMİ
-        List<String>? imageUrlsOverride;
-        if (validImages.isNotEmpty) {
-          imageUrlsOverride = await _resolveImageUrlsForSave(
-            productId,
-            onProgress: (status) {
-              progressNotifier.value = status;
-            },
-          );
-        }
+        final imageUrlsOverride = await _resolveImageUrlsForSave(
+          productId,
+          onProgress: (status) {
+            progressNotifier.value = status;
+          },
+        );
 
         await _storeService.updateProduct(
           product,
-          newImages: imageUrlsOverride == null && validImages.isNotEmpty
-              ? validImages
-              : null,
+          newImages: null,
           finalImageUrlsOverride: imageUrlsOverride,
           previousStatus: _initialProductStatus,
           variants: _variants, // Varyantları gönder
@@ -7276,7 +7471,10 @@ class _AddProductPageState extends State<AddProductPage> {
 
 class ProductVariant {
   String color;
+  String? colorHex;
   String size;
+  String? optionType;
+  Map<String, String>? options;
   String? ram;
   String? storage;
   String sku;
@@ -7284,11 +7482,15 @@ class ProductVariant {
   double priceDifference;
   String? imagePath;
   XFile? imageFile;
+  Uint8List? imageBytes;
   String? imageUrl;
 
   ProductVariant({
     required this.color,
+    this.colorHex,
     required this.size,
+    this.optionType,
+    this.options,
     this.ram,
     this.storage,
     required this.sku,
@@ -7296,13 +7498,67 @@ class ProductVariant {
     required this.priceDifference,
     this.imagePath,
     this.imageFile,
+    this.imageBytes,
     this.imageUrl,
   });
+
+  factory ProductVariant.fromMap(Map<String, dynamic> map) {
+    final rawUrl =
+        map['imageUrl'] ??
+        map['image_url'] ??
+        map['imagePath'] ??
+        map['image_path'];
+    final imageUrl = rawUrl?.toString();
+
+    Map<String, String>? parsedOptions;
+    final rawOptions = map['options'];
+    if (rawOptions is Map) {
+      parsedOptions = rawOptions.map(
+        (k, v) => MapEntry(k.toString(), v?.toString() ?? ''),
+      );
+    }
+
+    final rawDiff = map['priceDifference'] ?? map['price_difference'];
+    final priceDiff = (rawDiff as num?)?.toDouble() ??
+        double.tryParse(rawDiff?.toString().replaceAll(',', '.') ?? '') ??
+        0.0;
+
+    final rawStock = map['stock'] ?? map['stock_quantity'] ?? map['stok'];
+    final stock = (rawStock as num?)?.toInt() ??
+        int.tryParse(rawStock?.toString() ?? '') ??
+        0;
+
+    return ProductVariant(
+      color: (map['color'] ?? map['Renk'] ?? map['renk'] ?? '').toString(),
+      colorHex: (map['colorHex'] ?? map['color_hex'] ?? map['hex'])?.toString(),
+      size: (map['size'] ?? map['beden'] ?? '').toString(),
+      optionType: (map['optionType'] ?? map['option_type'])?.toString(),
+      options: parsedOptions,
+      ram: map['ram']?.toString(),
+      storage: (map['storage'] ?? map['hafıza'] ?? map['hafiza'])?.toString(),
+      sku: (map['sku'] ?? '').toString(),
+      stock: stock,
+      priceDifference: priceDiff,
+      imagePath: imageUrl,
+      imageUrl: imageUrl,
+    );
+  }
 
   Map<String, dynamic> toMap() {
     return {
       'color': color,
+      if (colorHex != null && colorHex!.isNotEmpty) ...{
+        'colorHex': colorHex,
+        'color_hex': colorHex,
+      },
       'size': size,
+      if (optionType != null && optionType!.isNotEmpty) ...{
+        'optionType': optionType,
+        'option_type': optionType,
+      },
+      if (options != null && options!.isNotEmpty) ...{
+        'options': options,
+      },
       'ram': ram,
       'storage': storage,
       'sku': sku,
@@ -7316,12 +7572,53 @@ class ProductVariant {
 
 // SellerProduct ve SellerProductService seller_panel_page.dart'tan import ediliyor
 
+class VariantOptionRow {
+  final TextEditingController typeController;
+  final TextEditingController valueController;
+  final TextEditingController priceDiffController;
+  final TextEditingController stockController;
+  final FocusNode typeFocusNode;
+  final FocusNode valueFocusNode;
+  final FocusNode priceDiffFocusNode;
+  final FocusNode stockFocusNode;
+
+  VariantOptionRow({
+    String type = '',
+    String value = '',
+    String priceDiff = '0',
+    String stock = '10',
+  })  : typeController = TextEditingController(text: type),
+        valueController = TextEditingController(text: value),
+        priceDiffController = TextEditingController(text: priceDiff),
+        stockController = TextEditingController(text: stock),
+        typeFocusNode = FocusNode(),
+        valueFocusNode = FocusNode(),
+        priceDiffFocusNode = FocusNode(),
+        stockFocusNode = FocusNode();
+
+  void dispose() {
+    typeController.dispose();
+    valueController.dispose();
+    priceDiffController.dispose();
+    stockController.dispose();
+    typeFocusNode.dispose();
+    valueFocusNode.dispose();
+    priceDiffFocusNode.dispose();
+    stockFocusNode.dispose();
+  }
+}
+
+typedef _VariantOptionRow = VariantOptionRow;
+
 class _AddVariantDialog extends StatefulWidget {
   final bool isElectronics;
   final bool isClothing;
   final bool isFood;
   final ProductVariant? initialVariant;
   final String submitLabel;
+  final List<XFile?> productImages;
+  final List<String> existingImageUrls;
+  final Set<String>? customOptionTypes;
 
   const _AddVariantDialog({
     this.isElectronics = false,
@@ -7329,6 +7626,9 @@ class _AddVariantDialog extends StatefulWidget {
     this.isFood = false,
     this.initialVariant,
     this.submitLabel = 'Ekle',
+    this.productImages = const [],
+    this.existingImageUrls = const [],
+    this.customOptionTypes,
   });
 
   @override
@@ -7336,207 +7636,1188 @@ class _AddVariantDialog extends StatefulWidget {
 }
 
 class _AddVariantDialogState extends State<_AddVariantDialog> {
-  final _colorController = TextEditingController();
-  final _sizeController = TextEditingController();
-  final _skuController = TextEditingController();
-  final _stockController = TextEditingController(text: '0');
-  final _priceDiffController = TextEditingController(text: '0');
-  final _ramController = TextEditingController();
-  final _storageController = TextEditingController();
+  final List<_VariantOptionRow> _optionRows = [];
+  int _activeRowIndex = 0;
+  final List<String> _customOptionSuggestions = [];
+
+  late final TextEditingController _colorController;
+  late final TextEditingController _colorHexController;
+  late final TextEditingController _skuController;
+  bool _noColorSpecified = false;
+
+  final List<dynamic> _localMediaList = [];
+  int? _selectedMediaIndex;
+
+  Uint8List? _selectedImageBytes;
+  XFile? _selectedImageFile;
+  String? _selectedImageUrl;
+  String? _selectedVariantImageUrl;
+  String? _selectedImagePath;
+
+  String get _defaultOptionType {
+    if (widget.isClothing) return 'Beden';
+    if (widget.isFood) return 'Porsiyon';
+    if (widget.isElectronics) return 'Kapasite';
+    return 'Seçenek';
+  }
 
   @override
   void initState() {
     super.initState();
+    if (widget.customOptionTypes != null) {
+      _customOptionSuggestions.addAll(widget.customOptionTypes!);
+    }
+
+    // Populate local media list
+    for (final f in widget.productImages) {
+      if (f != null) _localMediaList.add(f);
+    }
+    for (final u in widget.existingImageUrls) {
+      if (u.trim().isNotEmpty) _localMediaList.add(u.trim());
+    }
+
     final v = widget.initialVariant;
     if (v != null) {
-      _colorController.text = v.color;
-      _sizeController.text = v.size;
-      _skuController.text = v.sku;
-      _stockController.text = v.stock.toString();
-      _priceDiffController.text = v.priceDifference.toString();
-      _ramController.text = v.ram ?? '';
-      _storageController.text = v.storage ?? '';
+      _colorController = TextEditingController(text: v.color);
+      _colorHexController = TextEditingController(text: v.colorHex ?? '');
+      _skuController = TextEditingController(text: v.sku);
+      _selectedImageBytes = v.imageBytes;
+      _selectedImageFile = v.imageFile;
+      _selectedImageUrl = v.imageUrl;
+      _selectedVariantImageUrl = v.imageUrl;
+      _selectedImagePath = v.imagePath;
+
+      if (v.color.trim().isEmpty) {
+        _noColorSpecified = true;
+      }
+
+      if (_selectedImageBytes != null) {
+        _localMediaList.insert(0, _selectedImageBytes!);
+        _selectedMediaIndex = 0;
+      } else if (_selectedImageFile != null) {
+        final existingIdx = _localMediaList.indexOf(_selectedImageFile);
+        if (existingIdx != -1) {
+          _selectedMediaIndex = existingIdx;
+        } else {
+          _localMediaList.insert(0, _selectedImageFile!);
+          _selectedMediaIndex = 0;
+        }
+      } else if (_selectedImageUrl != null &&
+          _selectedImageUrl!.isNotEmpty) {
+        final existingIdx = _localMediaList.indexOf(_selectedImageUrl!);
+        if (existingIdx != -1) {
+          _selectedMediaIndex = existingIdx;
+        } else {
+          _localMediaList.insert(0, _selectedImageUrl!);
+          _selectedMediaIndex = 0;
+        }
+      }
+
+      final priceDiffStr = v.priceDifference == 0
+          ? '0'
+          : (v.priceDifference > 0
+              ? '+${v.priceDifference.toStringAsFixed(0)}'
+              : v.priceDifference.toStringAsFixed(0));
+      final stockStr = v.stock.toString();
+
+      if (v.options != null && v.options!.isNotEmpty) {
+        for (final entry in v.options!.entries) {
+          _optionRows.add(_VariantOptionRow(
+            type: entry.key,
+            value: entry.value,
+            priceDiff: priceDiffStr,
+            stock: stockStr,
+          ));
+          if (!_quickOptionSuggestions
+                  .any((s) => s.toLowerCase() == entry.key.toLowerCase()) &&
+              !_customOptionSuggestions
+                  .any((s) => s.toLowerCase() == entry.key.toLowerCase())) {
+            _customOptionSuggestions.add(entry.key);
+          }
+        }
+      } else {
+        final initialType = v.optionType ??
+            (v.storage != null && v.storage!.isNotEmpty
+                ? 'Kapasite'
+                : _defaultOptionType);
+        _optionRows.add(_VariantOptionRow(
+          type: initialType,
+          value: v.size,
+          priceDiff: priceDiffStr,
+          stock: stockStr,
+        ));
+        if (!_quickOptionSuggestions
+                .any((s) => s.toLowerCase() == initialType.toLowerCase()) &&
+            !_customOptionSuggestions
+                .any((s) => s.toLowerCase() == initialType.toLowerCase())) {
+          _customOptionSuggestions.add(initialType);
+        }
+      }
+    } else {
+      _colorController = TextEditingController();
+      _colorHexController = TextEditingController();
+      _skuController = TextEditingController();
+      _optionRows.add(_VariantOptionRow(
+        type: _defaultOptionType,
+        value: '',
+        priceDiff: '0',
+        stock: '10',
+      ));
     }
   }
 
   @override
   void dispose() {
+    for (final row in _optionRows) {
+      row.dispose();
+    }
     _colorController.dispose();
-    _sizeController.dispose();
+    _colorHexController.dispose();
     _skuController.dispose();
-    _stockController.dispose();
-    _priceDiffController.dispose();
-    _ramController.dispose();
-    _storageController.dispose();
     super.dispose();
+  }
+
+  List<String> get _quickOptionSuggestions {
+    if (widget.isFood) {
+      return const ['Porsiyon', 'Ek Malzeme', 'Menü Tipi', 'Boyut'];
+    }
+    if (widget.isClothing) {
+      return const ['Beden', 'Numara', 'Kalıp', 'Boyut', 'Uzunluk'];
+    }
+    if (widget.isElectronics) {
+      return const ['Kapasite', 'Bağlantı Türü', 'Model', 'Boyut', 'Sürüm'];
+    }
+    return const ['Beden', 'Numara', 'Kapasite', 'Bağlantı Türü', 'Boyut', 'Paket'];
+  }
+
+  List<String> get _allOptionSuggestions {
+    final list = <String>[..._quickOptionSuggestions];
+    for (final s in _customOptionSuggestions) {
+      if (!list.any((item) => item.toLowerCase() == s.toLowerCase())) {
+        list.add(s);
+      }
+    }
+    return list;
+  }
+
+  List<dynamic> _getAvailableMedia() => _localMediaList;
+
+  Future<void> _showAddCustomOptionDialog() async {
+    final textController = TextEditingController();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final newOption = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: isDark ? const BorderSide(color: Color(0xFF334155)) : BorderSide.none,
+        ),
+        title: Row(
+          children: [
+            const Icon(Icons.add_circle_outline, color: AppColors.primary, size: 20),
+            const SizedBox(width: 8),
+            Text(
+              'Yeni Seçenek Türü Ekle',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: isDark ? Colors.white : const Color(0xFF0F172A),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Ürününüz için özel bir seçenek türü belirleyin (örn: Kapasite, Bağlantı Türü, Materyal, Kalıp).',
+              style: TextStyle(
+                fontSize: 12,
+                color: isDark ? const Color(0xFF94A3B8) : Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: textController,
+              autofocus: true,
+              textCapitalization: TextCapitalization.words,
+              style: TextStyle(
+                fontSize: 13.5,
+                color: isDark ? Colors.white : const Color(0xFF0F172A),
+              ),
+              decoration: InputDecoration(
+                labelText: 'Seçenek Adı',
+                labelStyle: TextStyle(
+                  color: isDark ? const Color(0xFF94A3B8) : Colors.grey.shade700,
+                  fontSize: 12.5,
+                ),
+                hintText: 'Örn: Bağlantı Türü',
+                hintStyle: TextStyle(
+                  color: isDark ? const Color(0xFF64748B) : Colors.grey.shade400,
+                  fontSize: 12.5,
+                ),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                filled: isDark,
+                fillColor: isDark ? const Color(0xFF0F172A) : null,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              ),
+              onSubmitted: (val) {
+                final trimmed = val.trim();
+                if (trimmed.isNotEmpty) {
+                  Navigator.pop(ctx, trimmed);
+                }
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              'İptal',
+              style: TextStyle(
+                color: isDark ? const Color(0xFF94A3B8) : Colors.grey.shade700,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final trimmed = textController.text.trim();
+              if (trimmed.isNotEmpty) {
+                Navigator.pop(ctx, trimmed);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+            child: const Text('Ekle'),
+          ),
+        ],
+      ),
+    );
+
+    if (newOption != null && newOption.trim().isNotEmpty) {
+      final clean = newOption.trim();
+      setState(() {
+        if (!_customOptionSuggestions.any((s) => s.toLowerCase() == clean.toLowerCase()) &&
+            !_quickOptionSuggestions.any((s) => s.toLowerCase() == clean.toLowerCase())) {
+          _customOptionSuggestions.add(clean);
+        }
+        widget.customOptionTypes?.add(clean);
+
+        final activeRow = _activeRowIndex < _optionRows.length
+            ? _optionRows[_activeRowIndex]
+            : (_optionRows.isNotEmpty ? _optionRows.first : null);
+        if (activeRow != null) {
+          activeRow.typeController.text = clean;
+          activeRow.valueFocusNode.requestFocus();
+        }
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final title = widget.isFood
-        ? 'Porsiyon & Ek Malzeme Ekle'
-        : (widget.isClothing ? 'Beden & Renk Ekle' : 'Seçenek Ekle');
+        ? 'Porsiyon & Seçenek Ekle'
+        : (widget.isClothing ? 'Beden & Renk Ekle' : 'Seçenek Ekle / Düzenle');
+    final availableMedia = _getAvailableMedia();
+
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: isDark ? const BorderSide(color: Color(0xFF334155)) : BorderSide.none,
+      ),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 620),
         child: Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(22),
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Başlık & İptal
                 Row(
                   children: [
                     Container(
-                      width: 38,
-                      height: 38,
+                      width: 40,
+                      height: 40,
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.12),
+                        color: AppColors.primary.withValues(alpha: 0.14),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: const Icon(
                         Icons.tune,
                         color: AppColors.primary,
-                        size: 20,
+                        size: 22,
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
-                      child: Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: isDark ? Colors.white : const Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Varyant özelliklerini, görselini ve stok durumunu belirleyin.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark ? const Color(0xFF94A3B8) : Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     IconButton(
                       onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
+                      icon: Icon(
+                        Icons.close,
+                        color: isDark ? const Color(0xFF94A3B8) : Colors.grey.shade600,
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  'Varyant bilgilerini doldurun. Daha sonra karttan da düzenleyebilirsiniz.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-                const SizedBox(height: 16),
-                if (widget.isElectronics) ...[
-                  Row(
+                const SizedBox(height: 18),
+
+                // 1. VARYANT GÖRSELİ ATA (Galeri Seçici & Yeni Yükleme)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: _dialogField(
-                          controller: _storageController,
-                          label: 'Hafıza',
-                          hint: 'Örn: 256GB',
+                      Row(
+                        children: [
+                          const Icon(Icons.photo_library_outlined, size: 16, color: AppColors.primary),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Varyant Görseli Ata (Opsiyonel)',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: isDark ? Colors.white : const Color(0xFF0F172A),
+                            ),
+                          ),
+                          const Spacer(),
+                          if (_selectedMediaIndex != null ||
+                              _selectedImageBytes != null ||
+                              _selectedImageFile != null ||
+                              _selectedVariantImageUrl != null ||
+                              _selectedImageUrl != null ||
+                              _selectedImagePath != null) ...[
+                            InkWell(
+                              onTap: () async {
+                                try {
+                                  Uint8List? bytes = _selectedImageBytes;
+                                  bytes ??= await loadProductImageBytes(
+                                    file: _selectedImageFile,
+                                    imageUrl: _selectedVariantImageUrl ?? _selectedImageUrl,
+                                  );
+                                  if (bytes.isEmpty) return;
+                                  final Uint8List validBytes = bytes;
+                                  if (!context.mounted) return;
+                                  final edited = await showDialog<Uint8List>(
+                                    context: context,
+                                    useRootNavigator: true,
+                                    barrierDismissible: false,
+                                    builder: (_) => ImageCropDialog(imageBytes: validBytes),
+                                  );
+                                  if (edited != null && mounted) {
+                                    final xFile = XFile.fromData(
+                                      edited,
+                                      name: 'variant_edited_${DateTime.now().millisecondsSinceEpoch}.jpg',
+                                      mimeType: 'image/jpeg',
+                                    );
+                                    setState(() {
+                                      _localMediaList.insert(0, edited);
+                                      _selectedMediaIndex = 0;
+                                      _selectedImageBytes = edited;
+                                      _selectedImageFile = xFile;
+                                      _selectedImageUrl = null;
+                                      _selectedVariantImageUrl = null;
+                                      _selectedImagePath = null;
+                                    });
+                                  }
+                                } catch (e) {
+                                  debugPrint('Variant image edit error: $e');
+                                }
+                              },
+                              child: const Text(
+                                'Düzenle',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            InkWell(
+                              onTap: () {
+                                setState(() {
+                                  _selectedMediaIndex = null;
+                                  _selectedImageBytes = null;
+                                  _selectedImageFile = null;
+                                  _selectedImageUrl = null;
+                                  _selectedVariantImageUrl = null;
+                                  _selectedImagePath = null;
+                                });
+                              },
+                              child: const Text(
+                                'Görseli Kaldır',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFFDC2626),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 72,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            // 1. Yeni Yükleme Butonu ("Görseli Kırp" Entegrasyonu)
+                            InkWell(
+                              onTap: () async {
+                                try {
+                                  Uint8List? rawBytes;
+
+                                  // 1. FilePicker (Web'de withData: true doğrudan belleğe Uint8List yükler, donmayı önler)
+                                  try {
+                                    final filePickerResult = await FilePicker.platform.pickFiles(
+                                      type: FileType.image,
+                                      withData: true,
+                                    );
+                                    if (filePickerResult != null && filePickerResult.files.isNotEmpty) {
+                                      final file = filePickerResult.files.single;
+                                      if (kIsWeb) {
+                                        rawBytes = file.bytes;
+                                      } else {
+                                        rawBytes = file.bytes ?? (file.path != null ? await file.xFile.readAsBytes() : null);
+                                      }
+                                    }
+                                  } catch (e) {
+                                    debugPrint('FilePicker varyant görsel hatası: $e');
+                                  }
+
+                                  // 2. Web fallback (pickImageFile)
+                                  if (rawBytes == null || rawBytes.isEmpty) {
+                                    try {
+                                      final pickedFile = await pickImageFile();
+                                      if (pickedFile != null && pickedFile.bytes.isNotEmpty) {
+                                        rawBytes = pickedFile.bytes;
+                                      }
+                                    } catch (e) {
+                                      debugPrint('pickImageFile varyant görsel hatası: $e');
+                                    }
+                                  }
+
+                                  // 3. Fallback: ImagePicker (özellikle mobil veya alternatif tarayıcılar)
+                                  if (rawBytes == null || rawBytes.isEmpty) {
+                                    try {
+                                      final pickedFile = await ImagePicker().pickImage(
+                                        source: ImageSource.gallery,
+                                        imageQuality: 90,
+                                      );
+                                      if (pickedFile != null) {
+                                        rawBytes = await pickedFile.readAsBytes();
+                                      }
+                                    } catch (e) {
+                                      debugPrint('ImagePicker varyant görsel hatası: $e');
+                                    }
+                                  }
+
+                                  // Kullanıcı seçimden vazgeçti veya veri alınamadıysa sessizce çık
+                                  if (rawBytes == null || rawBytes.isEmpty) {
+                                    return;
+                                  }
+
+                                  debugPrint("Varyant Görseli Seçildi, Kırpma Başlatılıyor. Boyut: ${rawBytes.length} bytes");
+                                  final Uint8List validBytes = rawBytes;
+                                  if (!context.mounted) return;
+
+                                  final Uint8List? croppedBytes = await showDialog<Uint8List>(
+                                    context: context,
+                                    useRootNavigator: true, // Z-index ve rota çakışmasını engeller
+                                    barrierDismissible: false,
+                                    builder: (BuildContext cropContext) {
+                                      return ImageCropDialog(imageBytes: validBytes);
+                                    },
+                                  );
+
+                                  if (croppedBytes != null && mounted) {
+                                    debugPrint("Varyant Görseli Kırpıldı. Boyut: ${croppedBytes.length} bytes");
+                                    final xFile = XFile.fromData(
+                                      croppedBytes,
+                                      name: 'variant_cropped_${DateTime.now().millisecondsSinceEpoch}.jpg',
+                                      mimeType: 'image/jpeg',
+                                    );
+                                    setState(() {
+                                      _localMediaList.insert(0, croppedBytes);
+                                      _selectedMediaIndex = 0;
+                                      _selectedImageBytes = croppedBytes;
+                                      _selectedImageFile = xFile;
+                                      _selectedImageUrl = null;
+                                      _selectedVariantImageUrl = null;
+                                      _selectedImagePath = null;
+                                    });
+                                  }
+                                } catch (e, st) {
+                                  debugPrint('Variant image pick/crop error: $e\n$st');
+                                }
+                              },
+                              borderRadius: BorderRadius.circular(10),
+                              child: Container(
+                                width: 64,
+                                height: 64,
+                                margin: const EdgeInsets.only(right: 8),
+                                decoration: BoxDecoration(
+                                  color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: isDark ? const Color(0xFF475569) : Colors.grey.shade300,
+                                  ),
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(
+                                      Icons.add_photo_alternate_outlined,
+                                      size: 20,
+                                      color: AppColors.primary,
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      'Yeni Yükle',
+                                      style: TextStyle(
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: isDark ? const Color(0xFF94A3B8) : Colors.grey.shade700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            // 2. Mevcut ve Yeni Yüklenen Görseller (Hibrit Liste)
+                            ...List.generate(availableMedia.length, (index) {
+                              final media = availableMedia[index];
+                              final isSelected = _selectedMediaIndex == index;
+
+                              Widget imageWidget;
+                              if (media is Uint8List) {
+                                imageWidget = Image.memory(
+                                  media,
+                                  fit: BoxFit.cover,
+                                  width: 64,
+                                  height: 64,
+                                );
+                              } else if (media is String) {
+                                imageWidget = Image.network(
+                                  media,
+                                  fit: BoxFit.cover,
+                                  width: 64,
+                                  height: 64,
+                                  errorBuilder: (context, error, stackTrace) => Container(
+                                    color: isDark ? const Color(0xFF334155) : Colors.grey.shade200,
+                                    child: const Icon(Icons.broken_image, size: 20),
+                                  ),
+                                );
+                              } else if (media is XFile) {
+                                imageWidget = Image(
+                                  image: xFileImageProvider(media),
+                                  fit: BoxFit.cover,
+                                  width: 64,
+                                  height: 64,
+                                );
+                              } else {
+                                imageWidget = const SizedBox(width: 64, height: 64);
+                              }
+
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      if (isSelected) {
+                                        _selectedMediaIndex = null;
+                                        _selectedImageBytes = null;
+                                        _selectedImageFile = null;
+                                        _selectedImageUrl = null;
+                                        _selectedVariantImageUrl = null;
+                                        _selectedImagePath = null;
+                                      } else {
+                                        _selectedMediaIndex = index;
+                                        if (media is Uint8List) {
+                                          _selectedImageBytes = media;
+                                          _selectedImageFile = XFile.fromData(
+                                            media,
+                                            name: 'variant_cropped_${DateTime.now().millisecondsSinceEpoch}.jpg',
+                                            mimeType: 'image/jpeg',
+                                          );
+                                          _selectedImageUrl = null;
+                                          _selectedVariantImageUrl = null;
+                                          _selectedImagePath = null;
+                                        } else if (media is String) {
+                                          _selectedImageBytes = null;
+                                          _selectedImageFile = null;
+                                          _selectedImageUrl = media;
+                                          _selectedVariantImageUrl = media;
+                                          _selectedImagePath = media;
+                                        } else if (media is XFile) {
+                                          _selectedImageBytes = null;
+                                          _selectedImageFile = media;
+                                          _selectedImageUrl = null;
+                                          _selectedVariantImageUrl = null;
+                                          _selectedImagePath = kIsWeb ? null : media.path;
+                                        }
+                                      }
+                                    });
+                                  },
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Stack(
+                                    children: [
+                                      Container(
+                                        width: 64,
+                                        height: 64,
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(10),
+                                          border: Border.all(
+                                            color: isSelected
+                                                ? AppColors.primary
+                                                : (isDark
+                                                    ? const Color(0xFF334155)
+                                                    : Colors.grey.shade300),
+                                            width: isSelected ? 2.5 : 1,
+                                          ),
+                                        ),
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(8),
+                                          child: imageWidget,
+                                        ),
+                                      ),
+                                      if (isSelected)
+                                        Positioned(
+                                          top: 3,
+                                          right: 3,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(2),
+                                            decoration: const BoxDecoration(
+                                              color: AppColors.primary,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
+                                              Icons.check,
+                                              size: 11,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _dialogField(
-                          controller: _ramController,
-                          label: 'RAM',
-                          hint: 'Örn: 8GB',
+                      if (availableMedia.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            'Ürün için henüz ana görsel yüklenmemiş. İsterseniz "Yeni Yükle" ile doğrudan varyanta özel görsel atayabilirsiniz.',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: isDark ? const Color(0xFF64748B) : Colors.grey.shade500,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // 2. DİNAMİK SEÇENEK ALANLARI
+                Row(
+                  children: [
+                    const Icon(Icons.style_outlined, size: 16, color: AppColors.primary),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Seçenek Özellikleri',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: isDark ? Colors.white : const Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '(Serbest Tip ve Değer)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isDark ? const Color(0xFF94A3B8) : Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+
+                // Hızlı Seçenek Öneri Çipleri + "+ Seçenek Ekle" Butonu
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      ..._allOptionSuggestions.map((sug) {
+                        final activeRow = _activeRowIndex < _optionRows.length
+                            ? _optionRows[_activeRowIndex]
+                            : (_optionRows.isNotEmpty ? _optionRows.first : null);
+                        final isCurrent = activeRow != null &&
+                            activeRow.typeController.text.trim().toLowerCase() ==
+                                sug.toLowerCase();
+
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: ActionChip(
+                            label: Text(sug),
+                            labelStyle: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+                              color: isCurrent
+                                  ? Colors.white
+                                  : (isDark ? const Color(0xFFE2E8F0) : const Color(0xFF334155)),
+                            ),
+                            backgroundColor: isCurrent
+                                ? AppColors.primary
+                                : (isDark ? const Color(0xFF334155) : const Color(0xFFF1F5F9)),
+                            side: BorderSide(
+                              color: isCurrent
+                                  ? AppColors.primary
+                                  : (isDark ? const Color(0xFF475569) : const Color(0xFFE2E8F0)),
+                            ),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            onPressed: () {
+                              setState(() {
+                                if (activeRow != null) {
+                                  activeRow.typeController.text = sug;
+                                  activeRow.valueFocusNode.requestFocus();
+                                }
+                              });
+                            },
+                          ),
+                        );
+                      }),
+                      // + Seçenek Ekle Butonu
+                      Padding(
+                        padding: const EdgeInsets.only(left: 2, right: 6),
+                        child: ActionChip(
+                          avatar: const Icon(Icons.add, size: 15, color: AppColors.primary),
+                          label: const Text(
+                            'Seçenek Ekle',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          backgroundColor:
+                              isDark ? const Color(0xFF1E293B) : const Color(0xFFEFF6FF),
+                          side: BorderSide(
+                            color: isDark
+                                ? AppColors.primary.withValues(alpha: 0.6)
+                                : AppColors.primary,
+                            width: 1.2,
+                          ),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          onPressed: _showAddCustomOptionDialog,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
-                ],
-                Row(
+                ),
+                const SizedBox(height: 12),
+
+                // Dinamik Çoklu Seçenek Satırları (5 Sütunlu Satır Mimarisi)
+                Column(
                   children: [
-                    Expanded(
-                      child: _dialogField(
-                        controller: _colorController,
-                        label: widget.isFood ? 'Porsiyon Adı' : 'Renk',
-                        hint: widget.isFood
-                            ? 'Örn: Büyük Porsiyon'
-                            : 'Örn: Siyah',
+                    for (int i = 0; i < _optionRows.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 1. Seçenek Türü (Flex 3)
+                          Expanded(
+                            flex: 3,
+                            child: _dialogField(
+                              controller: _optionRows[i].typeController,
+                              focusNode: _optionRows[i].typeFocusNode,
+                              label: 'Seçenek Türü *',
+                              hint: 'Örn: Beden / Kapasite',
+                              isDark: isDark,
+                              onTap: () {
+                                if (_activeRowIndex != i) {
+                                  setState(() => _activeRowIndex = i);
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // 2. Seçenek Değeri (Flex 3)
+                          Expanded(
+                            flex: 3,
+                            child: _dialogField(
+                              controller: _optionRows[i].valueController,
+                              focusNode: _optionRows[i].valueFocusNode,
+                              label: 'Seçenek Değeri *',
+                              hint: 'Örn: XL / 256 GB',
+                              isDark: isDark,
+                              onTap: () {
+                                if (_activeRowIndex != i) {
+                                  setState(() => _activeRowIndex = i);
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // 3. Fiyat Farkı (+/- ₺) (Flex 2)
+                          Expanded(
+                            flex: 2,
+                            child: _dialogField(
+                              controller: _optionRows[i].priceDiffController,
+                              focusNode: _optionRows[i].priceDiffFocusNode,
+                              label: 'Fiyat Farkı (₺)',
+                              hint: '+250 / 0 / -100',
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                decimal: true,
+                                signed: true,
+                              ),
+                              isDark: isDark,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // 4. Stok Adedi (Flex 2)
+                          Expanded(
+                            flex: 2,
+                            child: _dialogField(
+                              controller: _optionRows[i].stockController,
+                              focusNode: _optionRows[i].stockFocusNode,
+                              label: 'Stok Adedi',
+                              hint: '10',
+                              keyboardType: TextInputType.number,
+                              isDark: isDark,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          // 5. Sil Butonu (Çöp kutusu ikonu)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: IconButton(
+                              tooltip: 'Sil',
+                              icon: Icon(
+                                Icons.delete_outline,
+                                color: _optionRows.length > 1
+                                    ? const Color(0xFFEF4444)
+                                    : (isDark
+                                        ? const Color(0xFF64748B)
+                                        : Colors.grey.shade400),
+                                size: 20,
+                              ),
+                              onPressed: _optionRows.length > 1
+                                  ? () {
+                                      setState(() {
+                                        final removed = _optionRows.removeAt(i);
+                                        removed.dispose();
+                                        if (_activeRowIndex >=
+                                            _optionRows.length) {
+                                          _activeRowIndex =
+                                              _optionRows.length - 1;
+                                        }
+                                      });
+                                    }
+                                  : null,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _dialogField(
-                        controller: _sizeController,
-                        label: widget.isFood ? 'Açıklama/Not' : 'Beden / Boyut',
-                        hint: widget.isFood ? 'Örn: Ekstra peynirli' : 'Örn: L',
-                      ),
-                    ),
+                    ],
                   ],
                 ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _dialogField(
-                        controller: _skuController,
-                        label: 'Varyant Kodu (Opsiyonel)',
-                        hint: 'Örn: SKU-RED-128',
+                const SizedBox(height: 6),
+
+                // + Yeni Seçenek Satırı Ekle Butonu
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        final newRow = _VariantOptionRow();
+                        _optionRows.add(newRow);
+                        _activeRowIndex = _optionRows.length - 1;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          newRow.typeFocusNode.requestFocus();
+                        });
+                      });
+                    },
+                    icon: const Icon(Icons.add_circle_outline,
+                        size: 16, color: AppColors.primary),
+                    label: const Text(
+                      '+ Yeni Seçenek Satırı Ekle',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary,
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _dialogField(
-                        controller: _stockController,
-                        label: 'Stok Adedi',
-                        hint: '0',
-                        keyboardType: TextInputType.number,
-                      ),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                _dialogField(
-                  controller: _priceDiffController,
-                  label: 'Fiyat Farkı (+/-)',
-                  hint: '0',
-                  helper: 'Ana fiyata eklenecek/çıkarılacak tutar',
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
                   ),
                 ),
-                const SizedBox(height: 18),
+
+                // 3. RENK SEÇİCİ (Yemek Hariç)
+                if (!widget.isFood) ...[
+                  const SizedBox(height: 14),
+                  InkWell(
+                    onTap: () {
+                      setState(() {
+                        _noColorSpecified = !_noColorSpecified;
+                        if (_noColorSpecified) {
+                          _colorController.text = '';
+                          _colorHexController.text = '';
+                        }
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: Checkbox(
+                              value: _noColorSpecified,
+                              activeColor: AppColors.primary,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              onChanged: (val) {
+                                setState(() {
+                                  _noColorSpecified = val ?? false;
+                                  if (_noColorSpecified) {
+                                    _colorController.text = '';
+                                    _colorHexController.text = '';
+                                  }
+                                });
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Bu varyant için renk belirtme',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: isDark
+                                  ? const Color(0xFFE2E8F0)
+                                  : const Color(0xFF334155),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (!_noColorSpecified) ...[
+                    const SizedBox(height: 8),
+                    ProductColorPicker(
+                      initialColorName: _colorController.text,
+                      initialColorHex: _colorHexController.text,
+                      onChanged: (name, hex) {
+                        setState(() {
+                          _colorController.text = name;
+                          _colorHexController.text = hex ?? '';
+                        });
+                      },
+                    ),
+                  ],
+                ],
+
+                // Yemek kategorisi için porsiyon adı desteği
+                if (widget.isFood) ...[
+                  const SizedBox(height: 12),
+                  _dialogField(
+                    controller: _colorController,
+                    label: 'Porsiyon / Menü Adı (Opsiyonel)',
+                    hint: 'Örn: Büyük Boy, Dürüm Menü',
+                    isDark: isDark,
+                  ),
+                ],
+
+                const SizedBox(height: 14),
+
+                // 4. VARYANT KODU (SKU)
+                _dialogField(
+                  controller: _skuController,
+                  label: 'Varyant Kodu (SKU) (Opsiyonel)',
+                  hint: 'Örn: SKU-BLACK-256',
+                  isDark: isDark,
+                ),
+                const SizedBox(height: 20),
+
+                // BUTONLAR
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     OutlinedButton(
                       onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: isDark
+                            ? const Color(0xFFE2E8F0)
+                            : Colors.grey.shade800,
+                        side: BorderSide(
+                          color: isDark
+                              ? const Color(0xFF475569)
+                              : Colors.grey.shade300,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 18, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
                       child: const Text('İptal'),
                     ),
                     const SizedBox(width: 10),
                     ElevatedButton.icon(
                       onPressed: () {
-                        final variant = ProductVariant(
-                          color: _colorController.text.trim(),
-                          size: _sizeController.text.trim(),
-                          ram: widget.isElectronics
-                              ? _ramController.text.trim()
-                              : null,
-                          storage: widget.isElectronics
-                              ? _storageController.text.trim()
-                              : null,
-                          sku: _skuController.text.trim(),
-                          stock: int.tryParse(_stockController.text) ?? 0,
-                          priceDifference:
-                              double.tryParse(
-                                _priceDiffController.text.replaceAll(',', '.'),
-                              ) ??
-                              0,
-                          imagePath: widget.initialVariant?.imagePath,
-                          imageFile: widget.initialVariant?.imageFile,
-                          imageUrl: widget.initialVariant?.imageUrl,
-                        );
-                        Navigator.pop(context, variant);
+                        final hexText = _noColorSpecified
+                            ? ''
+                            : _colorHexController.text.trim();
+                        if (!_noColorSpecified &&
+                            !ProductColorPicker.isValidHex(hexText,
+                                allowEmpty: true)) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                  'Geçersiz HEX kodu (#RRGGBB veya #RRGGBBAA olmalıdır)'),
+                            ),
+                          );
+                          return;
+                        }
+
+                        // Çoklu seçenek satırlarını toplayıp varyant listesi oluştur
+                        final List<ProductVariant> createdVariants = [];
+
+                        for (final row in _optionRows) {
+                          final t = row.typeController.text.trim();
+                          final v = row.valueController.text.trim();
+                          if (t.isEmpty && v.isEmpty) continue;
+
+                          final rawDiff = row.priceDiffController.text
+                              .trim()
+                              .replaceAll(',', '.');
+                          final priceDiff = double.tryParse(rawDiff) ?? 0.0;
+                          final stock =
+                              int.tryParse(row.stockController.text.trim()) ?? 0;
+
+                          final variant = ProductVariant(
+                            color: _noColorSpecified
+                                ? ''
+                                : _colorController.text.trim(),
+                            colorHex: _noColorSpecified
+                                ? null
+                                : (hexText.isNotEmpty ? hexText : null),
+                            size: v.isNotEmpty ? v : '-',
+                            optionType: t.isNotEmpty ? t : null,
+                            options: {if (t.isNotEmpty && v.isNotEmpty) t: v},
+                            sku: _skuController.text.trim(),
+                            stock: stock,
+                            priceDifference: priceDiff,
+                            imagePath: _selectedImagePath,
+                            imageFile: _selectedImageFile,
+                            imageBytes: _selectedImageBytes,
+                            imageUrl:
+                                _selectedVariantImageUrl ?? _selectedImageUrl,
+                          );
+                          createdVariants.add(variant);
+                        }
+
+                        if (createdVariants.isEmpty) {
+                          final rawDiff = _optionRows.isNotEmpty
+                              ? _optionRows.first.priceDiffController.text
+                                  .trim()
+                                  .replaceAll(',', '.')
+                              : '0';
+                          final stock = _optionRows.isNotEmpty
+                              ? (int.tryParse(_optionRows
+                                      .first.stockController.text
+                                      .trim()) ??
+                                  0)
+                              : 0;
+                          createdVariants.add(ProductVariant(
+                            color: _noColorSpecified
+                                ? ''
+                                : _colorController.text.trim(),
+                            colorHex: _noColorSpecified
+                                ? null
+                                : (hexText.isNotEmpty ? hexText : null),
+                            size: '-',
+                            optionType: null,
+                            sku: _skuController.text.trim(),
+                            stock: stock,
+                            priceDifference: double.tryParse(rawDiff) ?? 0.0,
+                            imagePath: _selectedImagePath,
+                            imageFile: _selectedImageFile,
+                            imageBytes: _selectedImageBytes,
+                            imageUrl:
+                                _selectedVariantImageUrl ?? _selectedImageUrl,
+                          ));
+                        }
+
+                        Navigator.pop(context, createdVariants);
                       },
-                      icon: const Icon(Icons.add, size: 16),
+                      icon: const Icon(Icons.check, size: 16),
                       label: Text(widget.submitLabel),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primary,
                         foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                        elevation: 1,
                       ),
                     ),
                   ],
@@ -7551,22 +8832,63 @@ class _AddVariantDialogState extends State<_AddVariantDialog> {
 
   Widget _dialogField({
     required TextEditingController controller,
+    FocusNode? focusNode,
+    VoidCallback? onTap,
     required String label,
     String? hint,
     String? helper,
     TextInputType? keyboardType,
+    required bool isDark,
   }) {
     return TextField(
       controller: controller,
+      focusNode: focusNode,
+      onTap: onTap,
       keyboardType: keyboardType,
+      style: TextStyle(
+        fontSize: 13.5,
+        color: isDark ? Colors.white : const Color(0xFF0F172A),
+      ),
       decoration: InputDecoration(
         labelText: label,
+        labelStyle: TextStyle(
+          color: isDark ? const Color(0xFF94A3B8) : Colors.grey.shade700,
+          fontSize: 12.5,
+        ),
         hintText: hint,
+        hintStyle: TextStyle(
+          color: isDark ? const Color(0xFF64748B) : Colors.grey.shade400,
+          fontSize: 12.5,
+        ),
         helperText: helper,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+        helperStyle: TextStyle(
+          color: isDark ? const Color(0xFF94A3B8) : Colors.grey.shade600,
+          fontSize: 11,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(
+            color: isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1),
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(
+            color: isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(
+            color: AppColors.primary,
+            width: 1.8,
+          ),
+        ),
+        filled: isDark,
+        fillColor: isDark ? const Color(0xFF0F172A) : Colors.white,
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
+          horizontal: 14,
           vertical: 12,
         ),
       ),

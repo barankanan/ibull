@@ -81,7 +81,7 @@ enum _HomeBootTimeoutPhase { none, slowWarning, fallbackApplied }
 
 class _HomeScreenCoreState extends State<HomeScreenCore> {
   static const int kPreviewBatchSize = 8;
-  static const int kHomeCatalogBatchSize = 24;
+  static const int kHomeCatalogBatchSize = 12;
   static const Duration kCategoryRevealDelay = Duration.zero;
   static const Duration kProductsRevealDelay = Duration.zero;
   static const Duration kHeroDelay = Duration.zero;
@@ -111,6 +111,8 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
   List<String> _heroBannerUrls = [];
   List<HomeCategoryCardGroup> _homeFeatureAdGroups = [];
   bool _isLoadingProducts = true;
+  bool _isLoadingMore = false;
+  bool _hasMoreProducts = true;
   bool _isLoadingHero = true;
   bool _isLoadingFeatureAds = true;
   String? _productError;
@@ -261,7 +263,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
     _watchdogTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       HomeBootDiagnostics.logWatchdogTick();
-      if (!_isLoadingProducts && _products.isNotEmpty) {
+      if (!_isLoadingProducts) {
         _watchdogTimer?.cancel();
         HomeBootDiagnostics.logStageCompleted('boot');
         return;
@@ -401,6 +403,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       setState(() {
         _products = products;
         _isLoadingProducts = false;
+        _hasMoreProducts = products.length >= kHomeCatalogBatchSize;
         _productError = products.isEmpty
             ? (report.error != null
                   ? 'Ürünler yüklenemedi'
@@ -476,6 +479,57 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       );
     } finally {
       _productFetchGuard.finish();
+    }
+  }
+
+  Future<void> _loadMoreProducts() async {
+    if (_isLoadingMore ||
+        !_hasMoreProducts ||
+        _isLoadingProducts ||
+        _products.isEmpty) {
+      return;
+    }
+    setState(() {
+      _isLoadingMore = true;
+    });
+    try {
+      final nextProducts = await SupabaseService.instance.getProductsPage(
+        offset: _products.length,
+        limit: kHomeCatalogBatchSize,
+      );
+      if (!mounted) return;
+      if (nextProducts.isEmpty) {
+        setState(() {
+          _hasMoreProducts = false;
+          _isLoadingMore = false;
+        });
+        return;
+      }
+
+      final existingIds = _products.map((p) => p.id).toSet();
+      final newUnique =
+          nextProducts.where((p) => !existingIds.contains(p.id)).toList();
+
+      if (newUnique.isEmpty || nextProducts.length < kHomeCatalogBatchSize) {
+        _hasMoreProducts = false;
+      }
+
+      setState(() {
+        _products = [..._products, ...newUnique];
+        _isLoadingMore = false;
+      });
+
+      if (newUnique.isNotEmpty) {
+        _warmVisibleProductRatings(newUnique);
+        unawaited(_composeHomeNearby());
+      }
+    } catch (e) {
+      debugPrint('[Home] Error loading more products: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingMore = false;
+        });
+      }
     }
   }
 
@@ -684,7 +738,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
   Widget build(BuildContext context) {
     final isWeb = IbulChrome.isWebOf(context);
     final visibleCards = _sectionsRevealed
-        ? _products.length.clamp(0, kHomeCatalogBatchSize)
+        ? _products.length
         : 0;
     HomeBootDiagnostics.logBuild(
       productCardCount: visibleCards,
@@ -780,7 +834,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         title: 'Popüler Ürünler',
         products: _products,
         isLoading: _isLoadingProducts,
-        maxItems: 12,
+        maxItems: _products.length.clamp(12, 48),
         errorMessage: _productError,
         onRetry: _fetchHomeProducts,
         delay: _productsReady ? Duration.zero : Duration.zero,
@@ -831,6 +885,20 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
             maxSkeletonDuration: kDeferredSkeletonMax,
           ),
         ),
+      if (_isLoadingMore)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 20),
+          child: Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: AppColors.primary,
+              ),
+            ),
+          ),
+        ),
       const IbulTrustBarSection(),
     ];
   }
@@ -873,12 +941,22 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
                 )
               : CustomHeader(onSearch: _onSearch),
           Expanded(
-            child: isWeb
-                ? _buildWebHomeScrollBody(isWeb)
-                : ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
-                    children: _buildHomeSections(isWeb),
-                  ),
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (scrollInfo) {
+                if (scrollInfo.metrics.maxScrollExtent > 0 &&
+                    scrollInfo.metrics.pixels >=
+                        scrollInfo.metrics.maxScrollExtent - 400) {
+                  _loadMoreProducts();
+                }
+                return false;
+              },
+              child: isWeb
+                  ? _buildWebHomeScrollBody(isWeb)
+                  : ListView(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+                      children: _buildHomeSections(isWeb),
+                    ),
+            ),
           ),
         ],
       ),

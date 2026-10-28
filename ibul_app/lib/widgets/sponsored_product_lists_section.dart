@@ -15,7 +15,7 @@ import '../models/product_list_model.dart';
 import 'optimized_image.dart';
 import 'premium_interactions.dart';
 import 'skeleton_loading.dart';
-import '../screens/list_detail_page.dart';
+import '../screens/list_detail_page.dart' deferred as list_detail;
 
 class SponsoredProductListsSection extends StatefulWidget {
   const SponsoredProductListsSection({
@@ -24,7 +24,7 @@ class SponsoredProductListsSection extends StatefulWidget {
     this.subtitle,
     this.categoryFilter,
     this.maxItems = 6,
-    this.loadTimeout = const Duration(seconds: 10),
+    this.loadTimeout = const Duration(seconds: 4),
     this.suppressSkeleton = false,
     this.maxSkeletonDuration = const Duration(seconds: 4),
     super.key,
@@ -333,15 +333,18 @@ class _SponsoredProductListsSectionState
                 child: _SponsoredListCard(
                   list: _lists[index],
                   onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (routeContext) => ListDetailPage(
-                          listData: _appState.productListToMap(
-                            _lists[index],
+                    final list = _lists[index];
+                    final host = context;
+                    list_detail.loadLibrary().then((_) {
+                      if (!host.mounted) return;
+                      Navigator.of(host).push(
+                        MaterialPageRoute<void>(
+                          builder: (routeContext) => list_detail.ListDetailPage(
+                            listData: _appState.productListToMap(list),
                           ),
                         ),
-                      ),
-                    );
+                      );
+                    });
                   },
                 ),
               ),

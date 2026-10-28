@@ -49,8 +49,8 @@ void main() {
       IbulAppModeRegistry.resetForTests();
       IbulAppModeRegistry.current = IbulAppMode.customer;
       final providers = buildCustomerProviders();
-      expect(providers.length, 5);
-      expect(countMountedProviders(IbulAppMode.customer), 5);
+      expect(providers.length, 6);
+      expect(countMountedProviders(IbulAppMode.customer), 6);
     });
 
     test('full mode may include extra IO providers', () {
@@ -59,7 +59,7 @@ void main() {
       final fullCount = countMountedProviders(IbulAppMode.full);
       final customerCount = countMountedProviders(IbulAppMode.customer);
       expect(fullCount, greaterThanOrEqualTo(customerCount));
-      expect(customerCount, 5);
+      expect(customerCount, 6);
     });
   });
 }

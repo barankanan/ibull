@@ -206,6 +206,15 @@ abstract final class HomeLazyRoutes {
     String? brand,
     String? model,
   }) async {
+    final plainMap = (query == null || query.trim().isEmpty) &&
+        (contentType == null || contentType.trim().isEmpty) &&
+        (brand == null || brand.trim().isEmpty) &&
+        (model == null || model.trim().isEmpty);
+    if (IbulRouter.usesRootRouter && plainMap) {
+      if (IbulRouter.currentPath(context) == '/map') return;
+      await IbulRouter.push(context, '/map');
+      return;
+    }
     await map_page.loadLibrary();
     if (!context.mounted) return;
     await Navigator.of(context).push(
@@ -253,6 +262,11 @@ abstract final class HomeLazyRoutes {
   }
 
   static Future<void> openCart(BuildContext context) async {
+    if (IbulRouter.usesRootRouter) {
+      if (!context.mounted) return;
+      await IbulRouter.push<void>(context, '/sepet');
+      return;
+    }
     await cart_page.loadLibrary();
     if (!context.mounted) return;
     await Navigator.of(context).push(

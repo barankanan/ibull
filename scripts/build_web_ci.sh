@@ -75,3 +75,4 @@ if [[ -f "$MAIN_JS" ]]; then
 fi
 
 python3 "$SCRIPT_DIR/prerender_blog.py" "$WEB_DIR"
+python3 "$SCRIPT_DIR/generate_public_sitemap.py" "$WEB_DIR"

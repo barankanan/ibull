@@ -187,6 +187,23 @@ if [[ ! -f "$MAIN_JS" || ! -f "build/web/index.html" ]]; then
 fi
 echo "[WebPerf] main js size hint: $(du -h "$MAIN_JS" | awk '{print $1}')"
 
+# Every deferred part named by the entry must exist in this build.
+# A missing part makes Flutter report the script as loaded while the module is absent.
+python3 - "$MAIN_JS" "build/web" << 'PY'
+import re, sys
+from pathlib import Path
+main = Path(sys.argv[1]).read_bytes()
+root = Path(sys.argv[2])
+refs = sorted(set(re.findall(rb"main\.dart\.js_\d+\.part\.js", main)))
+missing = [name.decode() for name in refs if not (root / name.decode()).is_file()]
+print(f"referenced chunks: {len(refs)}")
+print(f"existing chunks: {len(refs) - len(missing)}")
+print(f"missing chunks: {len(missing)}")
+if missing:
+    print("missing:", ", ".join(missing[:20]))
+    raise SystemExit(1)
+PY
+
 # ── Post-build link doğrulaması (main.dart.js + part dosyaları) ──────────────
 # Eski/kırık release linki bundle'a sızarsa build burada durur.
 echo ""
@@ -263,4 +280,7 @@ fi
 
 echo ""
 echo "✓ Bundle link doğrulaması başarılı."
+python3 "$SCRIPT_DIR/prerender_blog.py" "$PROJECT_DIR/ibul_app/build/web"
+python3 "$SCRIPT_DIR/generate_public_sitemap.py" "$PROJECT_DIR/ibul_app/build/web"
+python3 "$SCRIPT_DIR/write_spa_shells.py" "$PROJECT_DIR/ibul_app/build/web"
 echo "Customer web build tamamlandı: ibul_app/build/web"

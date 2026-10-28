@@ -11,12 +11,13 @@ class _ApplyPrimaryButton extends StatelessWidget {
     return ElevatedButton(
       onPressed: onPressed,
       style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFF163B73),
+        backgroundColor: const Color(0xFF1F64D6),
         foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        minimumSize: const Size(44, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
-      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
     );
   }
 }

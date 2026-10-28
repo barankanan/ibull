@@ -3,7 +3,7 @@ import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../core/favorite_state.dart';
-import '../core/compare_state.dart';
+import '../core/ibul_chrome.dart';
 import '../models/product_model.dart';
 import '../widgets/web_header.dart';
 import 'compare_features_page.dart';
@@ -31,12 +31,20 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
     });
   }
 
+  String? _favoriteSignature;
+
   void _loadProducts() {
-    final compareState = Provider.of<CompareState>(context, listen: false);
-    _applyProducts(compareState.compareProducts);
+    final favorites = Provider.of<FavoriteState>(context, listen: false);
+    _applyProducts(favorites.favorites, ready: favorites.hydrated);
   }
 
-  void _applyProducts(List<Product> products) {
+  int _favoriteCount = 0;
+  bool _favoritesReady = false;
+
+  void _applyProducts(List<Product> products, {required bool ready}) {
+    _favoriteCount = products.length;
+    _favoritesReady = ready || products.isNotEmpty;
+    _favoriteSignature = products.map(FavoriteState.productKey).join('|');
     final Map<String, List<Map<String, dynamic>>> newCategories = {};
 
     for (final product in products) {
@@ -49,7 +57,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
           'product': product,
           'image': product.images.isNotEmpty ? product.images.first : null,
         }),
-        'selected': true, // Auto select all compared products
+        'selected': false,
         'product': product,
       });
     }
@@ -58,6 +66,38 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
     setState(() {
       _categories = newCategories;
     });
+  }
+
+  Widget? get _favoriteGateMessage {
+    if (!_favoritesReady && _favoriteCount == 0) {
+      return const SizedBox(
+        height: 28,
+        width: 28,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+    if (_favoriteCount == 0) {
+      return const Text(
+        'Henüz beğendiğin ürün yok.',
+        textAlign: TextAlign.center,
+        style: TextStyle(color: Colors.red, fontWeight: FontWeight.w500),
+      );
+    }
+    if (_favoriteCount == 1) {
+      return const Text(
+        'Karşılaştırmak için bir ürün daha beğen.',
+        textAlign: TextAlign.center,
+        style: TextStyle(color: Colors.red, fontWeight: FontWeight.w500),
+      );
+    }
+    if (_categories.isEmpty) {
+      return const SizedBox(
+        height: 28,
+        width: 28,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+    return null;
   }
 
   List<Map<String, dynamic>> get _selectedProducts {
@@ -82,13 +122,17 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
   Widget build(BuildContext context) {
     final isWeb = MediaQuery.of(context).size.width >= 800;
 
-    return Consumer<CompareState>(
-      builder: (context, compareState, _) {
-        if (_categories.isEmpty && compareState.compareProducts.isNotEmpty) {
+    return Consumer<FavoriteState>(
+      builder: (context, favoriteState, _) {
+        final signature = favoriteState.favorites
+            .map(FavoriteState.productKey)
+            .join('|');
+        final ready = favoriteState.hydrated || favoriteState.favorites.isNotEmpty;
+        if (_favoriteSignature != signature || _favoritesReady != ready) {
+          final snapshot = favoriteState.favorites;
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              _applyProducts(compareState.compareProducts);
-            }
+            if (!mounted) return;
+            _applyProducts(snapshot, ready: ready);
           });
         }
 
@@ -380,26 +424,22 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
                                       const SizedBox(height: 12),
                                       _buildActionButton(
                                         'Yorumları Karşılaştır',
-                                        onTap: () {
-                                          _navigateTo(
-                                            context,
-                                            CompareReviewsPage(
-                                              products: _selectedProducts,
-                                            ),
-                                          );
-                                        },
+                                        onTap: () => _navigateToFeaturesCompare(
+                                          context,
+                                          CompareReviewsPage(
+                                            products: _selectedProducts,
+                                          ),
+                                        ),
                                       ),
                                       const SizedBox(height: 12),
                                       _buildActionButton(
                                         'Görselleri Karşılaştır',
-                                        onTap: () {
-                                          _navigateTo(
-                                            context,
-                                            CompareImagesPage(
-                                              products: _selectedProducts,
-                                            ),
-                                          );
-                                        },
+                                        onTap: () => _navigateToFeaturesCompare(
+                                          context,
+                                          CompareImagesPage(
+                                            products: _selectedProducts,
+                                          ),
+                                        ),
                                       ),
                                     ],
                                   ],
@@ -424,7 +464,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
     openCompareRoute(context, page);
   }
 
-  void _navigateToFeaturesCompare(BuildContext context) {
+  void _navigateToFeaturesCompare(BuildContext context, [Widget? page]) {
     final products = compareProductsFromMaps(_selectedProducts);
     if (compareMainCategoryMismatchForProducts(products) != null) {
       showCompareCategoryMismatchSnackBar(context);
@@ -432,7 +472,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
     }
     _navigateTo(
       context,
-      CompareFeaturesPage(products: _selectedProducts),
+      page ?? CompareFeaturesPage(products: _selectedProducts),
     );
   }
 
@@ -560,14 +600,10 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (_categories.isEmpty)
-                   const Padding(
-                     padding: EdgeInsets.only(bottom: 8.0),
-                     child: Text(
-                       'Karşılaştırma yapabilmek için lütfen en az 2 ürün beğenin.',
-                       textAlign: TextAlign.center,
-                       style: TextStyle(color: Colors.red, fontWeight: FontWeight.w500),
-                     ),
+                if (_favoriteGateMessage != null)
+                   Padding(
+                     padding: const EdgeInsets.only(bottom: 8.0),
+                     child: _favoriteGateMessage!,
                    )
                 else if (_selectedProducts.length < 2)
                   const Padding(
@@ -586,22 +622,18 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
                   const SizedBox(height: 12),
                   _buildActionButton(
                     'ürün yorumları karşılaştır',
-                    onTap: () {
-                      openCompareRoute(
-                        context,
-                        CompareReviewsPage(products: _selectedProducts),
-                      );
-                    },
+                    onTap: () => _navigateToFeaturesCompare(
+                      context,
+                      CompareReviewsPage(products: _selectedProducts),
+                    ),
                   ),
                   const SizedBox(height: 12),
                   _buildActionButton(
                     'ürün görselleri karşılaştır',
-                    onTap: () {
-                      openCompareRoute(
-                        context,
-                        CompareImagesPage(products: _selectedProducts),
-                      );
-                    },
+                    onTap: () => _navigateToFeaturesCompare(
+                      context,
+                      CompareImagesPage(products: _selectedProducts),
+                    ),
                   ),
                 ],
               ],
@@ -681,6 +713,20 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
 
     return GestureDetector(
       onTap: () {
+        if (!isSelected &&
+            _selectedProducts.length >= compareSelectionLimit(context)) {
+          final mobile = !IbulChrome.isWebOf(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                mobile
+                    ? 'Mobilde en fazla 2 ürün karşılaştırabilirsiniz.'
+                    : 'En fazla 4 ürün karşılaştırabilirsiniz.',
+              ),
+            ),
+          );
+          return;
+        }
         setState(() {
           _categories[category]![index]['selected'] = !isSelected;
         });
@@ -810,12 +856,16 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              text,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: AppColors.primary,
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.primary,
+                ),
               ),
             ),
             const Icon(

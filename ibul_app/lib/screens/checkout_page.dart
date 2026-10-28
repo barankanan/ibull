@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +12,8 @@ import '../core/runtime_diagnostic_logger.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/address_edit_sheet.dart';
+import '../core/config/runtime_config.dart';
+import '../features/checkout/test_checkout_action.dart';
 import '../services/order_service.dart';
 import '../features/saved_payment_cards/helpers/checkout_payment_integration.dart';
 import '../features/checkout/checkout_line_identity.dart';
@@ -66,6 +71,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _billingSameAsDelivery = true;
   int _selectedBillingAddressIndex = 0;
   bool _isPlacingOrder = false;
+  bool _isPlacingTestOrder = false;
+  bool _serverTestCheckoutEnabled = false;
   late final String _checkoutIdempotencyKey =
       'checkout-${DateTime.now().microsecondsSinceEpoch}';
 
@@ -89,6 +96,33 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _expiryDateController.addListener(_onCardInfoChanged);
     _cardHolderNameController.addListener(_onCardInfoChanged);
     _loadSavedCards();
+    unawaited(_loadServerTestCheckout());
+    if (kDebugMode) {
+      debugPrint(
+        '[CART_TRACE] checkout instance=${identityHashCode(AppState())} '
+        'count=${AppState().cart.length} '
+        'ids=${AppState().cart.map((item) => item.productId ?? item.name).join(',')}',
+      );
+    }
+  }
+
+  bool get _showTestCheckout => _serverTestCheckoutEnabled;
+
+  Future<void> _loadServerTestCheckout() async {
+    final enabled = await OrderService.instance.isServerTestCheckoutEnabled();
+    if (!mounted) return;
+    setState(() => _serverTestCheckoutEnabled = enabled);
+    _logTestCheckoutGate();
+  }
+
+  void _logTestCheckoutGate() {
+    if (!kDebugMode) return;
+    debugPrint(
+      '[TEST_CHECKOUT]\n'
+      'clientEnabled=${AppRuntimeConfig.enableTestCheckout}\n'
+      'serverEnabled=$_serverTestCheckoutEnabled\n'
+      'visible=$_showTestCheckout',
+    );
   }
 
   Future<void> _loadSavedCards() async {
@@ -301,9 +335,101 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
   }
 
+  Future<void> _completeTestOrder() async {
+    if (kDebugMode) {
+      debugPrint('[TEST_CHECKOUT] test CTA tapped');
+    }
+    if (_isPlacingOrder || _isPlacingTestOrder || !_showTestCheckout) return;
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUser?['uid']?.toString();
+    if (UserIdentity.isGuest(appState.currentUser) || userId == null) {
+      await _showCheckoutFeedback('Test siparişi için giriş yapın.', isError: true);
+      return;
+    }
+    if (appState.deliveryAddresses.isEmpty) {
+      await _showCheckoutFeedback('Teslimat adresi seçin.', isError: true);
+      return;
+    }
+    if (!_acceptTerms) {
+      await _showCheckoutFeedback(
+        'Test siparişi için sözleşmeleri onaylayın.',
+        isError: true,
+      );
+      return;
+    }
+    final selectedAddress = Map<String, dynamic>.from(
+      appState.deliveryAddresses[_selectedAddressIndex],
+    );
+    setState(() => _isPlacingTestOrder = true);
+    try {
+      final orderData = await OrderService.instance.createTestOrderFromCheckout(
+        userId: userId,
+        selectedProducts: widget.selectedProducts,
+        totalAmount: widget.totalPrice,
+        deliveryAddress: selectedAddress,
+        deliveryType: _selectedDeliveryType == 0 ? 'fast' : 'standard',
+        deliverySlot: _selectedDeliveryType == 0
+            ? '${_selectedFastDate.toIso8601String()}|$_selectedFastTime'
+            : _selectedStandardDate.toIso8601String(),
+        idempotencyKey: 'test-$_checkoutIdempotencyKey',
+        couponCode: _couponQuote?.ok == true ? _couponQuote?.code : null,
+      );
+      appState.clearCart();
+      appState.notifyCustomerOrdersChanged();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Test siparişi'),
+          content: const Text('Test siparişi oluşturuldu'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Tamam'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => OrderConfirmationPage(
+            totalPrice: widget.totalPrice,
+            orderData: orderData,
+            purchasedProducts: widget.selectedProducts,
+          ),
+        ),
+      );
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'Checkout',
+        error,
+        stackTrace,
+        context: 'completeTestOrder',
+      );
+      if (!mounted) return;
+      await _showCheckoutFeedback(
+        _testCheckoutErrorText(error),
+        isError: true,
+      );
+    } finally {
+      if (mounted) setState(() => _isPlacingTestOrder = false);
+    }
+  }
+
+  String _testCheckoutErrorText(Object error) {
+    final raw = error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+    if (raw.contains('Kart ile ödeme henüz aktif değil')) {
+      return 'Test siparişi oluşturulamadı.';
+    }
+    return raw;
+  }
+
   Future<void> _completeOrder() async {
     if (_isPlacingOrder) return;
-    debugPrint('Checkout CTA tapped');
+    if (kDebugMode) {
+      debugPrint('[CHECKOUT] normal CTA tapped');
+    }
     final appState = Provider.of<AppState>(context, listen: false);
     final hasAddresses = appState.deliveryAddresses.isNotEmpty;
     final hasPayment = _hasValidPaymentMethod();
@@ -468,6 +594,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       }
 
       appState.clearCart();
+      appState.notifyCustomerOrdersChanged();
 
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
@@ -1603,7 +1730,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 ),
               ],
             ),
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+            Row(
               children: [
                 Expanded(
                   child: GestureDetector(
@@ -1696,6 +1826,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 ),
               ],
             ),
+            TestCheckoutAction(
+              visible: _showTestCheckout,
+              busy: _isPlacingTestOrder,
+              onPressed: _completeTestOrder,
+            ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1710,20 +1847,33 @@ class _CheckoutPageState extends State<CheckoutPage> {
         children: [
           WebHeader(onSearch: (q) {}),
           Expanded(
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1200),
-                child: Padding(
-                  padding: const EdgeInsets.only(
-                    top: 40,
-                    left: 24,
-                    right: 24,
-                    bottom: 24,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final maxHeight = constraints.maxHeight;
+                final maxWidth = constraints.maxWidth;
+                if (!maxHeight.isFinite ||
+                    maxHeight <= 0 ||
+                    !maxWidth.isFinite ||
+                    maxWidth <= 0) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final contentWidth = maxWidth > 1200 ? 1200.0 : maxWidth;
+                return Align(
+                  alignment: Alignment.topCenter,
+                  child: SizedBox(
+                    width: contentWidth,
+                    height: maxHeight,
+                    child: Padding(
+                      padding: const EdgeInsets.only(
+                        top: 40,
+                        left: 24,
+                        right: 24,
+                        bottom: 24,
+                      ),
+                      child: SizedBox.expand(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
                       // LEFT COLUMN (Forms) - SCROLLABLE
                       Expanded(
                         flex: 7,
@@ -1826,14 +1976,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                         ),
                                 ),
                               ),
+                              TestCheckoutAction(
+                                visible: _showTestCheckout,
+                                busy: _isPlacingTestOrder,
+                                onPressed: _completeTestOrder,
+                              ),
                             ],
                           ),
                         ),
                       ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
+            );
+          },
             ),
           ),
         ],

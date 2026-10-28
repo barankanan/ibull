@@ -183,7 +183,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
 
     expect(find.byType(IhizCourierApplyPage), findsOneWidget);
-    expect(find.text('Kurye başvuru formu'), findsOneWidget);
+    expect(find.text('İHIZ Kuryesi Ol'), findsOneWidget);
     expect(find.text('Kurye başvurusu yakında açılacak.'), findsNothing);
   });
 
@@ -198,17 +198,18 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    final loginCta = find.text('Giriş Yap').at(0);
-    await tester.ensureVisible(loginCta);
-    await tester.tap(loginCta);
+    await tester.tap(find.byTooltip('Menü'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.text('Giriş Yap'));
     await tester.pump();
     // Deferred login library + route push.
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('İhız kurye paneline giriş'), findsOneWidget);
-    expect(find.text('Kurye Paneline Gir'), findsOneWidget);
+    expect(find.text('Tekrar hoş geldin'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Giriş Yap'), findsOneWidget);
   });
 
   testWidgets('apply page mobile has no overflow on first step', (tester) async {
@@ -223,7 +224,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Kurye başvuru formu'), findsOneWidget);
+    expect(find.text('İHIZ Kuryesi Ol'), findsOneWidget);
     expect(find.text('Ad'), findsOneWidget);
 
     await tester.tap(find.text('Devam'));

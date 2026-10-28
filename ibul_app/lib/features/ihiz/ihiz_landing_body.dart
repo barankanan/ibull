@@ -2,14 +2,11 @@ import 'package:flutter/material.dart';
 
 import 'sections/ihiz_business_section.dart';
 import 'sections/ihiz_courier_section.dart';
-import 'sections/ihiz_final_cta_section.dart';
+import 'sections/ihiz_feature_section.dart';
 import 'sections/ihiz_hero_section.dart';
 import 'sections/ihiz_how_it_works_section.dart';
 import 'sections/ihiz_package_send_section.dart';
 import 'sections/ihiz_tracking_section.dart';
-import 'sections/ihiz_trust_bar_section.dart';
-import 'sections/ihiz_what_is_section.dart';
-import 'sections/ihiz_why_section.dart';
 import 'theme/ihiz_brand.dart';
 import 'widgets/ihiz_landing_widgets.dart';
 
@@ -17,7 +14,6 @@ import 'widgets/ihiz_landing_widgets.dart';
 class IhizLandingBody extends StatelessWidget {
   const IhizLandingBody({
     super.key,
-    required this.onLogin,
     required this.onCourierApply,
     required this.onBusinessJoin,
     required this.onBindBusiness,
@@ -29,7 +25,6 @@ class IhizLandingBody extends StatelessWidget {
     this.businessKey,
   });
 
-  final VoidCallback onLogin;
   final VoidCallback onCourierApply;
   final VoidCallback onBusinessJoin;
   final ValueChanged<String> onBindBusiness;
@@ -40,8 +35,8 @@ class IhizLandingBody extends StatelessWidget {
   final GlobalKey? courierKey;
   final GlobalKey? businessKey;
 
-  void _scrollToHowItWorks() {
-    final ctx = howItWorksKey.currentContext;
+  void _scrollToTracking() {
+    final ctx = trackingKey?.currentContext;
     if (ctx == null) return;
     Scrollable.ensureVisible(
       ctx,
@@ -65,17 +60,11 @@ class IhizLandingBody extends StatelessWidget {
                 top: 12,
                 bottom: 0,
                 child: IhizHeroSection(
-                  onLogin: onLogin,
-                  onCourierApply: onCourierApply,
-                  onBusinessJoin: onBusinessJoin,
-                  onHowItWorks: _scrollToHowItWorks,
+                  onTrack: _scrollToTracking,
                 ),
               ),
               const IhizSectionPadding(
-                child: IhizTrustBarSection(),
-              ),
-              const IhizSectionPadding(
-                child: IhizWhatIsSection(),
+                child: IhizFeatureSection(),
               ),
               IhizSectionPadding(
                 child: KeyedSubtree(
@@ -102,19 +91,10 @@ class IhizLandingBody extends StatelessWidget {
                 child: IhizPackageSendSection(onSend: onPackageSend),
               ),
               IhizSectionPadding(
+                bottom: 40,
                 child: KeyedSubtree(
                   key: trackingKey,
                   child: IhizTrackingSection(onSubmit: onSubmitTracking),
-                ),
-              ),
-              const IhizSectionPadding(
-                child: IhizWhySection(),
-              ),
-              IhizSectionPadding(
-                bottom: 40,
-                child: IhizFinalCtaSection(
-                  onCourierApply: onCourierApply,
-                  onBusinessJoin: onBusinessJoin,
                 ),
               ),
             ],

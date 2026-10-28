@@ -143,8 +143,24 @@ class MapStoreEmergencyPipeline {
       }
 
       if (sellerStats.entries.isNotEmpty) {
+        final namesBySeller = <String, String>{};
+        for (final row in merged.values) {
+          final sellerId = row['seller_id']?.toString().trim() ?? '';
+          final businessName = row['business_name']?.toString().trim() ?? '';
+          if (sellerId.isNotEmpty && businessName.isNotEmpty) {
+            namesBySeller[sellerId] = businessName;
+          }
+        }
+        final namedSellers = [
+          for (final entry in sellerStats.entries)
+            if ((namesBySeller[entry.sellerId] ?? '').isNotEmpty)
+              (
+                sellerId: entry.sellerId,
+                storeName: namesBySeller[entry.sellerId]!,
+              ),
+        ];
         final synthetic = buildSyntheticMapStoresFromProducts(
-          sellers: sellerStats.entries,
+          sellers: namedSellers,
         );
         syntheticFromProducts = synthetic.length;
         _mergeRows(merged, synthetic, tag: 'products_synthetic');
@@ -260,7 +276,7 @@ class MapStoreEmergencyPipeline {
     final statuses = SupabaseService.publicCatalogProductStatuses;
     final productRows = await _client
         .from('products')
-        .select('seller_id, store_name')
+        .select('seller_id')
         .inFilter('status', statuses)
         .limit(500);
 
@@ -272,8 +288,7 @@ class MapStoreEmergencyPipeline {
       final row = Map<String, dynamic>.from(raw as Map);
       final sellerId = row['seller_id']?.toString().trim() ?? '';
       if (sellerId.isEmpty) continue;
-      final storeName = row['store_name']?.toString().trim() ?? '';
-      entries.add((sellerId: sellerId, storeName: storeName));
+      entries.add((sellerId: sellerId, storeName: ''));
       if (seen.add(sellerId)) sellerIds.add(sellerId);
     }
 

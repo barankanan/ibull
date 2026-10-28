@@ -93,7 +93,7 @@ String garsonRestaurantOrdersSnapshotQueryDescription({
   return "from('orders').select('id,restaurant_id,table_id,order_status,status,"
       "order_type,delivery_type,total_amount,created_at,updated_at,"
       "order_items(id,product_id,product_name,quantity,unit_price,line_total,item_note)') "
-      ".eq('restaurant_id', '$restaurantId').or('order_type.eq.table,delivery_type.eq.table')"
+      ".eq('restaurant_id', '$restaurantId').or('order_type.eq.table,delivery_type.eq.table,order_type.eq.online')"
       ".order('created_at', ascending: false).limit(50)";
 }
 

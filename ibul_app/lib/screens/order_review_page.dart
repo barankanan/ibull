@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../services/review_service.dart';
 
 class OrderReviewPage extends StatefulWidget {
   const OrderReviewPage({super.key, required this.item, this.initialTab = 1});
@@ -622,6 +623,7 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
           sellerId: item['seller_id']?.toString() ?? '',
           productImageUrl: item['product_image_url']?.toString() ?? '',
           productCode: item['product_code']?.toString() ?? '',
+          productId: reviewProductIdFromOrderItem(item),
           rating: rating.toDouble(),
           comment: comment,
           imageUrls: List<String>.from(_productImages),

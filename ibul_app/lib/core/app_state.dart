@@ -60,6 +60,7 @@ class AppState extends ChangeNotifier {
   final AuthService _authService = AuthService();
   int _authStateVersion = 0;
   int? _lastUserDataClearVersion;
+  int _cartRevision = 0;
   static const String _deviceFavoritesKey = 'device_cache_favorites_v1';
   static const String _deviceCartKey = 'device_cache_cart_v1';
   static const String _deviceAddressesKey = 'device_cache_addresses_v1';
@@ -102,6 +103,7 @@ class AppState extends ChangeNotifier {
       await _runBatchedAsync(() async {
         await Future.wait<void>([
           _loadSearchHistory(),
+          _loadRecentlyViewed(),
           _loadPersistedProductQuestions(),
           _loadPersistedProductLists(),
         ]);
@@ -668,8 +670,19 @@ class AppState extends ChangeNotifier {
   final Set<String> _cartAddInFlightKeys = <String>{};
   int _cartRevalidationRequestId = 0;
   bool _isCartRevalidating = false;
+  bool _cartRevalidationFailed = false;
 
   final List<Map<String, dynamic>> _foodOrders = [];
+  int _customerOrdersRevision = 0;
+
+  /// Bumps when a real checkout order is created so account/order history
+  /// refetches. Cart and favorite mutations do not change this.
+  int get customerOrdersRevision => _customerOrdersRevision;
+
+  void notifyCustomerOrdersChanged() {
+    _customerOrdersRevision++;
+    notifyListeners();
+  }
 
   // Takip edilen mağazalar
   final List<Map<String, dynamic>> _followedStores = [];
@@ -862,14 +875,77 @@ class AppState extends ChangeNotifier {
       List.unmodifiable(_recentlyViewedProducts);
 
   void addRecentlyViewedProduct(Product product) {
-    if (_recentlyViewedProducts.any((p) => p.name == product.name)) {
-      _recentlyViewedProducts.removeWhere((p) => p.name == product.name);
-    }
+    final key = _recentViewKey(product);
+    if (key.isEmpty) return;
+    _recentlyViewedProducts.removeWhere((item) => _recentViewKey(item) == key);
     _recentlyViewedProducts.insert(0, product);
-    if (_recentlyViewedProducts.length > 5) {
-      _recentlyViewedProducts.removeLast();
+    if (_recentlyViewedProducts.length > 24) {
+      _recentlyViewedProducts.removeRange(24, _recentlyViewedProducts.length);
     }
     notifyListeners();
+    unawaited(_saveRecentlyViewed());
+  }
+
+  String _recentViewKey(Product product) {
+    final id = product.productId?.trim() ?? '';
+    if (id.isNotEmpty) return 'id:$id';
+    return 'name:${product.name.trim().toLowerCase()}';
+  }
+
+  Future<void> _loadRecentlyViewed() async {
+    try {
+      final prefs = await _getPrefs();
+      final raw = prefs.getString('recently_viewed_products_v1');
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      final products = <Product>[];
+      for (final row in decoded) {
+        if (row is! Map) continue;
+        try {
+          products.add(Product.fromJson(Map<String, dynamic>.from(row)));
+        } catch (_) {}
+      }
+      if (products.isEmpty) return;
+      _recentlyViewedProducts
+        ..clear()
+        ..addAll(products.take(24));
+      notifyListeners();
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('Error loading recently viewed: $error');
+      }
+    }
+  }
+
+  Future<void> _saveRecentlyViewed() async {
+    try {
+      final prefs = await _getPrefs();
+      final payload = _recentlyViewedProducts
+          .take(24)
+          .map(
+            (product) => {
+              'productId': product.productId,
+              'name': product.name,
+              'brand': product.brand,
+              'price': product.price,
+              'oldPrice': product.oldPrice,
+              'rating': product.rating,
+              'reviewCount': product.reviewCount,
+              'tags': product.tags,
+              'images': product.images.take(1).toList(growable: false),
+              'category': product.category,
+              'subCategory': product.subCategory,
+              'store': product.store,
+            },
+          )
+          .toList(growable: false);
+      await prefs.setString('recently_viewed_products_v1', jsonEncode(payload));
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('Error saving recently viewed: $error');
+      }
+    }
   }
 
   // Misafir kullanıcı için varsayılan verileri yükle
@@ -881,7 +957,7 @@ class AppState extends ChangeNotifier {
   }
 
   // Normal kullanıcı için verileri temizle
-  void _clearUserData({int? requestVersion}) {
+  void _clearUserData({int? requestVersion, bool clearCart = true}) {
     if (requestVersion != null && requestVersion == _lastUserDataClearVersion) {
       debugPrint(
         '[AppState] _clearUserData skipped duplicate '
@@ -897,9 +973,11 @@ class AppState extends ChangeNotifier {
     _savedCards.clear();
     _billingInfos.clear();
     _favoriteState.clear();
-    _cartState.clear();
-    _cartAttentionKeys.clear();
-    _cartAttentionMessage = null;
+    if (clearCart) {
+      _cartState.clear();
+      _cartAttentionKeys.clear();
+      _cartAttentionMessage = null;
+    }
     // NOTE: _foodOrders intentionally NOT cleared here.
     // Food orders are in-session records created by the QR restaurant flow.
     // Auth state changes fire during Supabase initialization even for anonymous
@@ -1427,8 +1505,12 @@ class AppState extends ChangeNotifier {
   bool get cartNeedsAttention => _cartAttentionKeys.isNotEmpty;
   String? get cartAttentionMessage => _cartAttentionMessage;
   bool get isCartRevalidating => _isCartRevalidating;
+  bool get cartRevalidationFailed => _cartRevalidationFailed;
   bool get isCartCheckoutBlocked =>
-      cart.isEmpty || cartNeedsAttention || _isCartRevalidating;
+      cart.isEmpty ||
+      cartNeedsAttention ||
+      _isCartRevalidating ||
+      _cartRevalidationFailed;
   List<Product> get cartAttentionProducts => cart
       .where(
         (product) => _cartAttentionKeys.contains(_productIdentity(product)),
@@ -1506,6 +1588,7 @@ class AppState extends ChangeNotifier {
       if (requestId != _cartRevalidationRequestId) return null;
 
       _cartState.replaceCart(result.updatedProducts);
+      _cartRevalidationFailed = false;
       _cartAttentionKeys
         ..clear()
         ..addAll(result.removedProducts.map(_productIdentity));
@@ -1518,6 +1601,12 @@ class AppState extends ChangeNotifier {
       await _persistCartState();
       notifyListeners();
       return result;
+    } catch (_) {
+      if (requestId != _cartRevalidationRequestId) return null;
+      _cartRevalidationFailed = true;
+      _cartAttentionMessage = 'Fiyatlar doğrulanamadı. Tekrar deneyin.';
+      notifyListeners();
+      return null;
     } finally {
       if (requestId == _cartRevalidationRequestId) {
         _isCartRevalidating = false;
@@ -1766,6 +1855,7 @@ class AppState extends ChangeNotifier {
   void updateProductQuantity(Product product, int quantity) {
     final updatedProduct = product.copyWith(cartQuantity: quantity);
     _cartState.addOrReplace(updatedProduct);
+    _noteCartMutation('quantity', updatedProduct);
     _persistCartState();
     _syncPushInterests();
     notifyListeners();
@@ -1777,6 +1867,7 @@ class AppState extends ChangeNotifier {
     _cartState.clear();
     _cartAttentionKeys.clear();
     _cartAttentionMessage = null;
+    _noteCartMutation('clear', null);
     _fastDelivery.clear();
     _persistCartState();
     _syncPushInterests();
@@ -1998,6 +2089,7 @@ class AppState extends ChangeNotifier {
     required double rating,
     required String comment,
     required List<String> imageUrls,
+    String? productId,
   }) async {
     final userId = _currentUser?['uid']?.toString();
     if (userId == null || userId.isEmpty) {
@@ -2014,6 +2106,7 @@ class AppState extends ChangeNotifier {
       imageUrls: imageUrls,
       userId: userId,
       userName: _maskedDisplayName(),
+      productId: productId,
     );
   }
 

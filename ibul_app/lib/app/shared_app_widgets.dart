@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../core/home_navigation.dart';
 import '../core/providers/connectivity_provider.dart';
 import '../core/qr_initial_params.dart';
+import '../core/public_seo.dart';
 import '../core/web_seo.dart';
 import '../features/investor/investor_route_paths.dart';
 import '../screens/qr_entry_screen.dart' deferred as qr_entry;
@@ -147,6 +148,8 @@ class SeoRouteObserver extends NavigatorObserver {
       description: config.description,
       keywords: _defaultKeywords,
       canonicalPath: config.path,
+      noIndex: config.noIndex,
+      jsonLd: config.jsonLd,
     );
   }
 
@@ -173,6 +176,14 @@ class SeoRouteObserver extends NavigatorObserver {
         path: path,
       );
     }
+    if (path == '/favoriler' || path == '/sepet' || path.startsWith('/checkout')) {
+      return _SeoRouteConfig(
+        title: path == '/favoriler' ? 'Favorilerim | İBUL' : 'Sepetim | İBUL',
+        description: 'İBUL hesap yönetimi.',
+        path: path == '/favoriler' ? '/favoriler' : '/sepet',
+        noIndex: true,
+      );
+    }
     if (path == '/hesabim' || path.startsWith('/hesabim/')) {
       return _SeoRouteConfig(
         title: path.contains('kiralama')
@@ -182,6 +193,7 @@ class SeoRouteObserver extends NavigatorObserver {
             : 'Hesabım | İBUL',
         description: 'İBUL hesap yönetimi.',
         path: path,
+        noIndex: true,
       );
     }
     if (path.startsWith('/ihiz/track/')) {
@@ -229,6 +241,7 @@ class SeoRouteObserver extends NavigatorObserver {
           description:
               'İbul yönetim paneli üzerinden operasyon, mağaza ve sistem yönetimini takip edin.',
           path: '/admin',
+          noIndex: true,
         );
       case '/seller':
         if (!includeSellerRoutes) break;
@@ -237,21 +250,22 @@ class SeoRouteObserver extends NavigatorObserver {
           description:
               'Satıcı paneli üzerinden mağazanızı, ürünlerinizi, siparişlerinizi ve kampanyalarınızı yönetin.',
           path: '/seller',
+          noIndex: true,
         );
       case '/':
       default:
-        return const _SeoRouteConfig(
-          title: 'İbul | Online Alışveriş ve Hızlı Teslimat',
-          description:
-              'İbul ile teknoloji, market ve daha birçok kategoride online alışveriş yapın; hızlı teslimat avantajını yakalayın.',
+        return _SeoRouteConfig(
+          title: kHomeTitle,
+          description: kHomeDescription,
           path: '/',
+          jsonLd: homeJsonLd(),
         );
     }
-    return const _SeoRouteConfig(
-      title: 'İbul | Online Alışveriş ve Hızlı Teslimat',
-      description:
-          'İbul ile teknoloji, market ve daha birçok kategoride online alışveriş yapın; hızlı teslimat avantajını yakalayın.',
+    return _SeoRouteConfig(
+      title: kHomeTitle,
+      description: kHomeDescription,
       path: '/',
+      jsonLd: homeJsonLd(),
     );
   }
 }
@@ -261,9 +275,13 @@ class _SeoRouteConfig {
     required this.title,
     required this.description,
     required this.path,
+    this.noIndex = false,
+    this.jsonLd,
   });
 
   final String title;
   final String description;
   final String path;
+  final bool noIndex;
+  final String? jsonLd;
 }

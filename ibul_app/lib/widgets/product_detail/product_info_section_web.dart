@@ -5,6 +5,7 @@ import '../../core/constants.dart';
 import '../../screens/all_reviews_page.dart';
 import '../../services/review_repository.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
+import '../product_discount_price.dart';
 
 class ProductInfoSectionWeb extends StatelessWidget {
   const ProductInfoSectionWeb({super.key});
@@ -44,6 +45,24 @@ class ProductInfoSectionWeb extends StatelessWidget {
             height: 1.3,
           ),
         ),
+        const SizedBox(height: 10),
+        Builder(
+          builder: (context) {
+            final priced = context.select<ProductDetailViewModel, (String, String?)>(
+              (model) {
+                final current = model.displayProduct;
+                return (current.price, current.oldPrice);
+              },
+            );
+            return ProductDiscountPrice(
+              price: priced.$1,
+              oldPrice: priced.$2,
+              currentFontSize: 24,
+              oldFontSize: 14,
+              currentColor: AppColors.primary,
+            );
+          },
+        ),
         const SizedBox(height: 12),
         MouseRegion(
           cursor: SystemMouseCursors.click,
@@ -57,6 +76,8 @@ class ProductInfoSectionWeb extends StatelessWidget {
                     brand: product.brand,
                     storeName: product.store,
                     images: product.images,
+                    productId: product.productId,
+                    sellerId: product.sellerId,
                   ),
                 ),
               );

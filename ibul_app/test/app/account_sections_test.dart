@@ -10,7 +10,7 @@ void main() {
     );
     expect(
       AccountSections.pathOf(AccountSection.favorites),
-      '/hesabim/favoriler',
+      '/favoriler',
     );
     expect(AccountSections.labelOf(AccountSection.favorites), 'Favorilerim');
     expect(
@@ -20,6 +20,26 @@ void main() {
     expect(
       AccountSections.documentTitleOf(AccountSection.overview),
       'Hesabım | İBUL',
+    );
+    expect(
+      AccountSections.fromPath(MarketplacePaths.notifications),
+      AccountSection.notifications,
+    );
+    expect(
+      AccountSections.pathOf(AccountSection.notifications),
+      MarketplacePaths.notifications,
+    );
+    expect(
+      AccountSections.fromPath(MarketplacePaths.security),
+      AccountSection.security,
+    );
+    expect(
+      AccountSections.pathOf(AccountSection.security),
+      MarketplacePaths.security,
+    );
+    expect(
+      AccountSections.pathOf(AccountSection.settings),
+      MarketplacePaths.settings,
     );
     expect(AccountSections.fromPath('/hesabim/ozet'), isNull);
     expect(AccountSections.fromPath('/avm-basvurusu'), isNull);

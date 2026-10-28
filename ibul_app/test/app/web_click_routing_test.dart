@@ -30,6 +30,18 @@ void main() {
           builder: (_, __) => const Scaffold(body: Text('legacy-home')),
         ),
         GoRoute(
+          path: '/favoriler',
+          builder: (_, __) => const Scaffold(body: Text('favorites-standalone')),
+        ),
+        GoRoute(
+          path: '/map',
+          builder: (_, __) => const Scaffold(body: Text('map-standalone')),
+        ),
+        GoRoute(
+          path: '/sepet',
+          builder: (_, __) => const Scaffold(body: Text('cart-standalone')),
+        ),
+        GoRoute(
           path: MarketplacePaths.account,
           builder: (_, __) => const Scaffold(body: Text('account-overview')),
         ),
@@ -121,8 +133,8 @@ void main() {
     await tester.tap(find.text('Favorilerim'));
     await tester.pumpAndSettle();
 
-    expect(path(), MarketplacePaths.favorites);
-    expect(find.text('account-favoriler'), findsOneWidget);
+    expect(path(), '/favoriler');
+    expect(find.text('favorites-standalone'), findsOneWidget);
   });
 
   testWidgets('click Hesabım updates router path', (tester) async {

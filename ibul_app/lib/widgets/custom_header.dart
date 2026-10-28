@@ -23,6 +23,12 @@ class CustomHeader extends StatefulWidget {
   State<CustomHeader> createState() => _CustomHeaderState();
 }
 
+bool _isPersistedUnread(Map<dynamic, dynamic> row) {
+  final id = row['id']?.toString() ?? '';
+  if (id.startsWith('fallback-')) return false;
+  return row['read_at'] == null;
+}
+
 class _CustomHeaderState extends State<CustomHeader> with RouteAware {
   final LayerLink _layerLink = LayerLink();
   final FocusNode _searchFocusNode = FocusNode();
@@ -244,9 +250,7 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
           .getUserNotifications(currentUserId);
       if (!mounted) return;
       setState(() {
-        _unreadNotificationCount = notifications
-            .where((notification) => notification['read_at'] == null)
-            .length;
+        _unreadNotificationCount = notifications.where(_isPersistedUnread).length;
       });
     } catch (_) {
       if (!mounted) return;

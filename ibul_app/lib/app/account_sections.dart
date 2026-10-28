@@ -18,6 +18,8 @@ enum AccountSection {
   reviews,
   support,
   settings,
+  notifications,
+  security,
 }
 
 abstract final class AccountSections {
@@ -34,6 +36,8 @@ abstract final class AccountSections {
     MarketplacePaths.reviews: AccountSection.reviews,
     MarketplacePaths.support: AccountSection.support,
     MarketplacePaths.settings: AccountSection.settings,
+    MarketplacePaths.notifications: AccountSection.notifications,
+    MarketplacePaths.security: AccountSection.security,
   };
 
   static AccountSection? fromPath(String path) {
@@ -67,6 +71,10 @@ abstract final class AccountSections {
         return MarketplacePaths.support;
       case AccountSection.settings:
         return MarketplacePaths.settings;
+      case AccountSection.notifications:
+        return MarketplacePaths.notifications;
+      case AccountSection.security:
+        return MarketplacePaths.security;
     }
   }
 
@@ -96,6 +104,10 @@ abstract final class AccountSections {
         return 'Müşteri Hizmetleri';
       case AccountSection.settings:
         return 'Ayarlar';
+      case AccountSection.notifications:
+        return 'Bildirim Ayarları';
+      case AccountSection.security:
+        return 'Güvenlik';
     }
   }
 

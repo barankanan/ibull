@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_image_cdn.dart';
 import '../models/product_model.dart';
-import '../screens/home_lazy_routes.dart';
 import '../core/home_navigation.dart';
 import '../core/app_state.dart';
 import '../core/cart_state.dart';
@@ -16,10 +15,11 @@ import '../core/interaction_feedback.dart';
 import '../core/build_profile.dart';
 import '../core/constants.dart';
 import '../models/product_pricing.dart';
-import '../services/supabase_service.dart';
 import 'optimized_image.dart';
+import 'product_discount_price.dart';
 import 'premium_interactions.dart';
-import 'ecommerce_product_quick_info_sheet.dart';
+import 'product_card_links.dart';
+import 'product_card_quick_view.dart' deferred as product_quick_view;
 import 'staggered_reveal.dart';
 
 class _CampaignBadgeData {
@@ -92,6 +92,48 @@ class _ProductCardMetrics {
   }
 }
 
+_ProductCardMetrics _productCardMetrics({
+  required TextScaler scaler,
+  required double screenWidth,
+  required bool homeRail,
+  required bool tight,
+  required bool compact,
+  required bool badgeInFlow,
+}) {
+  final isSmallScreen = screenWidth < 360;
+  final titleFontSize = compact
+      ? (isSmallScreen ? 9.0 : 10.0)
+      : (tight ? 12.0 : 12.5);
+  final titleLineHeight = compact ? 1.2 : 1.25;
+  final oldPriceFontSize = compact ? (isSmallScreen ? 8.5 : 9.0) : 12.0;
+  final priceFontSize = compact
+      ? (isSmallScreen ? 11.5 : 12.5)
+      : (homeRail ? 16.0 : 14.0);
+  final chipHeight = compact ? 16.0 : 18.0;
+  final oldLine = scaler.scale(oldPriceFontSize) * 1.1;
+  final currentLine = math.max(scaler.scale(priceFontSize) * 1.15, chipHeight);
+
+  return _ProductCardMetrics(
+    padding: homeRail ? 6 : (compact ? 8 : 8),
+    imageGap: homeRail ? 4 : (compact ? 6 : 6),
+    badgeInFlow: badgeInFlow,
+    badgeHeight: compact ? 22 : 24,
+    badgeGap: compact ? 5 : (tight ? 3 : 5),
+    titleBlockHeight: scaler.scale(titleFontSize) * titleLineHeight * 2 + 1,
+    titleFontSize: titleFontSize,
+    titleLineHeight: titleLineHeight,
+    metaGap: 2,
+    ratingBlockHeight: scaler.scale(compact ? 14.0 : 16.0),
+    priceGap: homeRail ? 4 : (compact ? 5 : (tight ? 3 : 5)),
+    priceBlockHeight: oldLine + currentLine + 2,
+    priceFontSize: priceFontSize,
+    oldPriceFontSize: oldPriceFontSize,
+    ctaGap: homeRail ? 6 : (compact ? 6 : (tight ? 4 : 6)),
+    ctaHeight: homeRail ? 35 : (compact ? 32 : 36),
+    ctaFontSize: compact ? 10 : (homeRail ? 13.5 : 12),
+  );
+}
+
 class ProductCard extends StatefulWidget {
   final Product product;
   final double? width;
@@ -105,6 +147,27 @@ class ProductCard extends StatefulWidget {
   /// Mobile home rail. Desktop cards leave this false.
   final bool homeRail;
   final OptimizedImagePriority imagePriority;
+
+  /// Fixed home-rail photo height. See-all grid extent uses the same value.
+  static const double homeRailImageHeight = 156;
+
+  /// Natural home-rail card height for the current text scale.
+  static double homeRailCardHeight(BuildContext context) {
+    final metrics = _productCardMetrics(
+      scaler: MediaQuery.textScalerOf(context),
+      screenWidth: MediaQuery.sizeOf(context).width,
+      homeRail: true,
+      tight: false,
+      compact: false,
+      badgeInFlow: false,
+    );
+    // Fractional text metrics ceil per line; 2px keeps the grid cell from
+    // clipping the action row.
+    return metrics.padding * 2 +
+        homeRailImageHeight +
+        metrics.contentBelowImage +
+        2;
+  }
 
   const ProductCard({
     super.key,
@@ -132,46 +195,13 @@ class _ProductCardState extends State<ProductCard> {
   AppState get _appState => context.read<AppState>();
 
   _ProductCardMetrics _metrics(BuildContext context) {
-    final scaler = MediaQuery.textScalerOf(context);
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final isSmallScreen = screenWidth < 360;
-    final homeRail = widget.homeRail;
-    final tight = widget.tight;
-    final compact = widget.compact;
-
-    final titleFontSize = compact
-        ? (isSmallScreen ? 9.0 : 10.0)
-        : (tight ? 10.0 : 10.8);
-    final titleLineHeight = compact ? 1.2 : 1.25;
-    final oldPriceFontSize = compact ? (isSmallScreen ? 8.5 : 9.0) : 12.0;
-    final priceFontSize = compact
-        ? (isSmallScreen ? 11.5 : 12.5)
-        : (homeRail ? 16.0 : 14.0);
-    final chipHeight = compact ? 16.0 : 18.0;
-    final oldLine = scaler.scale(oldPriceFontSize) * 1.1;
-    final currentLine = math.max(
-      scaler.scale(priceFontSize) * 1.15,
-      chipHeight,
-    );
-
-    return _ProductCardMetrics(
-      padding: homeRail ? 6 : (compact ? 8 : (tight ? 4 : 8)),
-      imageGap: homeRail ? 4 : (compact ? 6 : (tight ? 3 : 5)),
-      badgeInFlow: !homeRail,
-      badgeHeight: compact ? 22 : 24,
-      badgeGap: compact ? 5 : (tight ? 3 : 5),
-      titleBlockHeight: scaler.scale(titleFontSize) * titleLineHeight * 2 + 1,
-      titleFontSize: titleFontSize,
-      titleLineHeight: titleLineHeight,
-      metaGap: 2,
-      ratingBlockHeight: scaler.scale(compact ? 14.0 : 16.0),
-      priceGap: homeRail ? 4 : (compact ? 5 : (tight ? 3 : 5)),
-      priceBlockHeight: oldLine + currentLine + 2,
-      priceFontSize: priceFontSize,
-      oldPriceFontSize: oldPriceFontSize,
-      ctaGap: homeRail ? 6 : (compact ? 6 : (tight ? 4 : 6)),
-      ctaHeight: homeRail ? 35 : (compact ? 32 : (tight ? 34 : 40)),
-      ctaFontSize: compact ? 10 : (homeRail ? 13.5 : (tight ? 11 : 12)),
+    return _productCardMetrics(
+      scaler: MediaQuery.textScalerOf(context),
+      screenWidth: MediaQuery.sizeOf(context).width,
+      homeRail: widget.homeRail,
+      tight: widget.tight,
+      compact: widget.compact,
+      badgeInFlow: !widget.homeRail && _campaignBadgeData.text.isNotEmpty,
     );
   }
 
@@ -200,27 +230,29 @@ class _ProductCardState extends State<ProductCard> {
     );
     final hasRealDiscount = oldPrice > currentPrice && currentPrice > 0;
 
-    if (hasRealDiscount) {
-      return _CampaignBadgeData(
-        text: widget.homeRail ? 'Fırsat Ürünü' : 'İndirimli',
-        backgroundColor: const Color(0xFFFFD54F),
-        textColor: widget.homeRail ? const Color(0xFF2F2A16) : Colors.black87,
-      );
-    }
-
-    if (widget.homeRail) {
+    if (hasRealDiscount && widget.homeRail) {
       return const _CampaignBadgeData(
-        text: '',
-        backgroundColor: Colors.transparent,
-        textColor: Colors.transparent,
+        text: 'Fırsat Ürünü',
+        backgroundColor: Color(0xFFFFD54F),
+        textColor: Color(0xFF2F2A16),
       );
     }
 
     return const _CampaignBadgeData(
-      text: 'Fırsat Ürünü',
-      backgroundColor: Color(0xFFF4CF4A),
-      textColor: Color(0xFF2F2A16),
+      text: '',
+      backgroundColor: Colors.transparent,
+      textColor: Colors.transparent,
     );
+  }
+
+  bool get _isFoodCard {
+    final category = (widget.product.category ?? '').toLowerCase();
+    final subCategory = (widget.product.subCategory ?? '').toLowerCase();
+    return widget.forceFoodOrderButton ||
+        category.contains('yemek') ||
+        subCategory.contains('yemek') ||
+        category.contains('restoran') ||
+        category.contains('kafe');
   }
 
   String? _resolvePrimaryImageUrlOrPath() {
@@ -264,7 +296,7 @@ class _ProductCardState extends State<ProductCard> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              HomeLazyRoutes.openLogin(context);
+              ProductCardLinks.openLogin(context);
             },
             child: const Text('Giriş Yap'),
           ),
@@ -317,7 +349,7 @@ class _ProductCardState extends State<ProductCard> {
     // Wrap navigation in Future.delayed to avoid MouseTracker crash on Web
     Future.delayed(Duration.zero, () {
       if (!mounted) return;
-      HomeLazyRoutes.openProductDetail(
+      ProductCardLinks.openProductDetail(
         context,
         widget.product,
         heroTag: _heroTag,
@@ -325,31 +357,18 @@ class _ProductCardState extends State<ProductCard> {
     });
   }
 
-  /// Liste projeksiyonları description/specifications içermeyebilir;
-  /// quick view açılınca tam satır arka planda çekilip birleştirilir.
-  Future<Product?> _enrichQuickViewProduct() async {
-    final id = widget.product.productId?.trim() ?? '';
-    if (id.isEmpty) return null;
-    final row = await SupabaseService.instance.getProductByIdString(id);
-    return row == null ? null : Product.fromDBProduct(row);
-  }
-
   void _showQuickView() {
     InteractionFeedback.lightImpact(channel: 'product_quick_view');
-    showAppModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.42),
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        return EcommerceProductQuickInfoSheet(
-          product: widget.product,
-          enrich: _enrichQuickViewProduct,
-          onAddToCart: () => _handleAddToCartTap(context),
-          onViewDetails: _onCardTap,
-        );
-      },
-    );
+    final product = widget.product;
+    product_quick_view.loadLibrary().then((_) {
+      if (!mounted) return;
+      product_quick_view.showProductCardQuickView(
+        context: context,
+        product: product,
+        onAddToCart: () => _handleAddToCartTap(context),
+        onViewDetails: _onCardTap,
+      );
+    });
   }
 
   Widget _buildOptimizedCardImage({
@@ -389,7 +408,7 @@ class _ProductCardState extends State<ProductCard> {
                 imageUrlOrPath: imagePath,
                 width: double.infinity,
                 height: double.infinity,
-                fit: BoxFit.contain,
+                fit: _isFoodCard ? BoxFit.cover : BoxFit.contain,
                 cacheWidth: cacheWidth,
                 cacheHeight: cacheHeight,
                 priority: widget.imagePriority,
@@ -418,13 +437,13 @@ class _ProductCardState extends State<ProductCard> {
     return ClipRRect(
       borderRadius: borderRadius,
       child: RepaintBoundary(
-        child: height != null
+        child: (height != null && height.isFinite)
             ? SizedBox(
                 height: height,
                 width: double.infinity,
                 child: imageContent,
               )
-            : AspectRatio(aspectRatio: aspectRatio!, child: imageContent),
+            : AspectRatio(aspectRatio: aspectRatio ?? 1.0, child: imageContent),
       ),
     );
   }
@@ -437,13 +456,11 @@ class _ProductCardState extends State<ProductCard> {
         constraints.maxWidth.isFinite && constraints.maxWidth > 0
         ? constraints.maxWidth
         : fallbackWidth;
-    final horizontalPadding = widget.compact
-        ? 16.0
-        : (widget.tight ? 8.0 : 16.0);
-    final contentWidth = math.max(0.0, availableWidth - horizontalPadding);
+    final pad = _metrics(context).padding;
+    final contentWidth = math.max(0.0, availableWidth - (pad * 2));
     final imageRatio = widget.isCatalogMode
         ? 1.0
-        : (widget.compact ? 0.72 : (widget.tight ? 0.70 : 0.72));
+        : (widget.compact ? 0.86 : (_isFoodCard ? 0.92 : 0.86));
     final minHeight = widget.isCatalogMode
         ? 160.0
         : (widget.compact ? 92.0 : (widget.tight ? 72.0 : 100.0));
@@ -459,7 +476,7 @@ class _ProductCardState extends State<ProductCard> {
       return naturalImageHeight;
     }
 
-    final verticalPadding = widget.compact ? 16.0 : (widget.tight ? 8.0 : 16.0);
+    final verticalPadding = pad * 2;
     const layoutSlack = 6.0;
     final innerMaxHeight = constraints.maxHeight - verticalPadding;
     final maxImageForCell =
@@ -485,7 +502,7 @@ class _ProductCardState extends State<ProductCard> {
         final metrics = _metrics(context);
         final fillCellHeight = !homeRail && constraints.maxHeight.isFinite;
         final imageHeight = homeRail
-            ? 156.0
+            ? ProductCard.homeRailImageHeight
             : (fillCellHeight ? null : _resolveImageHeight(constraints));
         final padding = metrics.padding;
 
@@ -613,7 +630,7 @@ class _ProductCardState extends State<ProductCard> {
                         children: [
                           _buildImageSection(
                             isFavorite: isFavorite,
-                            isCompared: false,
+                            isCompared: isCompared,
                             imageHeight: imageHeight,
                           ),
                           SizedBox(height: metrics.imageGap),
@@ -648,7 +665,7 @@ class _ProductCardState extends State<ProductCard> {
     double? imageHeight,
     bool fillAvailable = false,
   }) {
-    return Stack(
+    final imageStack = Stack(
       fit: fillAvailable ? StackFit.expand : StackFit.loose,
       children: [
         // Product Image - Wrapped in GestureDetector to ensure tap is caught
@@ -656,7 +673,8 @@ class _ProductCardState extends State<ProductCard> {
           onTap: _onCardTap,
           behavior: HitTestBehavior.opaque,
           child: _buildOptimizedCardImage(
-            height: fillAvailable ? double.infinity : imageHeight!,
+            aspectRatio: 1.0,
+            height: fillAvailable ? double.infinity : imageHeight,
             borderRadius: BorderRadius.circular(14),
             fallbackIconSize: 40,
           ),
@@ -709,9 +727,9 @@ class _ProductCardState extends State<ProductCard> {
           top: widget.homeRail ? 28 : 36,
           right: 4,
           child: GestureDetector(
-            onTap: () {
-              _handleCompareTap(context);
-            },
+            key: const ValueKey('product-card-compare-button'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _handleCompareTap(context),
             child: PremiumPressable(
               pressedScale: 0.9,
               hoverScale: 1.04,
@@ -748,6 +766,10 @@ class _ProductCardState extends State<ProductCard> {
           ),
       ],
     );
+
+    return fillAvailable
+        ? imageStack
+        : AspectRatio(aspectRatio: 1.0, child: imageStack);
   }
 
   // Compact image section with AspectRatio (for seller page)
@@ -765,18 +787,21 @@ class _ProductCardState extends State<ProductCard> {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final isSmallScreen = screenWidth < 360;
 
-    return Stack(
-      children: [
-        // Product Image - Wrapped in GestureDetector
-        GestureDetector(
-          onTap: _onCardTap,
-          behavior: HitTestBehavior.opaque,
-          child: _buildOptimizedCardImage(
-            height: imageHeight,
-            borderRadius: BorderRadius.circular(12),
-            fallbackIconSize: isSmallScreen ? 25 : 30,
+    return AspectRatio(
+      aspectRatio: 1.0,
+      child: Stack(
+        children: [
+          // Product Image - Wrapped in GestureDetector
+          GestureDetector(
+            onTap: _onCardTap,
+            behavior: HitTestBehavior.opaque,
+            child: _buildOptimizedCardImage(
+              aspectRatio: 1.0,
+              height: imageHeight,
+              borderRadius: BorderRadius.circular(12),
+              fallbackIconSize: isSmallScreen ? 25 : 30,
+            ),
           ),
-        ),
         Positioned(
           top: isSmallScreen ? 4 : 6,
           left: isSmallScreen ? 4 : 6,
@@ -825,9 +850,9 @@ class _ProductCardState extends State<ProductCard> {
           top: 36,
           right: 4,
           child: GestureDetector(
-            onTap: () {
-              _handleCompareTap(context);
-            },
+            key: const ValueKey('product-card-compare-button'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _handleCompareTap(context),
             child: PremiumPressable(
               pressedScale: 0.9,
               hoverScale: 1.04,
@@ -857,7 +882,7 @@ class _ProductCardState extends State<ProductCard> {
           ),
         ),
       ],
-    );
+    ));
   }
 
   Widget _buildCampaignBadge({bool overlay = false}) {
@@ -1051,100 +1076,19 @@ class _ProductCardState extends State<ProductCard> {
 
   Widget _buildPrice() {
     final metrics = _metrics(context);
-    final priceText = widget.product.price.contains('TL')
-        ? widget.product.price
-        : '${widget.product.price} TL';
-
-    final currentPrice = ProductPriceCalculator.parsePriceValue(
-      widget.product.price,
-    );
-    final oldPrice = ProductPriceCalculator.parsePriceValue(
-      widget.product.oldPrice ?? '',
-    );
-    final hasDiscount = oldPrice > currentPrice && currentPrice > 0;
-    final oldPriceLabel = hasDiscount
-        ? (widget.product.oldPrice!.contains('TL')
-              ? widget.product.oldPrice!
-              : '${widget.product.oldPrice!} TL')
-        : null;
-
     return SizedBox(
       key: const ValueKey('product-card-price-block'),
       height: metrics.priceBlockHeight,
       width: double.infinity,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (oldPriceLabel != null)
-            Text(
-              oldPriceLabel,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: metrics.oldPriceFontSize,
-                color: const Color(0xFFE53935),
-                decoration: TextDecoration.lineThrough,
-                decorationColor: const Color(0xFFE53935),
-                decorationThickness: widget.compact ? 1.2 : 1.4,
-                fontWeight: FontWeight.w600,
-                height: 1.1,
-              ),
-            ),
-          Row(
-            children: [
-              Flexible(
-                child: Text(
-                  priceText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: metrics.priceFontSize,
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF1A1A1A),
-                    height: 1.15,
-                  ),
-                ),
-              ),
-              if (hasDiscount) ...[
-                SizedBox(width: widget.compact ? 4 : 6),
-                _buildDiscountChip(compact: widget.compact),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDiscountChip({bool compact = false}) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 4 : 5,
-        vertical: compact ? 2 : 2.5,
-      ),
-      decoration: BoxDecoration(
-        color: const Color(0xFFE8F5E9),
-        borderRadius: BorderRadius.circular(compact ? 4 : 5),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.arrow_downward,
-            size: compact ? 8 : 10,
-            color: const Color(0xFF2E7D32),
-          ),
-          const SizedBox(width: 2),
-          Text(
-            'İndirim',
-            style: TextStyle(
-              fontSize: compact ? 7.5 : 10,
-              color: const Color(0xFF2E7D32),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
+      child: Align(
+        alignment: Alignment.bottomLeft,
+        child: ProductDiscountPrice(
+          price: widget.product.price,
+          oldPrice: widget.product.oldPrice,
+          currentFontSize: metrics.priceFontSize,
+          oldFontSize: metrics.oldPriceFontSize,
+          compact: widget.compact || widget.tight,
+        ),
       ),
     );
   }
@@ -1227,12 +1171,7 @@ class _ProductCardState extends State<ProductCard> {
 
   Widget _buildButton(BuildContext context, bool isAddedToCart) {
     final metrics = _metrics(context);
-    final category = (widget.product.category ?? '').toLowerCase();
-    final subCategory = (widget.product.subCategory ?? '').toLowerCase();
-    final isFoodCategory =
-        widget.forceFoodOrderButton ||
-        category.contains('yemek') ||
-        subCategory.contains('yemek');
+    final isFoodCategory = _isFoodCard;
 
     final buttonHeight = metrics.ctaHeight;
     final fontSize = metrics.ctaFontSize;
@@ -1329,7 +1268,8 @@ class _ProductCardState extends State<ProductCard> {
               height: buttonHeight,
               child: PremiumPressable(
                 child: ElevatedButton(
-                  onPressed: _onCardTap,
+                  key: const ValueKey('product-card-in-cart-button'),
+                  onPressed: () => _handleRemoveFromCartTap(context),
                   style: _pillButtonStyle(
                     background: Colors.green,
                     foreground: Colors.white,
@@ -1351,16 +1291,13 @@ class _ProductCardState extends State<ProductCard> {
               height: buttonHeight,
               child: PremiumPressable(
                 child: ElevatedButton(
+                  key: const ValueKey('product-card-open-cart'),
                   onPressed: () {
                     InteractionFeedback.forInteraction(
                       InteractionFeedbackType.mainCta,
                       channel: 'product_card_open_cart',
                     );
-                    HomeNavigation.openHome(
-                      context,
-                      initialIndex: 3,
-                      replaceStack: true,
-                    );
+                    ProductCardLinks.openCart(context);
                   },
                   style: _pillButtonStyle(
                     background: Colors.green,
@@ -1429,12 +1366,39 @@ class _ProductCardState extends State<ProductCard> {
   void _handleCompareTap(BuildContext context) {
     InteractionFeedback.lightImpact(channel: 'compare_tap');
     final compareState = Provider.of<CompareState>(context, listen: false);
+    final alreadyCompared = compareState.isCompared(widget.product);
     final error = compareState.toggleCompare(widget.product);
+    final messenger = ScaffoldMessenger.of(context);
     if (error != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error)));
+      messenger.showSnackBar(SnackBar(content: Text(error)));
+      return;
     }
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            alreadyCompared
+                ? 'Ürün karşılaştırmadan çıkarıldı'
+                : 'Ürün karşılaştırmaya eklendi',
+          ),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+  }
+
+  void _handleRemoveFromCartTap(BuildContext context) {
+    InteractionFeedback.forInteraction(
+      InteractionFeedbackType.successState,
+      channel: 'cart_remove_success',
+    );
+    _appState.removeFromCart(widget.product);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Ürün sepetten çıkarıldı'),
+        duration: Duration(seconds: 1),
+      ),
+    );
   }
 
   void _handleAddToCartTap(BuildContext context) {
@@ -1624,7 +1588,7 @@ class _ProductCardState extends State<ProductCard> {
       'seller_id': widget.product.sellerId ?? '',
     };
 
-    HomeLazyRoutes.openBusinessDetail(
+    ProductCardLinks.openBusinessDetail(
       context,
       business: business,
       forceTableSelection: true,

@@ -73,6 +73,43 @@ class Product {
   final double? catalogDiscountPrice;
   final DateTime? catalogUpdatedAt;
   final int? cartQuantity;
+  final String? _color;
+  final String? colorHex;
+
+  String? get color {
+    if (_color != null && _color.trim().isNotEmpty) return _color.trim();
+    if (attributes != null) {
+      for (final attr in attributes!) {
+        final t = attr.trim();
+        final lower = t.toLowerCase();
+        if (lower.startsWith('renk:') || lower.startsWith('color:')) {
+          final val = t.split(':').sublist(1).join(':').trim();
+          if (val.isNotEmpty) return val;
+        }
+      }
+    }
+    if (specifications != null && specifications!.isNotEmpty) {
+      try {
+        final specMap = jsonDecode(specifications!);
+        if (specMap is Map) {
+          final c = specMap['Renk'] ?? specMap['renk'] ?? specMap['Color'] ?? specMap['color'];
+          if (c != null && c.toString().trim().isNotEmpty) return c.toString().trim();
+        }
+      } catch (_) {}
+    }
+    if (variantOptions != null && variantOptions!.isNotEmpty) {
+      for (final part in variantOptions!.split('|')) {
+        final kv = part.split(':');
+        if (kv.length >= 2 && (kv[0].trim().toLowerCase() == 'renk' || kv[0].trim().toLowerCase() == 'color')) {
+          final val = kv.sublist(1).join(':').trim();
+          if (val.isNotEmpty) return val;
+        }
+      }
+    }
+    return null;
+  }
+
+  String? get imageUrl => images.isNotEmpty ? images.first : null;
 
   Product({
     this.productId,
@@ -138,7 +175,9 @@ class Product {
     this.catalogDiscountPrice,
     this.catalogUpdatedAt,
     this.cartQuantity,
-  });
+    String? color,
+    this.colorHex,
+  }) : _color = color;
 
   /// Sepete ekle hızlı doğrulama map'i (checkout yerine geçmez).
   Map<String, dynamic> toCartValidationMap() {
@@ -226,6 +265,8 @@ class Product {
     double? catalogDiscountPrice,
     DateTime? catalogUpdatedAt,
     int? cartQuantity,
+    String? color,
+    String? colorHex,
   }) {
     return Product(
       productId: productId ?? this.productId,
@@ -291,6 +332,8 @@ class Product {
       catalogDiscountPrice: catalogDiscountPrice ?? this.catalogDiscountPrice,
       catalogUpdatedAt: catalogUpdatedAt ?? this.catalogUpdatedAt,
       cartQuantity: cartQuantity ?? this.cartQuantity,
+      color: color ?? _color,
+      colorHex: colorHex ?? this.colorHex,
     );
   }
 
@@ -304,6 +347,8 @@ class Product {
       'productId': productId,
       'brand': brand,
       'price': price,
+      'color': color,
+      if (colorHex != null) 'colorHex': colorHex,
       'pricingMode': pricingMode,
       'basePrice': basePrice,
       'pricingType': pricingType,
@@ -479,10 +524,22 @@ class Product {
       videoSizeBytes: (json['video_size_bytes'] as num?)?.toInt(),
       thumbnailSizeBytes: (json['thumbnail_size_bytes'] as num?)?.toInt(),
       videoStatus: readNullableString(json['video_status']),
-      variants: json['variants'],
+      variants: () {
+        final raw = json['variants'] ?? json['variants_json'] ?? json['product_variants'];
+        if (raw is String && raw.trim().isNotEmpty) {
+          try {
+            return jsonDecode(raw);
+          } catch (_) {
+            return raw;
+          }
+        }
+        return raw;
+      }(),
       additionalInfo: readNullableString(json['additional_info']),
       faq: _parseFaqList(json['faq']),
       cartQuantity: (json['cartQuantity'] as num?)?.toInt(),
+      color: readNullableString(json['color'] ?? json['renk']),
+      colorHex: readNullableString(json['colorHex'] ?? json['color_hex']),
     );
   }
 
@@ -574,61 +631,106 @@ class Product {
         rawAttributes = (dbProduct as dynamic).attributes;
       }
       if (rawAttributes is List) {
-        attributes = rawAttributes.map((e) => e.toString()).toList();
-      } else if (rawAttributes is String && rawAttributes.isNotEmpty) {
+        attributes = rawAttributes
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+      } else if (rawAttributes is String && rawAttributes.trim().isNotEmpty) {
+        final trimmed = rawAttributes.trim();
         try {
-          final decoded = jsonDecode(rawAttributes);
+          final decoded = jsonDecode(trimmed);
           if (decoded is List) {
-            attributes = decoded.map((e) => e.toString()).toList();
+            attributes = decoded
+                .map((e) => e.toString().trim())
+                .where((e) => e.isNotEmpty)
+                .toList();
+          } else if (decoded is Map) {
+            attributes = decoded.entries
+                .map((e) => '${e.key}: ${e.value}'.trim())
+                .where((e) => e.isNotEmpty)
+                .toList();
           }
-        } catch (_) {}
+        } catch (_) {
+          attributes = _parseStringList(trimmed);
+        }
       }
     } catch (_) {}
 
-    // Varyantlar (SellerProduct -> Product)
+    // Ürün rengi ve hex kodu (Map veya DBProduct üzerinden)
+    String? parsedColor;
+    String? parsedColorHex;
+    try {
+      if (dbProduct is Map) {
+        parsedColor = (dbProduct['color'] ?? dbProduct['renk'] ?? dbProduct['product_color'])?.toString();
+        parsedColorHex = (dbProduct['color_hex'] ?? dbProduct['colorHex'])?.toString();
+      } else {
+        parsedColor = ((dbProduct as dynamic).color ?? (dbProduct as dynamic).renk)?.toString();
+        parsedColorHex = ((dbProduct as dynamic).colorHex ?? (dbProduct as dynamic).color_hex)?.toString();
+      }
+    } catch (_) {}
+
+    // Varyantlar (SellerProduct / DBProduct -> Product)
     List<Map<String, dynamic>>? variants;
     try {
-      // Dynamic parsing: List<dynamic> -> List<Map<String, dynamic>>
-      List<dynamic>? rawVariants;
+      dynamic rawVariants;
 
-      // Check if dbProduct is a Map (direct DB row)
       if (dbProduct is Map) {
-        // JSON String ise decode et (DIAGNOSTIC STEP 4)
-        if (dbProduct['variants'] is String) {
+        final v = dbProduct['variants'] ??
+            dbProduct['variants_json'] ??
+            dbProduct['product_variants'];
+        if (v is String && v.trim().isNotEmpty) {
           try {
-            rawVariants = jsonDecode(dbProduct['variants']);
+            rawVariants = jsonDecode(v);
           } catch (_) {
             rawVariants = [];
           }
         } else {
-          rawVariants = dbProduct['variants'];
+          rawVariants = v;
         }
       } else {
-        // Check if dbProduct is an object (SellerProduct)
         try {
-          rawVariants = (dbProduct as dynamic).variants;
+          final v = (dbProduct as dynamic).variants ??
+              (dbProduct as dynamic).variantsJson ??
+              (dbProduct as dynamic).productVariants;
+          if (v is String && v.trim().isNotEmpty) {
+            try {
+              rawVariants = jsonDecode(v);
+            } catch (_) {
+              rawVariants = [];
+            }
+          } else {
+            rawVariants = v;
+          }
         } catch (_) {}
       }
 
       if (rawVariants != null) {
-        variants = rawVariants
-            .map((v) {
-              if (v is Map) {
-                return Map<String, dynamic>.from(v);
-              }
-              // If it's an object (ProductVariant), try to convert to Map
-              try {
-                return (v as dynamic).toMap();
-              } catch (_) {
-                return <String, dynamic>{};
-              }
-            })
-            .where((m) => m.isNotEmpty)
-            .toList()
-            .cast<Map<String, dynamic>>();
+        if (rawVariants is String && rawVariants.trim().isNotEmpty) {
+          try {
+            rawVariants = jsonDecode(rawVariants);
+          } catch (_) {
+            rawVariants = [];
+          }
+        }
+        if (rawVariants is List) {
+          variants = rawVariants
+              .map((v) {
+                if (v is Map) {
+                  return Map<String, dynamic>.from(v);
+                }
+                try {
+                  return (v as dynamic).toMap() as Map<String, dynamic>;
+                } catch (_) {
+                  return <String, dynamic>{};
+                }
+              })
+              .where((m) => m.isNotEmpty)
+              .toList()
+              .cast<Map<String, dynamic>>();
+        }
       }
     } catch (_) {
-      // Ignore malformed service option payloads and keep parsing the product.
+      // Ignore malformed variant payloads and keep parsing the product.
     }
 
     List<String>? accessories;
@@ -1173,6 +1275,8 @@ class Product {
       stock: stock,
       catalogDiscountPrice: catalogDiscountPrice,
       catalogUpdatedAt: catalogUpdatedAt,
+      color: parsedColor,
+      colorHex: parsedColorHex,
     );
   }
 
@@ -1608,7 +1712,7 @@ class Product {
         }
       } catch (_) {}
     }
-    return _cleanStringList(text.split(RegExp(r'[\n,|•]')));
+    return _cleanStringList(text.split(RegExp(r'(?<!\d),(?!\d)|[\n|•]')));
   }
 
   static List<String> _cleanStringList(List<String?>? values) {

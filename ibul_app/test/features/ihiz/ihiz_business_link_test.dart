@@ -189,7 +189,6 @@ void main() {
           child: Scaffold(
             body: SingleChildScrollView(
               child: IhizLandingBody(
-                onLogin: () {},
                 onCourierApply: () {},
                 onBusinessJoin: () {},
                 onBindBusiness: (_) {},

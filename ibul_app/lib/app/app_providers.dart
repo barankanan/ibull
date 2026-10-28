@@ -54,7 +54,9 @@ List<SingleChildWidget> buildProvidersForMode(IbulAppMode mode) {
 }
 
 int countMountedProviders(IbulAppMode mode) {
-  const customerCount = 5;
+  // Cart, favorite, compare, review, app state, offline connectivity.
+  // Print and restaurant providers stay on the full/seller/restaurant path.
+  const customerCount = 6;
   if (mode == IbulAppMode.customer) return customerCount;
   if (kIsWeb) return customerCount;
   // IO full/seller/restaurant: +restaurant connectivity +desktop print hub

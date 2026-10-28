@@ -358,6 +358,7 @@ class ReviewState extends ChangeNotifier {
     required List<String> imageUrls,
     required String userId,
     required String userName,
+    String? productId,
   }) async {
     final review = await ReviewService.instance.createProductReview(
       productName: productName,
@@ -370,6 +371,7 @@ class ReviewState extends ChangeNotifier {
       imageUrls: imageUrls,
       userId: userId,
       userName: userName,
+      productId: productId,
     );
 
     _productReviews.removeWhere(

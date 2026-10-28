@@ -261,6 +261,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final showMarketplaceHeader = MediaQuery.sizeOf(context).width >= 900;
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -268,11 +269,13 @@ class _CategoriesPageState extends State<CategoriesPage> {
           children: [
             Column(
               children: [
-                // Custom Header Entegrasyonu
-                CustomHeader(
-                  onSearch: _onSearch,
-                ),
-                const Divider(height: 1),
+                if (showMarketplaceHeader) ...[
+                  CustomHeader(
+                    onSearch: _onSearch,
+                  ),
+                  const Divider(height: 1),
+                ] else
+                  const SizedBox(height: 8),
                 _buildTopCategoryBar(),
                 const Divider(height: 1),
                 Expanded(
@@ -320,12 +323,17 @@ class _CategoriesPageState extends State<CategoriesPage> {
     if (_categoryLoadError != null) {
       return SizedBox(
         height: _topBarHeight,
-        child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: _pagePaddingH),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              Text(_categoryLoadError!),
-              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _categoryLoadError!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
               TextButton(
                 onPressed: _loadCategories,
                 child: const Text('Tekrar dene'),

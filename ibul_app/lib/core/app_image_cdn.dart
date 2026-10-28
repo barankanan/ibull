@@ -145,6 +145,48 @@ class AppImageCdn {
   ///
   /// Passthrough (empty [cdnBaseUrl], flag off) is the **safe production default**.
   /// It works with any storage backend and never produces broken URLs.
+  static const _supabaseObjectPrefix = '/storage/v1/object/public/';
+  static const _supabaseRenderPrefix = '/storage/v1/render/image/public/';
+
+  /// Supabase image rendering is already enabled for public objects.
+  /// Hero banners are the only variant routed through it: the stored JPEG
+  /// can be tens of megapixels while the slot is about 1400×800.
+  static String? _supabaseHeroRenderUrl(
+    String sourceUrl,
+    AppImageVariant variant,
+  ) {
+    if (variant != AppImageVariant.hero) return null;
+    final spec = _specs[AppImageVariant.hero]!;
+    return supabasePublicRenderUrl(
+      sourceUrl,
+      width: spec.width,
+      height: spec.height,
+      quality: spec.quality,
+    );
+  }
+
+  /// Rewrites a public Supabase object URL to the render endpoint.
+  /// Returns [sourceUrl] when it is not a public storage object.
+  ///
+  /// Desktop hero uses 1400×800. The mobile banner already decodes at
+  /// 960×384, so that slot should not request the desktop size.
+  static String supabasePublicRenderUrl(
+    String sourceUrl, {
+    required int width,
+    required int height,
+    required int quality,
+    String resize = 'contain',
+  }) {
+    if (!sourceUrl.contains(_supabaseObjectPrefix)) return sourceUrl;
+    final rewritten = sourceUrl.replaceFirst(
+      _supabaseObjectPrefix,
+      _supabaseRenderPrefix,
+    );
+    final joiner = rewritten.contains('?') ? '&' : '?';
+    return '$rewritten${joiner}width=$width&height=$height'
+        '&quality=$quality&resize=$resize';
+  }
+
   static String buildUrl(String sourceUrl, AppImageVariant variant) {
     if (sourceUrl.isEmpty || !sourceUrl.startsWith('http')) {
       return sourceUrl;
@@ -158,6 +200,8 @@ class AppImageCdn {
       if (enableExperimentalFirebaseResize) {
         return _experimentalFirebaseResizeUrl(sourceUrl, variant);
       }
+      final supabaseHero = _supabaseHeroRenderUrl(sourceUrl, variant);
+      if (supabaseHero != null) return supabaseHero;
       return sourceUrl;
     }
 

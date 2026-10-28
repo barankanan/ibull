@@ -80,6 +80,25 @@ List<RouteBase> _routes(bool includeAuthRoutes) {
     _pageRoute('/ihiz', includeAuthRoutes),
     _pageRoute('/arac', includeAuthRoutes),
     _pageRoute('/arac/arama', includeAuthRoutes),
+    _pageRoute('/visual-search', includeAuthRoutes),
+    _pageRoute('/visual-search/analyze', includeAuthRoutes),
+    _pageRoute('/visual-search/match', includeAuthRoutes),
+    _pageRoute('/visual-search/history', includeAuthRoutes),
+    GoRoute(
+      path: '/visual-search/history/:id',
+      builder: (context, state) =>
+          _pageFor(state.uri.path, state, includeAuthRoutes),
+    ),
+    GoRoute(
+      path: '/visual-search/analyze/:id',
+      builder: (context, state) =>
+          _pageFor(state.uri.path, state, includeAuthRoutes),
+    ),
+    GoRoute(
+      path: '/visual-search/match/:id',
+      builder: (context, state) =>
+          _pageFor(state.uri.path, state, includeAuthRoutes),
+    ),
     GoRoute(
       path: '/kategori/:mainCategoryId/:subCategoryId/:slug',
       builder: (context, state) => _pageFor(
@@ -88,6 +107,7 @@ List<RouteBase> _routes(bool includeAuthRoutes) {
         includeAuthRoutes,
       ),
     ),
+    _pageRoute(MarketplacePaths.favorites, includeAuthRoutes),
     _pageRoute(MarketplacePaths.account, includeAuthRoutes),
     GoRoute(
       path: '/hesabim/:section',
@@ -292,6 +312,14 @@ String? _ibulGoRouterRedirect({
   }
   if (path == '/hesabim/ozet') {
     return MarketplacePaths.account;
+  }
+  if (path == MarketplacePaths.legacyAccountFavorites) {
+    return MarketplacePaths.favorites;
+  }
+  if (includeAuthRoutes &&
+      path == MarketplacePaths.favorites &&
+      !authenticated) {
+    return '/login?next=${Uri.encodeComponent(path)}';
   }
   if (path == MarketplacePaths.legacyMallApplication ||
       path == MarketplacePaths.legacyPublicMallApplication) {

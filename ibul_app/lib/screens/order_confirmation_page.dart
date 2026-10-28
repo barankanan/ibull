@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import '../app/ibul_router.dart';
+import '../app/marketplace_paths.dart';
 import '../core/constants.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/web_header.dart';
-import 'orders_page.dart';
 
 class OrderConfirmationPage extends StatelessWidget {
   final double? totalPrice;
@@ -18,6 +18,22 @@ class OrderConfirmationPage extends StatelessWidget {
     this.purchasedProducts,
   });
 
+  void _leaveSuccess(BuildContext context, String location) {
+    final router = IbulRouter.routerOf(context);
+    final nav = Navigator.of(context, rootNavigator: true);
+    if (nav.canPop()) {
+      nav.popUntil((route) => route.isFirst);
+    }
+    if (router != null) {
+      final target = location == IbulRouter.legacyHomeAlias
+          ? IbulRouter.marketplaceHome
+          : location;
+      router.go(target);
+      return;
+    }
+    nav.pushNamedAndRemoveUntil(location, (_) => false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isWeb = MediaQuery.of(context).size.width >= 900;
@@ -29,8 +45,31 @@ class OrderConfirmationPage extends StatelessWidget {
             ?.cast<Map<String, dynamic>>() ??
         const [];
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _leaveSuccess(context, IbulRouter.marketplaceHome);
+      },
+      child: Scaffold(
       backgroundColor: const Color(0xFFF9FAFB),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.black),
+          onPressed: () => _leaveSuccess(context, IbulRouter.marketplaceHome),
+        ),
+        title: const Text(
+          'Sipariş Başarılı',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.black,
+          ),
+        ),
+        centerTitle: true,
+      ),
       body: Column(
         children: [
           if (isWeb) WebHeader(onSearch: (q) {}),
@@ -49,6 +88,7 @@ class OrderConfirmationPage extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -210,9 +250,10 @@ class OrderConfirmationPage extends StatelessWidget {
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: () => IbulRouter.go(context, '/'),
+                onPressed: () =>
+                    _leaveSuccess(context, IbulRouter.marketplaceHome),
                 icon: const Icon(Icons.home_outlined),
-                label: const Text('Ana Sayfa'),
+                label: const Text('Ana Sayfaya Dön'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.primary,
                   side: const BorderSide(color: AppColors.primary),
@@ -223,10 +264,8 @@ class OrderConfirmationPage extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: ElevatedButton.icon(
-                onPressed: () => Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const OrdersPage()),
-                  (route) => false,
-                ),
+                onPressed: () =>
+                    _leaveSuccess(context, MarketplacePaths.orders),
                 icon: const Icon(Icons.receipt_long),
                 label: const Text('Siparişimi Gör'),
                 style: ElevatedButton.styleFrom(

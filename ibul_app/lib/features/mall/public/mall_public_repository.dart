@@ -228,33 +228,20 @@ class MallPublicRepository {
     return pins;
   }
 
-  /// Approved mall-contained stores for search / distance. Empty when the RPC
-  /// is not on this database yet.
+  /// Mall-contained store search. The security-definer RPC
+  /// `public_mall_store_directory` is specified in
+  /// `mall_store_location_architecture.sql` and is not applied on this
+  /// database. Anon cannot read `mall_branch_links`. Until that patch is
+  /// applied, the directory is empty and the map uses `public_mall_map_pins`.
   Future<List<MallStoreSearchHit>> storeDirectory() async {
-    try {
-      final result = await _db.rpc('public_mall_store_directory');
-      if (result is! List) return const [];
-      return [
-        for (final row in result)
-          if (row is Map) ?MallStoreSearchHit.fromMap(Map<String, dynamic>.from(row)),
-      ];
-    } on PostgrestException catch (error) {
-      if (error.code != 'PGRST202') rethrow;
-      debugPrint('[MALL][MAP] public_mall_store_directory missing');
-      return const [];
-    }
+    return const [];
   }
 
+  /// In-mall stores that should not draw their own pin. Same unapplied RPC:
+  /// `public_map_hidden_store_ids`. Anon cannot read `store_branches`, so
+  /// there is no client-side substitute. Empty means today's map behavior.
   Future<Set<String>> hiddenStoreIds() async {
-    try {
-      final result = await _db.rpc('public_map_hidden_store_ids');
-      if (result is! List) return const {};
-      return {for (final id in result) id.toString()};
-    } on PostgrestException catch (error) {
-      if (error.code != 'PGRST202') rethrow;
-      debugPrint('[MALL][MAP] public_map_hidden_store_ids missing');
-      return const {};
-    }
+    return const {};
   }
 
 }

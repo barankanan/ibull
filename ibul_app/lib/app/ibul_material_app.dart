@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ibul_app/l10n/arb/app_localizations.dart';
 
 import 'app_bootstrap.dart';
 import 'ibul_go_router.dart';
+import 'ibul_tr_localizations.dart';
 
 /// Shared [MaterialApp.router] chrome for CustomerApp, FullApp, and root MyApp.
 class IbulMaterialApp extends StatefulWidget {
@@ -48,9 +48,9 @@ class _IbulMaterialAppState extends State<IbulMaterialApp> {
       title: 'IBUL App',
       localizationsDelegates: const [
         AppLocalizations.delegate,
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
+        IbulTrMaterialLocalizationsDelegate(),
+        IbulTrWidgetsLocalizationsDelegate(),
+        IbulTrCupertinoLocalizationsDelegate(),
       ],
       locale: kIbulLocale,
       supportedLocales: kIbulSupportedLocales,

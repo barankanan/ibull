@@ -107,8 +107,12 @@ void main() {
   test('10) mobile bottom nav intact', () {
     final dash =
         read('lib/features/ihiz/courier/ihiz_courier_dashboard_page.dart');
-    expect(dash, contains("label: 'Ana Sayfa'"));
-    expect(dash, contains("label: 'Harita'"));
-    expect(dash, contains("label: 'Hesabım'"));
+    final nav = read(
+      'lib/features/ihiz/courier/widgets/ihiz_courier_mobile_home.dart',
+    );
+    expect(dash, contains('IhizCourierBottomNav'));
+    expect(nav, contains("label: 'Ana Sayfa'"));
+    expect(nav, contains("label: 'Harita'"));
+    expect(nav, contains("label: 'Hesabım'"));
   });
 }

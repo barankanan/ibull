@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_state.dart';
+import '../core/config/runtime_config.dart';
 import '../core/auth/auth_flow_logger.dart';
 import '../core/auth/auth_session_guard.dart';
 import '../core/constants.dart';
@@ -521,6 +522,7 @@ class _LoginPageState extends State<LoginPage>
                                 ],
                               ),
 
+                              if (AppRuntimeConfig.optionalGoogleClientId != null) ...[
                               SizedBox(height: isCompactMobile ? 20 : 24),
 
                               // ── DIVIDER ────────────────────────────────
@@ -654,6 +656,7 @@ class _LoginPageState extends State<LoginPage>
                               ),
 
                               const SizedBox(height: 24),
+                              ],
                             ],
                           ),
                         ),

@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import '../core/public_seo.dart';
+
 /// Public marketplace URLs. Resolve always by stable id; slug is cosmetic.
 abstract final class MarketplacePaths {
   static const home = '/';
@@ -10,7 +12,8 @@ abstract final class MarketplacePaths {
   static const account = '/hesabim';
   static const orders = '/hesabim/siparisler';
   static const rentals = '/hesabim/kiralamalar';
-  static const favorites = '/hesabim/favoriler';
+  static const favorites = '/favoriler';
+  static const legacyAccountFavorites = '/hesabim/favoriler';
   static const coupons = '/hesabim/kuponlar';
   static const following = '/hesabim/takip-ettiklerim';
   static const addresses = '/hesabim/adresler';
@@ -18,6 +21,8 @@ abstract final class MarketplacePaths {
   static const reviews = '/hesabim/degerlendirmeler';
   static const support = '/hesabim/musteri-hizmetleri';
   static const settings = '/hesabim/ayarlar';
+  static const notifications = '/hesabim/bildirim-ayarlari';
+  static const security = '/hesabim/guvenlik';
   static const ai = '/hesabim/yapay-zeka';
   static const mallHub = '/avm';
   static const mallLogin = '/avm/giris';
@@ -109,11 +114,7 @@ abstract final class MarketplacePaths {
     return slug.replaceAll(RegExp(r'^-|-$'), '');
   }
 
-  static String shareUrl(String path) {
-    final normalized = path.startsWith('/') ? path : '/$path';
-    if (kIsWeb) return '${Uri.base.origin}$normalized';
-    return 'https://ibul.com.tr$normalized';
-  }
+  static String shareUrl(String path) => publicCanonicalUrl(path);
 
   static bool syncsBrowserUrl() => kIsWeb;
 

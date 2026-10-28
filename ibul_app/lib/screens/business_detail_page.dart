@@ -3937,13 +3937,10 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         businessCategory.contains('cafe');
 
     Widget buildGridItem(Product product, {required bool tight}) {
-      final normalized = product.tags.isEmpty
-          ? product.copyWith(tags: ['Ücretsiz Kargo'])
-          : product;
       return Align(
         alignment: Alignment.topCenter,
         child: ProductCard(
-          product: normalized,
+          product: product,
           compact: false,
           tight: tight,
           margin: EdgeInsets.zero,
@@ -3959,7 +3956,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
           maxCrossAxisExtent: 250,
-          childAspectRatio: aspectRatioOverride ?? 0.82,
+          childAspectRatio: aspectRatioOverride ?? 0.78,
           mainAxisSpacing: 16,
           crossAxisSpacing: 16,
         ),
@@ -3988,7 +3985,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
-            childAspectRatio: aspectRatioOverride ?? 0.70,
+            childAspectRatio: aspectRatioOverride ?? 0.66,
             mainAxisSpacing: 12,
             crossAxisSpacing: 10,
           ),

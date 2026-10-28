@@ -69,6 +69,10 @@ const bool _kIbulSafeBoot = bool.fromEnvironment(
   'IBUL_SAFE_BOOT',
   defaultValue: false,
 );
+const bool _kEnableTestCheckout = bool.fromEnvironment(
+  'ENABLE_TEST_CHECKOUT',
+  defaultValue: false,
+);
 const String _kIbulBootStage = String.fromEnvironment(
   'IBUL_BOOT_STAGE',
   defaultValue: 'normal',
@@ -89,6 +93,7 @@ class ResolvedRuntimeValue {
 
 class AppRuntimeConfig {
   static bool? _safeBootOverride;
+  static bool? _enableTestCheckoutOverride;
   static IbulBootStage? _bootStageOverride;
 
   @visibleForTesting
@@ -381,6 +386,16 @@ class AppRuntimeConfig {
 
   /// Minimal web boot: bypass provider tree and heavy init.
   static bool get safeBootMode => _safeBootOverride ?? _kIbulSafeBoot;
+
+  /// Client half of test checkout. Server flag must also be on.
+  /// Default false. Production builds do not pass this define.
+  static bool get enableTestCheckout =>
+      _enableTestCheckoutOverride ?? _kEnableTestCheckout;
+
+  @visibleForTesting
+  static void setEnableTestCheckoutOverrideForTest(bool? value) {
+    _enableTestCheckoutOverride = value;
+  }
 
   static IbulBootStage get bootStage =>
       _bootStageOverride ?? parseIbulBootStage(_kIbulBootStage);

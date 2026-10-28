@@ -34,6 +34,10 @@ void main() {
           ),
         ),
         GoRoute(
+          path: '/favoriler',
+          builder: (_, __) => const Scaffold(body: Text('Favorilerim')),
+        ),
+        GoRoute(
           path: '/hesabim',
           builder: (context, state) => const Scaffold(body: Text('Hesabım')),
         ),

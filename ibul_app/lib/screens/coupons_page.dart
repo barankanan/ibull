@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../core/constants.dart';
 import '../features/coupon/data/coupon_repository.dart';
+import '../features/coupon/domain/coupon_campaign.dart';
 import '../features/coupon/domain/coupon_enums.dart';
 import '../features/coupon/screens/customer/coupon_discover_page.dart';
 import '../services/coupon_service.dart';
-import '../features/coupon/widgets/reward_wheel_floating_button.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
@@ -23,6 +23,7 @@ class _CouponsPageState extends State<CouponsPage>
   final _couponRepository = CouponRepository();
   List<Map<String, dynamic>> _activeCoupons = const [];
   List<Map<String, dynamic>> _expiredCoupons = const [];
+  List<CouponCampaign> _discoverable = const [];
 
   @override
   void initState() {
@@ -42,6 +43,11 @@ class _CouponsPageState extends State<CouponsPage>
   Future<void> _loadCoupons() async {
     try {
       final mine = await _couponRepository.listMine();
+      List<CouponCampaign> discoverable = const [];
+      try {
+        discoverable = await _couponRepository.listDiscoverable();
+      } catch (_) {}
+      final ownedCampaignIds = mine.map((item) => item.campaignId).toSet();
       final mapped = mine.map((item) {
         final campaign = item.campaign;
         return {
@@ -49,7 +55,9 @@ class _CouponsPageState extends State<CouponsPage>
           'code': campaign?.code ?? '',
           'title': campaign?.name ?? 'Kupon',
           'description': campaign?.discountLabel ?? '',
-          'detail': item.source == 'wheel' ? 'Hediye çarkı ödülü.' : 'Kupon',
+          'detail': item.source == 'wheel'
+              ? 'Hediye çarkı ödülü.'
+              : (campaign?.storeName ?? 'Kupon'),
           'discountAmount': campaign?.discountValue ?? 0,
           'isPercentage': campaign?.discountType == CouponDiscountType.percent,
           'minPrice': campaign?.minOrderAmount ?? 0,
@@ -59,12 +67,17 @@ class _CouponsPageState extends State<CouponsPage>
           'color': AppColors.softPurple,
           'iconColor': AppColors.primary,
           'usable': item.isUsable,
+          'group': item.source == 'wheel' ? 'Kazandığın Kuponlar' : 'Sana Özel',
         };
       }).toList();
       if (!mounted) return;
       setState(() {
         _activeCoupons = mapped.where((row) => row['usable'] == true).toList();
         _expiredCoupons = mapped.where((row) => row['usable'] != true).toList();
+        _discoverable = discoverable
+            .where((campaign) => !ownedCampaignIds.contains(campaign.id))
+            .where((campaign) => !campaign.wheelEnabled)
+            .toList(growable: false);
       });
     } catch (_) {
       if (mounted) setState(() {});
@@ -257,16 +270,6 @@ class _CouponsPageState extends State<CouponsPage>
             },
             icon: const Icon(Icons.travel_explore_outlined),
           ),
-          IconButton(
-            tooltip: 'Hediye Çarkı',
-            onPressed: () {
-              RewardWheelFloatingButton.open(
-                context,
-                onSpinComplete: _loadCoupons,
-              );
-            },
-            icon: const Icon(Icons.casino_outlined),
-          ),
         ],
         bottom: TabBar(
           controller: _tabController,
@@ -282,11 +285,76 @@ class _CouponsPageState extends State<CouponsPage>
       body: TabBarView(
         controller: _tabController,
         children: [
-          _buildCouponList(_allActiveCoupons, isActive: true),
+          _buildActiveCouponPage(),
           _buildCouponList(_allExpiredCoupons, isActive: false),
         ],
       ),
     );
+  }
+
+  Widget _buildActiveCouponPage() {
+    final groups = <String, List<CouponCampaign>>{};
+    for (final campaign in _discoverable) {
+      final title = campaign.scopeType == CouponScopeType.categories
+          ? 'Kategori Kuponları'
+          : campaign.sourceType == CouponSourceType.seller ||
+                campaign.scopeType == CouponScopeType.stores
+          ? 'Mağaza Kuponları'
+          : 'Genel Kuponlar';
+      groups.putIfAbsent(title, () => []).add(campaign);
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      children: [
+        if (_allActiveCoupons.isNotEmpty) ...[
+          const _CouponHeading('Sana Özel'),
+          for (final coupon in _allActiveCoupons)
+            if (coupon['group'] != 'Kazandığın Kuponlar')
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _buildCouponCard(coupon, isActive: true, isWeb: false),
+              ),
+          if (_allActiveCoupons.any((row) => row['group'] == 'Kazandığın Kuponlar')) ...[
+            const _CouponHeading('Kazandığın Kuponlar'),
+            for (final coupon in _allActiveCoupons)
+              if (coupon['group'] == 'Kazandığın Kuponlar')
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _buildCouponCard(coupon, isActive: true, isWeb: false),
+                ),
+          ],
+        ],
+        for (final entry in groups.entries) ...[
+          _CouponHeading(entry.key),
+          for (final campaign in entry.value)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _DiscoverCouponCard(
+                campaign: campaign,
+                onClaim: () => _claim(campaign),
+              ),
+            ),
+        ],
+        if (_allActiveCoupons.isEmpty && _discoverable.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 48),
+            child: Center(child: Text('Şu an kullanılabilir kupon yok.')),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _claim(CouponCampaign campaign) async {
+    try {
+      await _couponRepository.claim(campaign.id);
+      if (!mounted) return;
+      await _loadCoupons();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error')),
+      );
+    }
   }
 
   Widget _buildCouponList(
@@ -547,4 +615,64 @@ class DashedLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _CouponHeading extends StatelessWidget {
+  const _CouponHeading(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 8),
+      child: Text(
+        title,
+        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+}
+
+class _DiscoverCouponCard extends StatelessWidget {
+  const _DiscoverCouponCard({required this.campaign, required this.onClaim});
+
+  final CouponCampaign campaign;
+  final VoidCallback onClaim;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE6E7EE)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  campaign.name,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  '${campaign.discountLabel} • ${campaign.code}',
+                  style: const TextStyle(color: AppColors.primary),
+                ),
+              ],
+            ),
+          ),
+          FilledButton(
+            onPressed: onClaim,
+            style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+            child: const Text('Al'),
+          ),
+        ],
+      ),
+    );
+  }
 }

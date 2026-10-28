@@ -11,6 +11,7 @@ import '../core/app_state.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
+import 'ai_chat_page.dart';
 import 'settings_page.dart';
 import 'orders_page.dart';
 import 'favorites_page.dart';
@@ -30,6 +31,8 @@ import '../app/site_info_routes.dart';
 import '../services/order_service.dart';
 import '../services/auth_service.dart';
 import 'account/account_menu_navigation.dart';
+import 'account/account_security_page.dart';
+import 'account/notification_settings_page.dart';
 import 'order_detail_page.dart';
 import 'shipment_tracking_page.dart';
 
@@ -43,6 +46,7 @@ class AccountPage extends StatefulWidget {
 class _AccountPageState extends State<AccountPage> {
   Future<List<Map<String, dynamic>>>? _ordersFuture;
   String _ordersFutureUserId = '';
+  int _ordersRevision = -1;
 
   Future<void> _openAccountSection(
     AccountSection section, {
@@ -56,20 +60,29 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
-  Future<List<Map<String, dynamic>>> _getOrdersFuture(String userId) {
-    if (_ordersFuture != null && _ordersFutureUserId == userId) {
+  Future<List<Map<String, dynamic>>> _getOrdersFuture(
+    String userId,
+    int revision,
+  ) {
+    if (_ordersFuture != null &&
+        _ordersFutureUserId == userId &&
+        _ordersRevision == revision) {
       return _ordersFuture!;
     }
 
     _ordersFutureUserId = userId;
+    _ordersRevision = revision;
     _ordersFuture = OrderService.instance.getUserOrders(userId);
     return _ordersFuture!;
   }
 
   @override
   Widget build(BuildContext context) {
-    // Watch AppState for login / profile identity only — not cart or favorites.
+    // Watch identity plus checkout revisions. Cart edits must not refetch.
     context.select<AppState, int>((s) => s.accountIdentityStamp);
+    final ordersRevision = context.select<AppState, int>(
+      (s) => s.customerOrdersRevision,
+    );
     final appState = context.read<AppState>();
     final authContext = IbulAuthContextService.instance;
     final hasSupabaseSession = AuthService().currentUser != null;
@@ -86,13 +99,13 @@ class _AccountPageState extends State<AccountPage> {
     final isWeb = MediaQuery.of(context).size.width >= 800;
 
     if (isWeb) {
-      return _buildWebView(appState);
+      return _buildWebView(appState, ordersRevision);
     }
 
     return _buildMobileView(appState);
   }
 
-  Widget _buildWebView(AppState appState) {
+  Widget _buildWebView(AppState appState, int ordersRevision) {
     if (!appState.isLoggedIn) {
       return _buildWebGuestView();
     }
@@ -120,7 +133,9 @@ class _AccountPageState extends State<AccountPage> {
                           child: AccountSidebar(activePage: 'Hesap Özeti'),
                         ),
                         const SizedBox(width: 32),
-                        Expanded(child: _buildWebDashboard(appState)),
+                        Expanded(
+                          child: _buildWebDashboard(appState, ordersRevision),
+                        ),
                       ],
                     ),
                   ),
@@ -293,7 +308,7 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
-  Widget _buildWebDashboard(AppState appState) {
+  Widget _buildWebDashboard(AppState appState, int ordersRevision) {
     // If not logged in, show guest introduction view
     if (!appState.isLoggedIn) {
       return _buildWebGuestIntro();
@@ -441,7 +456,7 @@ class _AccountPageState extends State<AccountPage> {
     if (userId == null || userId.isEmpty) {
       return const SizedBox.shrink();
     }
-    final ordersFuture = _getOrdersFuture(userId);
+    final ordersFuture = _getOrdersFuture(userId, ordersRevision);
 
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: ordersFuture,
@@ -1413,6 +1428,15 @@ class _AccountPageState extends State<AccountPage> {
                 ),
               ),
               _buildMenuItem(
+                Icons.auto_awesome_outlined,
+                'Yapay Zekaya Danış',
+                subtitle: 'Alışveriş ve karşılaştırma yardımı',
+                onTap: () => _openAccountSection(
+                  AccountSection.ai,
+                  page: const AIChatPage(),
+                ),
+              ),
+              _buildMenuItem(
                 Icons.favorite_border,
                 'Favorilerim',
                 onTap: () => _openAccountSection(
@@ -1449,19 +1473,20 @@ class _AccountPageState extends State<AccountPage> {
                 ),
               ),
               _buildMenuItem(
-                Icons.badge_outlined,
-                'Profil Bilgileri',
-                onTap: () => _pushAccountPage(const SettingsPage()),
-              ),
-              _buildMenuItem(
                 Icons.notifications_none_rounded,
                 'Bildirim Ayarları',
-                onTap: () => _pushAccountPage(const SettingsPage()),
+                onTap: () => _openAccountSection(
+                  AccountSection.notifications,
+                  page: const NotificationSettingsPage(),
+                ),
               ),
               _buildMenuItem(
                 Icons.lock_outline,
                 'Güvenlik',
-                onTap: () => _pushAccountPage(const SettingsPage()),
+                onTap: () => _openAccountSection(
+                  AccountSection.security,
+                  page: const AccountSecurityPage(),
+                ),
               ),
               _buildMenuItem(
                 Icons.credit_card_outlined,

@@ -92,7 +92,7 @@ class _RewardWheelHomeOverlayState extends State<RewardWheelHomeOverlay> {
   Future<void> _resolveFromServer() async {
     try {
       final config = await CouponRepository().loadWheelForUser();
-      final visible = config != null && config.visibleOnHome;
+      final visible = config?.visibleOnHome ?? false;
       if (!mounted) return;
       setState(() => _visible = visible);
     } catch (error, stack) {

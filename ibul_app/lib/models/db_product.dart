@@ -255,13 +255,13 @@ class DBProduct {
           (map['max_weight_grams'] as num?)?.toInt() ??
           (map['maxWeightGrams'] as num?)?.toInt(),
       oldPrice: map['oldPrice'] as String?,
-      rating: (map['rating'] as num).toDouble(),
-      reviewCount: (map['reviewCount'] as num).toInt(),
-      imageUrl: map['imageUrl'] as String,
-      imageUrls: map['imageUrls'] as String?,
-      category: map['category'] as String,
-      subCategory: map['subCategory'] as String?,
-      tags: map['tags'] as String,
+      rating: (map['rating'] as num?)?.toDouble() ?? 0.0,
+      reviewCount: (map['reviewCount'] as num?)?.toInt() ?? 0,
+      imageUrl: (map['imageUrl'] ?? map['image_url'] ?? '').toString(),
+      imageUrls: (map['imageUrls'] ?? map['image_urls'])?.toString(),
+      category: (map['category'] ?? map['main_category'] ?? '').toString(),
+      subCategory: (map['subCategory'] ?? map['sub_category'])?.toString(),
+      tags: (map['tags'] ?? '').toString(),
       keywords: map['keywords'] as String?,
       description: map['description'] as String?,
       specifications: _normalizeSpecifications(map['specifications']),
@@ -295,7 +295,17 @@ class DBProduct {
       videoSizeBytes: (map['video_size_bytes'] as num?)?.toInt(),
       thumbnailSizeBytes: (map['thumbnail_size_bytes'] as num?)?.toInt(),
       videoStatus: map['video_status'] as String?,
-      variants: map['variants'],
+      variants: () {
+        final raw = map['variants'] ?? map['variants_json'] ?? map['product_variants'];
+        if (raw is String && raw.trim().isNotEmpty) {
+          try {
+            return jsonDecode(raw);
+          } catch (_) {
+            return raw;
+          }
+        }
+        return raw;
+      }(),
     );
   }
 

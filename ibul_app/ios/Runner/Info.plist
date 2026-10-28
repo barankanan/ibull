@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Ibul App</string>
+	<string>İBUL</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -28,16 +28,12 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Ürün fotoğrafı çekmek için kamera erişimi gereklidir.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Arka planda size yakın mağaza bildirimleri gönderebilmek için konum izni gereklidir.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Yakın mağazaları göstermek ve mesafeyi hesaplamak için konum izni gereklidir.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Sesli arama ve video çekimi için mikrofon erişimi gereklidir.</string>
+	<string>Ürün videosu kaydetmek için mikrofon erişimi gereklidir.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Ürün görseli yüklemek için galeri erişimi gereklidir.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Sesli arama yapmak için konuşma tanıma izni gereklidir.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

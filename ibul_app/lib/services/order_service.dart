@@ -198,6 +198,48 @@ class OrderService {
     );
   }
 
+  Future<bool> isServerTestCheckoutEnabled() async {
+    try {
+      final raw = await _supabase.rpc('marketplace_test_checkout_enabled');
+      return raw == true;
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('[TEST_CHECKOUT] rpcError=$error');
+      }
+      return false;
+    }
+  }
+
+  Future<Map<String, dynamic>> createTestOrderFromCheckout({
+    required String userId,
+    required List<Map<String, dynamic>> selectedProducts,
+    required double totalAmount,
+    required Map<String, dynamic> deliveryAddress,
+    Map<String, dynamic>? billingAddress,
+    required String deliveryType,
+    String? deliverySlot,
+    String? idempotencyKey,
+    String? couponCode,
+  }) async {
+    final serverOn = await isServerTestCheckoutEnabled();
+    if (!serverOn) {
+      throw Exception('Test checkout sunucuda kapalı.');
+    }
+    return _createOrderFromCheckoutImpl(
+      userId: userId,
+      selectedProducts: selectedProducts,
+      totalAmount: totalAmount,
+      deliveryAddress: deliveryAddress,
+      billingAddress: billingAddress,
+      paymentCard: const <String, dynamic>{},
+      deliveryType: deliveryType,
+      deliverySlot: deliverySlot,
+      idempotencyKey: idempotencyKey,
+      couponCode: couponCode,
+      testOrder: true,
+    );
+  }
+
   Future<Map<String, dynamic>> _createOrderFromCheckoutImpl({
     required String userId,
     required List<Map<String, dynamic>> selectedProducts,
@@ -209,6 +251,7 @@ class OrderService {
     String? deliverySlot,
     String? idempotencyKey,
     String? couponCode,
+    bool testOrder = false,
   }) async {
     if (selectedProducts.isEmpty) {
       throw Exception('Sipariş verilecek ürün bulunamadı.');
@@ -272,7 +315,7 @@ class OrderService {
     var deliveryPricing = <String, dynamic>{};
     try {
       final raw = await _supabase.rpc(
-        'create_marketplace_order',
+        testOrder ? 'create_marketplace_test_order' : 'create_marketplace_order',
         params: <String, dynamic>{
           'p_items': lines,
           'p_delivery_address': _stripClientMoneyKeys(deliveryAddress),
@@ -288,10 +331,12 @@ class OrderService {
           'p_idempotency_key': normalizedIdempotencyKey.isEmpty
               ? null
               : normalizedIdempotencyKey,
-          'p_payment_card_name': paymentCard['name']?.toString(),
-          'p_payment_card_last4': _last4FromMaskedCard(
-            paymentCard['number']?.toString(),
-          ),
+          if (!testOrder) ...<String, dynamic>{
+            'p_payment_card_name': paymentCard['name']?.toString(),
+            'p_payment_card_last4': _last4FromMaskedCard(
+              paymentCard['number']?.toString(),
+            ),
+          },
         },
       );
       orderRow = _jsonMap(raw);
@@ -601,13 +646,23 @@ class OrderService {
         .where((id) => id.isNotEmpty)
         .toList();
     final orderIdSet = orderIds.toSet();
-    final List<dynamic> items = await _supabase
-        .from('order_items')
-        .select(
-          'id, order_id, product_id, product_name, store_name, product_image_url, quantity, total_price, unit_price, status, product_code, tracking_number, cargo_company, shipment_step, seller_id',
-        )
-        .inFilter('order_id', orderIds)
-        .order('created_at', ascending: false);
+    List<dynamic> items = const <dynamic>[];
+    try {
+      items = await _supabase
+          .from('order_items')
+          .select(
+            'id, order_id, product_id, product_name, store_name, product_image_url, quantity, total_price, unit_price, status, product_code, tracking_number, cargo_company, shipment_step, seller_id',
+          )
+          .inFilter('order_id', orderIds)
+          .order('created_at', ascending: false);
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'OrderService',
+        error,
+        stackTrace,
+        context: 'getUserOrdersItems',
+      );
+    }
     final latestReturnRequestsByItem = await _getLatestReturnRequestsByBuyer(
       userId: userId,
     );
@@ -1892,12 +1947,29 @@ class OrderService {
         requestUrl: ordersLookupRequestUrl,
         note: 'orderIds=${orderIds.length}',
       );
-      orders = await _supabase
-          .from('orders')
-          .select(
-            'id, order_number, user_id, status, total_amount, created_at, delivery_address, delivery_type, delivery_slot, order_type, restaurant_id, table_id',
-          )
-          .inFilter('id', orderIds);
+      try {
+        orders = await _supabase
+            .from('orders')
+            .select(
+              'id, order_number, user_id, status, total_amount, created_at, delivery_address, delivery_type, delivery_slot, order_type, restaurant_id, table_id, is_test',
+            )
+            .inFilter('id', orderIds);
+      } catch (columnError) {
+        // is_test ships with the unapplied test-checkout patch. Seller list
+        // must keep loading production orders until that column exists.
+        _debugSellerOrdersFetch(
+          'orders_lookup:is_test_fallback',
+          sellerId: sellerId,
+          requestUrl: ordersLookupRequestUrl,
+          error: columnError,
+        );
+        orders = await _supabase
+            .from('orders')
+            .select(
+              'id, order_number, user_id, status, total_amount, created_at, delivery_address, delivery_type, delivery_slot, order_type, restaurant_id, table_id',
+            )
+            .inFilter('id', orderIds);
+      }
       _debugSellerOrdersFetch(
         'orders_lookup:success',
         sellerId: sellerId,
@@ -2055,6 +2127,7 @@ class OrderService {
           'restaurant_id': order['restaurant_id'],
           'table_id': order['table_id'],
           'is_table_order': isTableOrder,
+          'is_test': order['is_test'] == true,
           'is_priority':
               (order['delivery_type']?.toString().toLowerCase().contains(
                     'near',
@@ -2130,28 +2203,7 @@ class OrderService {
   }
 
   bool _isTableLikeOrder(Map<String, dynamic> order) {
-    final orderNumber = (order['order_number'] ?? '')
-        .toString()
-        .trim()
-        .toUpperCase();
-    if (orderNumber.startsWith('TBL-')) return true;
-
-    final orderType = (order['order_type'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
-    if (orderType == 'table' || orderType.startsWith('table_')) return true;
-
-    final deliveryType = (order['delivery_type'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
-    if (deliveryType == 'table' || deliveryType.startsWith('table_')) {
-      return true;
-    }
-
-    final tableId = order['table_id']?.toString().trim() ?? '';
-    return tableId.isNotEmpty;
+    return OrderStatusConstants.looksLikeTableOrder(order);
   }
 
   Future<Map<String, Map<String, dynamic>>> _getLatestReturnRequestsByBuyer({

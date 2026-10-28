@@ -118,7 +118,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   String? _locationNotice;
   bool _isMapReady = false;
   bool _isLoadingStores = false;
-  bool _storesLoadInFlight = false;
+  Future<void>? _storesLoadFuture;
   bool _isLoadingLocation = false;
   Timer? _mapLoadingFailsafeTimer;
   static const Duration _mapLoadingFailsafe = Duration(seconds: 5);
@@ -699,14 +699,23 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  Future<void> _loadMapStoresEmergencyPipeline() async {
-    if (_storesLoadInFlight) {
+  Future<void> _loadMapStoresEmergencyPipeline() {
+    final existing = _storesLoadFuture;
+    if (existing != null) {
       RuntimeDiagnosticLogger.map(
         'stores query skipped — load already in flight',
       );
-      return;
+      return existing;
     }
-    _storesLoadInFlight = true;
+    late final Future<void> future;
+    future = _runMapStoresLoad().whenComplete(() {
+      if (identical(_storesLoadFuture, future)) _storesLoadFuture = null;
+    });
+    _storesLoadFuture = future;
+    return future;
+  }
+
+  Future<void> _runMapStoresLoad() async {
     await _mallPins.load();
     final queryStartedMs = DateTime.now().millisecondsSinceEpoch;
     if (mounted) {
@@ -846,7 +855,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             'Harita mağazaları yüklenemedi. Bağlantınızı kontrol edin.';
       });
     } finally {
-      _storesLoadInFlight = false;
       _storesLoadCompleted = true;
       if (mounted) {
         setState(() => _isLoadingStores = false);
@@ -983,11 +991,8 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
         Position? position;
         try {
-          position = await locationAccess.getCurrentPosition(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.medium,
-              timeLimit: Duration(seconds: 30),
-            ),
+          position = await locationAccess.getBestAvailablePosition(
+            requestPermissionIfNeeded: false,
           );
         } catch (e) {
           debugPrint('Primary location fetch failed: $e');
@@ -1008,13 +1013,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           _startLiveLocationUpdates();
           _rerunVehicleSearchIfNeeded();
         } else if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Web konumu okunamadı. Tarayıcı izin verdi ancak geçerli koordinat dönmedi. Sayfayı yenileyip tekrar deneyin.',
-              ),
-            ),
-          );
           _mapController.move(_initialPosition, 14.0);
         }
       } catch (e) {
@@ -2399,8 +2397,12 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       body: Stack(
         children: [
           SafeArea(
-            child: Column(
-              children: [
+            child: _MapRefreshFrame(
+              refreshable: MediaQuery.sizeOf(context).width < 900,
+              onRefresh: _loadMapStoresEmergencyPipeline,
+              header: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                 if (_locationNotice != null)
                   MaterialBanner(
                     content: Text(_locationNotice!),
@@ -2690,8 +2692,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                           ),
                         ),
                 ),
-                Expanded(
-                  child: Padding(
+                ],
+              ),
+              map: Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Stack(
                       children: [
@@ -2842,8 +2845,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                       ],
                     ),
                   ),
-                ),
-              ],
             ),
           ),
 
@@ -2853,6 +2854,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             bottom: 90, // Positioned above AI Chat button
             child: FloatingActionButton(
               heroTag: 'my_location_main',
+              tooltip: 'Konumumu kullan',
               onPressed: _isCenteringOnUserLocation
                   ? null
                   : () => _centerMapOnCurrentLocation(),
@@ -2908,6 +2910,104 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MapRefreshFrame extends StatelessWidget {
+  const _MapRefreshFrame({
+    required this.refreshable,
+    required this.onRefresh,
+    required this.header,
+    required this.map,
+  });
+
+  final bool refreshable;
+  final Future<void> Function() onRefresh;
+  final Widget header;
+  final Widget map;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _MapPullHeader(
+          enabled: refreshable,
+          onRefresh: onRefresh,
+          child: header,
+        ),
+        Expanded(
+          child: KeyedSubtree(
+            key: const ValueKey('mobile-map-surface'),
+            child: map,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MapPullHeader extends StatefulWidget {
+  const _MapPullHeader({
+    required this.enabled,
+    required this.onRefresh,
+    required this.child,
+  });
+
+  final bool enabled;
+  final Future<void> Function() onRefresh;
+  final Widget child;
+
+  @override
+  State<_MapPullHeader> createState() => _MapPullHeaderState();
+}
+
+class _MapPullHeaderState extends State<_MapPullHeader> {
+  var _pull = 0.0;
+  var _busy = false;
+
+  Future<void> _release() async {
+    final shouldRefresh = widget.enabled && _pull > 48 && !_busy;
+    setState(() => _pull = 0);
+    if (!shouldRefresh) return;
+    setState(() => _busy = true);
+    try {
+      await widget.onRefresh();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      key: const ValueKey('mobile-map-refresh'),
+      behavior: HitTestBehavior.translucent,
+      onVerticalDragUpdate: widget.enabled
+          ? (details) {
+              if (details.delta.dy <= 0) return;
+              setState(() => _pull = (_pull + details.delta.dy).clamp(0, 64));
+            }
+          : null,
+      onVerticalDragEnd: widget.enabled ? (_) => _release() : null,
+      onVerticalDragCancel: widget.enabled ? () => setState(() => _pull = 0) : null,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_busy || _pull > 12)
+            const SizedBox(
+              height: 28,
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
+          widget.child,
         ],
       ),
     );

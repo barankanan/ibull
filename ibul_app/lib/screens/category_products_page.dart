@@ -19,6 +19,7 @@ import '../models/product_model.dart';
 import '../models/db_product.dart';
 import '../services/database_helper.dart';
 import '../widgets/product_card.dart';
+import '../widgets/common/product_card_skeleton.dart';
 import '../widgets/ibul_page_state.dart';
 import '../widgets/staggered_reveal.dart';
 import '../widgets/custom_header.dart';
@@ -1553,7 +1554,11 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
 
                 Widget content;
                 if (_filteredProducts.isEmpty) {
-                  content = _buildEmptyFilterState();
+                  content = _isLoadingFilters
+                      ? const ProductCardSkeletonGrid(itemCount: 8)
+                      : _buildEmptyFilterState();
+                } else if (_isLoadingFilters) {
+                  content = const ProductCardSkeletonGrid(itemCount: 8);
                 } else {
                   final showLoadMoreFooter = _remotePaginationEnabled &&
                       _searchQuery.isEmpty &&
@@ -1610,6 +1615,20 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                   }
                 }
 
+                final animatedContent = AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  child: KeyedSubtree(
+                    key: ValueKey<String>(
+                      _isLoadingFilters
+                          ? 'category-loading'
+                          : (_filteredProducts.isEmpty
+                              ? 'category-empty'
+                              : 'category-content'),
+                    ),
+                    child: content,
+                  ),
+                );
+
                 if (isWeb) {
                   return Center(
                     child: ConstrainedBox(
@@ -1628,14 +1647,14 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                             ),
                           ),
                           const SizedBox(width: 24),
-                          Expanded(child: content),
+                          Expanded(child: animatedContent),
                         ],
                       ),
                     ),
                   );
                 }
 
-                return content;
+                return animatedContent;
               },
             ),
           ),

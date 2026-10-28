@@ -128,6 +128,11 @@ class IhizCourierAuthService {
 
   Future<void> signOut() => _client.auth.signOut();
 
+  /// Mevcut Supabase auth. Oturum açma kurallarını değiştirmez.
+  Future<void> sendPasswordResetEmail(String email) {
+    return _client.auth.resetPasswordForEmail(email.trim().toLowerCase());
+  }
+
   int _asInt(dynamic value) {
     if (value is int) return value;
     if (value is num) return value.toDouble().toInt();

@@ -190,4 +190,4 @@ device_name="${NAME_LIST[$choice_index]}"
 
 echo "Seçildi: [$choice_index] $device_name  •  $device_id"
 echo "Uygulama bu cihazda başlatılıyor. Başlatıldıktan sonra aynı terminalde 'r' (hot reload) veya 'R' (hot restart) kullanabilirsiniz."
-flutter run -d "$device_id" "${DART_DEFINES[@]}"
+flutter run -d "$device_id" --dart-define=ENABLE_TEST_CHECKOUT=true "${DART_DEFINES[@]}"

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:ibul_app/core/category_pricing_helper.dart';
+import 'package:ibul_app/widgets/seller/product_color_picker.dart';
 
 import 'bulk_product_import_mapping.dart';
 import 'bulk_product_import_models.dart';
@@ -54,7 +55,7 @@ class BulkProductImportValidator {
     final List<BulkProductImportPreviewRow> rows = <BulkProductImportPreviewRow>[];
     for (int index = 0; index < document.rows.length; index++) {
       rows.add(
-        _validateRow(
+        validateRow(
           rowNumber: index + 2,
           rawValues: document.rows[index],
           lockedMainCategory: lockedMainCategory,
@@ -67,15 +68,16 @@ class BulkProductImportValidator {
       fileName: fileName,
       headers: normalizedHeaders,
       rows: rows,
+      isFoodCategory: lockedMainCategory == 'Yemek',
       fileErrors: fileErrors,
     );
   }
 
-  BulkProductImportPreviewRow _validateRow({
+  BulkProductImportPreviewRow validateRow({
     required int rowNumber,
     required Map<String, String> rawValues,
-    required String? lockedMainCategory,
-    required bool hasLegacyHeaders,
+    String? lockedMainCategory,
+    bool hasLegacyHeaders = false,
   }) {
     final Map<String, String> values = _normalizeRowKeys(rawValues);
     final List<String> errors = <String>[];
@@ -88,6 +90,7 @@ class BulkProductImportValidator {
     final String subCategory = readBulkImportField(values, 'sub_category');
     final String priceText = readBulkImportField(values, 'price');
     final String stockText = readBulkImportField(values, 'stock_quantity');
+    final String stockAlertLevelText = readBulkImportField(values, 'stock_alert_level');
     final String statusRaw = readBulkImportField(values, 'status');
     final String status = normalizeBulkProductImportStatus(statusRaw);
     final String vatRateText = readBulkImportField(values, 'tax_rate');
@@ -167,7 +170,21 @@ class BulkProductImportValidator {
       }
     }
 
+    
     final String highlightsJson = readBulkImportField(values, 'highlights_json');
+
+    final String faqJson = readBulkImportField(values, 'faq_json');
+    if (faqJson.isNotEmpty) {
+      try {
+        final dynamic parsed = jsonDecode(faqJson);
+        if (parsed is! List) {
+          errors.add('faq_json geçerli JSON dizisi olmalı');
+        }
+      } catch (_) {
+        errors.add('faq_json geçerli JSON olmalı');
+      }
+    }
+
     if (highlightsJson.isNotEmpty) {
       try {
         final dynamic parsed = jsonDecode(highlightsJson);
@@ -192,11 +209,26 @@ class BulkProductImportValidator {
       }
     }
 
+    final String colorHex = readBulkImportField(values, 'color_hex');
+    if (!ProductColorPicker.isValidHex(colorHex, allowEmpty: true)) {
+      errors.add('Geçersiz color_hex kodu (#RRGGBB veya #RRGGBBAA olmalıdır): $colorHex');
+    }
+
     if (variantsJson.isNotEmpty) {
       try {
         final dynamic parsed = jsonDecode(variantsJson);
         if (parsed is! List) {
           errors.add('variants_json geçerli JSON dizisi olmalı');
+        } else {
+          for (final dynamic item in parsed) {
+            if (item is Map) {
+              final String? vHex = (item['color_hex'] ?? item['colorHex'])?.toString();
+              if (vHex != null && !ProductColorPicker.isValidHex(vHex, allowEmpty: true)) {
+                errors.add('Varyant için geçersiz color_hex kodu (#RRGGBB veya #RRGGBBAA olmalıdır): $vHex');
+                break;
+              }
+            }
+          }
         }
       } catch (_) {
         errors.add('variants_json geçerli JSON olmalı');
@@ -227,7 +259,11 @@ class BulkProductImportValidator {
     final double? salePrice = salePriceText.isEmpty
         ? null
         : parseBulkImportFlexibleDouble(salePriceText);
+    final int? stockAlertLevel = parseBulkImportFlexibleInt(stockAlertLevelText);
     final List<String> highlightInfos = parseBulkImportHighlights(values);
+
+    final List<Map<String, String>> faqs = _parseFaqs(readBulkImportField(values, 'faq_json'));
+
     final descriptionResolution = resolveBulkImportDescriptionFields(values);
     final String deliveryTime = readBulkImportField(values, 'delivery_time');
     final String estimatedDeliveryDaysRaw =
@@ -253,8 +289,10 @@ class BulkProductImportValidator {
         description: descriptionResolution.description,
         price: price,
         stock: stock,
+        stockAlertLevel: stockAlertLevel,
         status: status,
         color: _optional(values, 'color'),
+        colorHex: _optional(values, 'color_hex'),
         sku: _optional(values, 'sku'),
         barcode: _optional(values, 'barcode'),
         salePrice: salePrice,
@@ -268,7 +306,7 @@ class BulkProductImportValidator {
             parseBulkImportFlexibleInt(readBulkImportField(values, 'warranty_months')),
         originCountry: _optional(values, 'origin_country'),
         condition: _optional(values, 'condition'),
-        isFeatured: parseBulkImportBool(readBulkImportField(values, 'is_featured')),
+        isFeatured: false,
         mainImageUrl: mainImageUrl.isEmpty ? null : mainImageUrl,
         imageUrls: _resolveImageUrls(mainImageUrl, imageUrlsRaw),
         videoUrl: _optional(values, 'video_url'),
@@ -314,6 +352,7 @@ class BulkProductImportValidator {
           readBulkImportField(values, 'preparation_time_minutes'),
         ),
         highlightInfos: highlightInfos,
+        faqs: faqs,
         deliveryTime: deliveryTime.isEmpty ? null : deliveryTime,
         estimatedDeliveryDays: estimatedDeliveryDaysRaw.isEmpty
             ? null
@@ -358,6 +397,21 @@ class BulkProductImportValidator {
     return values;
   }
 
+  
+  List<Map<String, String>> _parseFaqs(String faqJson) {
+    if (faqJson.isEmpty) return const <Map<String, String>>[];
+    try {
+      final dynamic parsed = jsonDecode(faqJson);
+      if (parsed is List) {
+        return parsed
+            .whereType<Map>()
+            .map((Map item) => item.map((k, v) => MapEntry(k.toString(), v.toString())))
+            .toList(growable: false);
+      }
+    } catch (_) {}
+    return const <Map<String, String>>[];
+  }
+
   List<Map<String, dynamic>> _parseVariants(String variantsJson) {
     if (variantsJson.isEmpty) return const <Map<String, dynamic>>[];
     try {
@@ -386,7 +440,14 @@ class BulkProductImportValidator {
 
   bool _isValidUrl(String raw) {
     final Uri? uri = Uri.tryParse(raw);
-    return uri != null && uri.hasScheme && uri.host.isNotEmpty;
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) return false;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
+    final String host = uri.host.toLowerCase();
+    if (host == 'example.com' || host.endsWith('.example.com') ||
+        host == 'test.com' || host.endsWith('.test.com')) {
+      return false;
+    }
+    return true;
   }
 
   String _normalizePriceType(String rawPriceType) {

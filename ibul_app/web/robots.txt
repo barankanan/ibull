@@ -1,0 +1,18 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin
+Disallow: /hesabim
+Disallow: /sepet
+Disallow: /checkout
+Disallow: /login
+Disallow: /register
+Disallow: /seller
+Disallow: /seller-login
+Disallow: /favoriler
+Disallow: /visual-search
+Disallow: /qr
+Disallow: /blog/yazar
+Disallow: /blog/onizleme
+
+Sitemap: https://ibul.com.tr/sitemap.xml

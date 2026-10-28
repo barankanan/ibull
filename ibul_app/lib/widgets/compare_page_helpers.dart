@@ -5,6 +5,7 @@ import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../core/app_image_cdn.dart';
 import '../core/constants.dart';
+import '../core/ibul_chrome.dart';
 import '../core/review_state.dart';
 import '../models/product_model.dart';
 import '../services/review_repository.dart';
@@ -17,6 +18,9 @@ Product? compareProductAt(List<Map<String, dynamic>> maps, int index) {
   if (index >= maps.length) return null;
   return maps[index]['product'] as Product?;
 }
+
+int compareSelectionLimit(BuildContext context) =>
+    IbulChrome.isWebOf(context) ? 4 : 2;
 
 List<Map<String, dynamic>> compareDisplayProducts(
   List<Map<String, dynamic>> products, {
@@ -45,9 +49,28 @@ Future<List<Map<String, dynamic>>> loadReviewsForProduct(Product product) async 
   final summary = await ReviewRepository.instance.getProductReviewSummary(
     productName: product.name,
     storeName: product.store,
+    productId: product.productId,
+    sellerId: product.sellerId,
     localReviews: local,
   );
-  return summary.reviews;
+  return reviewsForCompareProduct(product, summary.reviews);
+}
+
+/// Keeps a review only when it belongs to [product].
+///
+/// Identity lives in [reviewsVisibleForProduct]. A filled product id wins
+/// over name and store text. Name and store apply only to rows with no id.
+List<Map<String, dynamic>> reviewsForCompareProduct(
+  Product product,
+  List<Map<String, dynamic>> reviews,
+) {
+  return reviewsVisibleForProduct(
+    productId: product.productId,
+    productName: product.name,
+    storeName: product.store,
+    sellerId: product.sellerId,
+    reviews: reviews,
+  );
 }
 
 List<String> reviewImageUrls(Map<String, dynamic> review) {
@@ -669,9 +692,11 @@ class CompareFeaturesPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (_productCount <= 0) return const SizedBox.shrink();
+    final compact = !IbulChrome.isWebOf(context);
+    final resolvedLabelWidth = compact ? 96.0 : labelColumnWidth;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+      padding: EdgeInsets.fromLTRB(compact ? 8 : 24, 12, compact ? 8 : 24, 32),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: DecoratedBox(
@@ -684,7 +709,7 @@ class CompareFeaturesPanel extends StatelessWidget {
           children: [
             CompareAlignedProductHeader(
               productMaps: productMaps,
-              labelColumnWidth: labelColumnWidth,
+              labelColumnWidth: resolvedLabelWidth,
             ),
             for (final section in sections) ...[
               _SectionHeader(section.title),
@@ -692,7 +717,7 @@ class CompareFeaturesPanel extends StatelessWidget {
                 CompareAlignedSpecRow(
                   label: row.label,
                   values: _padValues(row.values, _productCount),
-                  labelColumnWidth: labelColumnWidth,
+                  labelColumnWidth: resolvedLabelWidth,
                   productCount: _productCount,
                 ),
             ],
@@ -725,19 +750,24 @@ class _CompareFeaturesHeaderCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Text(
-          productMap['name']?.toString() ?? '-',
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: Colors.black,
+        SizedBox(
+          height: 40,
+          width: double.infinity,
+          child: Text(
+            productMap['name']?.toString() ?? '—',
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.25,
+              fontWeight: FontWeight.w700,
+              color: Colors.black,
+            ),
           ),
         ),
-        const SizedBox(height: 12),
-        buildCompareProductHeaderImage(imagePath: imagePath),
+        const SizedBox(height: 8),
+        buildCompareProductHeaderImage(imagePath: imagePath, height: 96),
         if (product != null) ...[
           const SizedBox(height: 10),
           Text(
@@ -871,7 +901,7 @@ class CompareAlignedSpecRow extends StatelessWidget {
                   ),
                 ),
                 child: Text(
-                  values[i],
+                  values[i] == '-' || values[i].trim().isEmpty ? '—' : values[i],
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 12,

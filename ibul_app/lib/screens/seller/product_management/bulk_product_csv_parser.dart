@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:csv/csv.dart';
+
 import 'bulk_product_import_models.dart';
 
 class BulkProductCsvParser {
@@ -12,9 +14,20 @@ class BulkProductCsvParser {
   }
 
   BulkProductCsvDocument parseString(String input) {
-    final String sanitized = input.replaceFirst('\uFEFF', '');
+    final String sanitized = input
+        .replaceFirst('\uFEFF', '')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
     final String delimiter = _detectDelimiter(sanitized);
-    final List<List<String>> matrix = _parseMatrix(sanitized, delimiter);
+
+    // CsvToListConverter parses standard CSV preserving commas in quotes and JSON fields
+    final List<List<dynamic>> matrix = CsvToListConverter(
+      fieldDelimiter: delimiter,
+      eol: '\n',
+      shouldParseNumbers: false,
+      allowInvalid: true,
+    ).convert(sanitized);
+
     if (matrix.isEmpty) {
       return const BulkProductCsvDocument(
         headers: <String>[],
@@ -23,12 +36,12 @@ class BulkProductCsvParser {
     }
 
     final List<String> headers = matrix.first
-        .map(_normalizeHeader)
+        .map((dynamic cell) => _normalizeHeader(cell?.toString() ?? ''))
         .toList(growable: false);
 
     final List<Map<String, String>> rows = <Map<String, String>>[];
-    for (final List<String> rawRow in matrix.skip(1)) {
-      if (rawRow.every((String cell) => cell.trim().isEmpty)) {
+    for (final List<dynamic> rawRow in matrix.skip(1)) {
+      if (rawRow.every((dynamic cell) => (cell?.toString() ?? '').trim().isEmpty)) {
         continue;
       }
       final Map<String, String> row = <String, String>{};
@@ -37,7 +50,7 @@ class BulkProductCsvParser {
         if (header.isEmpty) {
           continue;
         }
-        row[header] = index < rawRow.length ? rawRow[index].trim() : '';
+        row[header] = index < rawRow.length ? (rawRow[index]?.toString() ?? '').trim() : '';
       }
       rows.add(row);
     }
@@ -61,62 +74,5 @@ class BulkProductCsvParser {
     final int commas = ','.allMatches(headerLine).length;
     final int semicolons = ';'.allMatches(headerLine).length;
     return semicolons > commas ? ';' : ',';
-  }
-
-  List<List<String>> _parseMatrix(String input, String delimiter) {
-    final List<List<String>> rows = <List<String>>[];
-    final StringBuffer cell = StringBuffer();
-    final List<String> currentRow = <String>[];
-    bool inQuotes = false;
-
-    void flushCell() {
-      currentRow.add(cell.toString());
-      cell.clear();
-    }
-
-    void flushRow() {
-      flushCell();
-      rows.add(List<String>.from(currentRow));
-      currentRow.clear();
-    }
-
-    for (int index = 0; index < input.length; index++) {
-      final String char = input[index];
-      if (char == '"') {
-        final bool hasEscapedQuote =
-            inQuotes && index + 1 < input.length && input[index + 1] == '"';
-        if (hasEscapedQuote) {
-          cell.write('"');
-          index++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-        continue;
-      }
-
-      if (!inQuotes && char == delimiter) {
-        flushCell();
-        continue;
-      }
-
-      if (!inQuotes && char == '\n') {
-        flushRow();
-        continue;
-      }
-
-      if (!inQuotes && char == '\r') {
-        continue;
-      }
-
-      cell.write(char);
-    }
-
-    final bool hasPendingData =
-        cell.isNotEmpty || currentRow.isNotEmpty || rows.isEmpty;
-    if (hasPendingData) {
-      flushRow();
-    }
-
-    return rows;
   }
 }

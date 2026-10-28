@@ -1,0 +1,52 @@
+-- PROPOSED ONLY. Do not apply in this task. No db push.
+--
+-- There is no site_settings / system_settings table. Blog posts already store
+-- seo_title and meta_description. Product, store, mall and category rows do
+-- not. This file proposes one global settings row plus optional override
+-- columns on the existing content tables. It does not add a parallel SEO
+-- document table and it does not accept admin-authored JSON-LD.
+--
+-- Apply only after review. Customer web currently generates titles, canonical
+-- URLs and structured data in Dart (lib/core/public_seo.dart) from real
+-- content fields. Wiring these columns into that generator is a follow-up
+-- after the migration is applied.
+
+-- create table if not exists public.seo_site_settings (
+--   id text primary key default 'global' check (id = 'global'),
+--   site_title text not null default 'İBUL | Alışveriş, Mağazalar ve Daha Fazlası',
+--   meta_description text not null default '',
+--   site_name text not null default 'İBUL',
+--   canonical_base_url text not null default 'https://ibul.com.tr',
+--   default_social_image text,
+--   index_by_default boolean not null default true,
+--   organization_name text not null default 'İBUL',
+--   organization_logo text,
+--   social_profile_urls text[] not null default '{}',
+--   gsc_verification text,
+--   ga_measurement_id text,
+--   gtm_container_id text,
+--   sitemap_enabled boolean not null default true,
+--   updated_at timestamptz not null default now()
+-- );
+--
+-- alter table public.seo_site_settings enable row level security;
+-- -- Writes: reuse current_admin_has_module (or the admin role gate used by
+-- -- Sistem Düzeni). Do not grant anon insert/update.
+-- -- Public read: a security definer RPC returning only the fields that are
+-- -- safe to print into HTML. Do not expose service credentials.
+--
+-- alter table public.products
+--   add column if not exists seo_title text,
+--   add column if not exists meta_description text,
+--   add column if not exists slug text,
+--   add column if not exists canonical_path text,
+--   add column if not exists og_title text,
+--   add column if not exists og_description text,
+--   add column if not exists og_image text,
+--   add column if not exists robots_index boolean,
+--   add column if not exists sitemap_include boolean;
+--
+-- The same optional columns are proposed for categories, stores and malls.
+-- Blog already has seo_title / meta_description; do not duplicate them.
+-- Structured data stays generated from name, images, description, brand,
+-- price, currency, stock and the canonical URL. No json_ld text column.

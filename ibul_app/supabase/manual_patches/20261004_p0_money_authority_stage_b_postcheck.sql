@@ -66,6 +66,7 @@ select 'categories_anon_write_absent' as check_name,
 select 'new_checkout_rpc_still_present' as check_name,
        to_regprocedure('public.create_marketplace_order(jsonb,jsonb,uuid,text,text,text,text,text,text)') is not null as ok;
 
+-- Already absent after the emergency categories patch is still a pass.
 select 'categories_auth_insert_absent' as check_name,
        not exists (
          select 1 from pg_policy pol

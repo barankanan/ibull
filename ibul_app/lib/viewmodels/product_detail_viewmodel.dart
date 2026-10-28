@@ -97,9 +97,9 @@ class ProductDetailViewModel extends ChangeNotifier {
   void _init() {
     if (!catalogMode) {
       appState.addRecentlyViewedProduct(initialProduct);
-      _parseVariantOptions();
-      _syncSelectedVariantsFromStructuredVariants();
     }
+    _parseVariantOptions();
+    _syncSelectedVariantsFromStructuredVariants();
     isFavorite = appState.isFavorite(initialProduct);
     if (!catalogMode) {
       isAddedToCart = appState.isInCart(initialProduct);
@@ -164,6 +164,8 @@ class ProductDetailViewModel extends ChangeNotifier {
     final summary = await ReviewRepository.instance.getProductReviewSummary(
       productName: initialProduct.name,
       storeName: initialProduct.store,
+      productId: initialProduct.productId,
+      sellerId: initialProduct.sellerId,
       localReviews: localReviews,
     );
 
@@ -192,25 +194,29 @@ class ProductDetailViewModel extends ChangeNotifier {
   Future<void> loadStoreLogo() async {
     if (_storeLogoUrl != null) return;
 
-    var logoUrl = '';
-    final sellerId = initialProduct.sellerId?.trim() ?? '';
-    if (sellerId.isNotEmpty) {
-      final info = await StoreService().getStorePublicInfoById(sellerId);
-      logoUrl = info?['logoUrl']?.toString().trim() ?? '';
-    }
-
-    if (logoUrl.isEmpty) {
-      final resolvedStoreName = storeName.trim();
-      if (resolvedStoreName.isNotEmpty) {
-        final info = await StoreService().getStorePublicInfoByBusinessName(
-          resolvedStoreName,
-        );
+    try {
+      var logoUrl = '';
+      final sellerId = initialProduct.sellerId?.trim() ?? '';
+      if (sellerId.isNotEmpty) {
+        final info = await StoreService().getStorePublicInfoById(sellerId);
         logoUrl = info?['logoUrl']?.toString().trim() ?? '';
       }
-    }
 
-    _storeLogoUrl = logoUrl.isEmpty ? '' : logoUrl;
-    notifyListeners();
+      if (logoUrl.isEmpty) {
+        final resolvedStoreName = storeName.trim();
+        if (resolvedStoreName.isNotEmpty) {
+          final info = await StoreService().getStorePublicInfoByBusinessName(
+            resolvedStoreName,
+          );
+          logoUrl = info?['logoUrl']?.toString().trim() ?? '';
+        }
+      }
+
+      _storeLogoUrl = logoUrl.isEmpty ? '' : logoUrl;
+      notifyListeners();
+    } catch (_) {
+      _storeLogoUrl = '';
+    }
   }
 
   void toggleAttribute(String value) {
@@ -256,7 +262,9 @@ class ProductDetailViewModel extends ChangeNotifier {
       final thumbnailSizeBytes = (extras['thumbnail_size_bytes'] as num?)
           ?.toInt();
       final videoStatus = extras['video_status']?.toString();
-      final variantsRaw = extras['variants'];
+      final variantsRaw = extras['variants'] ??
+          extras['variants_json'] ??
+          extras['product_variants'];
       List<dynamic>? variants;
       if (variantsRaw is List) {
         variants = variantsRaw;
@@ -671,7 +679,17 @@ class ProductDetailViewModel extends ChangeNotifier {
 
   void updateSelectedVariant(String key, String value) {
     selectedVariants[key] = value;
-    currentImageIndex = 0;
+    final variant = selectedVariantMap;
+    if (variant != null) {
+      final variantImg = _variantImageFromMap(variant);
+      if (variantImg != null && variantImg.isNotEmpty) {
+        final imgList = images;
+        final idx = imgList.indexWhere((img) => img.trim() == variantImg.trim());
+        if (idx >= 0) {
+          currentImageIndex = idx;
+        }
+      }
+    }
     notifyListeners();
   }
 
@@ -1001,32 +1019,163 @@ class ProductDetailViewModel extends ChangeNotifier {
     return _formatPrice(basePrice);
   }
 
+  bool get hasVariants => variantMaps.isNotEmpty;
+
+  List<Map<String, dynamic>> get variantMaps =>
+      _variantMapsFromProduct(initialProduct);
+
+  Map<String, dynamic>? get selectedVariant => selectedVariantMap;
+
   void _syncSelectedVariantsFromStructuredVariants() {
     final maps = _variantMapsFromProduct(initialProduct);
     if (maps.isEmpty) return;
 
-    for (final key in const ['storage', 'ram', 'size', 'color']) {
-      final values = maps
-          .map((map) => map[key]?.toString().trim() ?? '')
-          .where((value) => value.isNotEmpty)
-          .toSet()
-          .toList();
-      if (values.isEmpty) continue;
-      final current = selectedVariants[key];
-      if (current == null || !values.contains(current)) {
-        selectedVariants[key] = values.first;
+    final defaultVariant = maps.firstWhere(
+      (m) => m['isBaseProduct'] == true,
+      orElse: () => maps.firstWhere(
+        (m) {
+          final rawStock = m['stock'] ?? m['stock_quantity'] ?? m['stok'];
+          final st = (rawStock as num?)?.toInt() ??
+              int.tryParse(rawStock?.toString() ?? '') ??
+              1;
+          return st > 0;
+        },
+        orElse: () => maps.first,
+      ),
+    );
+
+    selectVariant(defaultVariant);
+  }
+
+  void selectVariant(Map<String, dynamic> variant) {
+    final color = (variant['color'] ?? variant['Renk'] ?? variant['renk'])
+        ?.toString()
+        .trim();
+    if (color != null && color.isNotEmpty) {
+      selectedVariants['color'] = color;
+    }
+    final size =
+        (variant['size'] ?? variant['beden'])?.toString().trim();
+    if (size != null && size.isNotEmpty) {
+      selectedVariants['size'] = size;
+    }
+    final storage = (variant['storage'] ??
+            variant['hafıza'] ??
+            variant['hafiza'])
+        ?.toString()
+        .trim();
+    if (storage != null && storage.isNotEmpty) {
+      selectedVariants['storage'] = storage;
+    }
+    final ram = variant['ram']?.toString().trim();
+    if (ram != null && ram.isNotEmpty) {
+      selectedVariants['ram'] = ram;
+    }
+    final optionType = (variant['optionType'] ?? variant['option_type'])
+        ?.toString()
+        .trim();
+    if (optionType != null &&
+        optionType.isNotEmpty &&
+        size != null &&
+        size.isNotEmpty) {
+      selectedVariants[optionType] = size;
+    }
+    final options = variant['options'];
+    if (options is Map) {
+      for (final entry in options.entries) {
+        final k = entry.key.toString().trim();
+        final v = entry.value?.toString().trim() ?? '';
+        if (k.isNotEmpty && v.isNotEmpty) {
+          selectedVariants[k] = v;
+        }
       }
     }
+
+    final variantImg = _variantImageFromMap(variant);
+    if (variantImg != null && variantImg.isNotEmpty) {
+      final imgList = images;
+      final idx =
+          imgList.indexWhere((img) => img.trim() == variantImg.trim());
+      if (idx >= 0) {
+        currentImageIndex = idx;
+      }
+    }
+
+    notifyListeners();
   }
 
   List<Map<String, dynamic>> _variantMapsFromProduct(Product product) {
-    final raw = product.variants;
+    dynamic raw = product.variants;
+    if (raw == null) return const [];
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        raw = jsonDecode(raw);
+      } catch (_) {
+        return const [];
+      }
+    }
     if (raw is! List) return const [];
-    return raw
-        .whereType<Map>()
-        .map((variant) => Map<String, dynamic>.from(variant))
+    final list = raw
+        .map((variant) {
+          if (variant is Map) {
+            return Map<String, dynamic>.from(variant);
+          }
+          try {
+            return (variant as dynamic).toMap() as Map<String, dynamic>;
+          } catch (_) {
+            return <String, dynamic>{};
+          }
+        })
         .where((variant) => variant.isNotEmpty)
-        .toList(growable: false);
+        .toList();
+
+    if (list.isEmpty) return const [];
+
+    final baseColor = (product.color ?? '').trim();
+    bool hasBaseVariant = false;
+
+    if (baseColor.isNotEmpty) {
+      hasBaseVariant = list.any((v) {
+        final c = (v['color'] ?? v['Renk'] ?? v['renk'])?.toString().trim();
+        return c != null && c.toLowerCase() == baseColor.toLowerCase();
+      });
+    } else {
+      final attrs = product.attributes ?? const [];
+      if (attrs.isNotEmpty) {
+        hasBaseVariant = list.any((v) {
+          final size =
+              (v['size'] ?? v['beden'] ?? v['storage'] ?? '')?.toString().trim();
+          return attrs
+              .any((a) => a.trim().toLowerCase() == size?.toLowerCase());
+        });
+      } else {
+        hasBaseVariant = true;
+      }
+    }
+
+    if (!hasBaseVariant) {
+      String? baseSize;
+      if (product.attributes != null && product.attributes!.isNotEmpty) {
+        baseSize = product.attributes!.firstWhere(
+          (a) => a.trim().toLowerCase() != baseColor.toLowerCase(),
+          orElse: () => '',
+        );
+      }
+      final baseVariant = <String, dynamic>{
+        if (baseColor.isNotEmpty) 'color': baseColor,
+        if (product.colorHex != null && product.colorHex!.isNotEmpty)
+          'colorHex': product.colorHex,
+        if (baseSize != null && baseSize.isNotEmpty) 'size': baseSize,
+        'priceDifference': 0.0,
+        'stock': product.stock ?? 10,
+        'imageUrl': product.imageUrl ??
+            (product.images.isNotEmpty ? product.images.first : null),
+        'isBaseProduct': true,
+      };
+      list.insert(0, baseVariant);
+    }
+
+    return list;
   }
 
   Map<String, dynamic>? get selectedVariantMap {
@@ -1046,7 +1195,36 @@ class ProductDetailViewModel extends ChangeNotifier {
       final matchesSize =
           !_hasSelectedVariantValue('size') ||
           _matchesVariantValue(variant, 'size', selectedVariants['size']);
-      if (matchesColor && matchesStorage && matchesRam && matchesSize) {
+
+      bool matchesDynamic = true;
+      final options = variant['options'];
+      if (options is Map) {
+        for (final entry in options.entries) {
+          final k = entry.key.toString();
+          if (_hasSelectedVariantValue(k)) {
+            if (entry.value?.toString().trim() !=
+                selectedVariants[k]?.trim()) {
+              matchesDynamic = false;
+              break;
+            }
+          }
+        }
+      }
+
+      final optionType =
+          (variant['optionType'] ?? variant['option_type'])?.toString();
+      if (optionType != null && _hasSelectedVariantValue(optionType)) {
+        final val = (variant['size'] ?? '').toString();
+        if (val.trim() != selectedVariants[optionType]?.trim()) {
+          matchesDynamic = false;
+        }
+      }
+
+      if (matchesColor &&
+          matchesStorage &&
+          matchesRam &&
+          matchesSize &&
+          matchesDynamic) {
         return variant;
       }
     }
@@ -1074,23 +1252,30 @@ class ProductDetailViewModel extends ChangeNotifier {
   }
 
   double get currentVariantPriceDifference {
-    final rawDiff = selectedVariantMap?['priceDifference'];
+    final variant = selectedVariantMap;
+    if (variant == null) return 0;
+    final rawDiff =
+        variant['priceDifference'] ?? variant['price_difference'];
     if (rawDiff is num) return rawDiff.toDouble();
-    return double.tryParse(rawDiff?.toString().replaceAll(',', '.') ?? '') ?? 0;
+    return double.tryParse(
+            rawDiff?.toString().replaceAll(',', '.') ?? '') ??
+        0;
   }
 
   List<String> _buildDisplayImages() {
     final orderedImages = <String>[];
-    final variant = selectedVariantMap;
-    final variantImage = _variantImageFromMap(variant);
-    if (variantImage != null && variantImage.isNotEmpty) {
-      orderedImages.add(variantImage);
-    }
-
     for (final image in initialProduct.images) {
       final trimmed = image.trim();
       if (trimmed.isEmpty || orderedImages.contains(trimmed)) continue;
       orderedImages.add(trimmed);
+    }
+
+    final variant = selectedVariantMap;
+    final variantImage = _variantImageFromMap(variant);
+    if (variantImage != null &&
+        variantImage.isNotEmpty &&
+        !orderedImages.contains(variantImage)) {
+      orderedImages.insert(0, variantImage);
     }
 
     return orderedImages;

@@ -123,7 +123,14 @@ void main() {
         path: '/hesabim/favoriler',
         includeAuthRoutes: true,
       ),
-      '/login?next=${Uri.encodeComponent('/hesabim/favoriler')}',
+      '/favoriler',
+    );
+    expect(
+      ibulGoRouterRedirect(
+        path: '/favoriler',
+        includeAuthRoutes: true,
+      ),
+      '/login?next=${Uri.encodeComponent('/favoriler')}',
     );
     expect(
       ibulGoRouterRedirect(
@@ -131,7 +138,7 @@ void main() {
         includeAuthRoutes: true,
         authenticated: true,
       ),
-      isNull,
+      '/favoriler',
     );
     expect(
       ibulGoRouterRedirect(

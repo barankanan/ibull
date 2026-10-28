@@ -25,7 +25,6 @@ void main() {
   }
 
   IhizLandingBody landing() => IhizLandingBody(
-        onLogin: () {},
         onCourierApply: () {},
         onBusinessJoin: () {},
         onBindBusiness: (_) {},
@@ -48,11 +47,14 @@ void main() {
     await pumpLanding(tester, const Size(390, 844));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Giriş Yap'), findsWidgets);
+    expect(find.text('Teslimatını Takip Et'), findsOneWidget);
+    expect(find.text('Giriş Yap'), findsNothing);
     expect(find.text('Kurye Ol'), findsWidgets);
-    expect(find.text('Nasıl Çalışır?'), findsWidgets);
+    expect(find.text('3 adımda kolay teslimat'), findsWidgets);
     expect(find.text('Mağaza'), findsWidgets);
-    expect(find.text('İhız'), findsWidgets);
+    expect(find.text('İHIZ.'), findsWidgets);
+    expect(find.text('Hızlı Teslimat'), findsWidgets);
+    expect(find.text('Kendi zamanının patronu ol.'), findsWidgets);
   });
 
   testWidgets('landing tablet 768x1024 no overflow', (tester) async {
@@ -61,6 +63,24 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.textContaining('hızlı teslimat altyapısı'), findsOneWidget);
     expect(find.text('İşletmeyi Bul'), findsOneWidget);
+  });
+
+  testWidgets('landing narrow 360 and wide 1440 have no overflow', (
+    tester,
+  ) async {
+    for (final size in const [
+      Size(360, 780),
+      Size(430, 900),
+      Size(1024, 800),
+      Size(1440, 900),
+    ]) {
+      await pumpLanding(tester, size);
+      expect(tester.takeException(), isNull, reason: '$size');
+      expect(find.text('Hızlı Teslimat'), findsWidgets);
+      expect(find.text('Sipariş Oluştur'), findsWidgets);
+      expect(find.text('Kurye Eşleşir'), findsWidgets);
+      expect(find.text('Teslim Edilir'), findsWidgets);
+    }
   });
 
   testWidgets('landing desktop 1280x800 feature cards present', (tester) async {

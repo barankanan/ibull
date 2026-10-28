@@ -6,25 +6,30 @@
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="İbul ile teknoloji, market ve daha birçok kategoride online alışveriş yapın; hızlı teslimat avantajını yakalayın.">
+  <meta name="description" content="İBUL ile alışveriş yapın, mağazaları keşfedin ve yakındaki satıcılara ulaşın.">
+  <link rel="canonical" href="https://ibul.com.tr/">
   <meta name="keywords" content="ibul, online alışveriş, e-ticaret, hızlı teslimat, ihız, satıcı paneli">
   <meta name="robots" content="index, follow">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="İbul">
   <meta property="og:locale" content="tr_TR">
-  <meta property="og:title" content="İbul | Online Alışveriş ve Hızlı Teslimat">
-  <meta property="og:description" content="İbul ile teknoloji, market ve daha birçok kategoride online alışveriş yapın; hızlı teslimat avantajını yakalayın.">
+  <meta property="og:url" content="https://ibul.com.tr/">
+  <meta property="og:title" content="İBUL | Alışveriş, Mağazalar ve Daha Fazlası">
+  <meta property="og:description" content="İBUL ile alışveriş yapın, mağazaları keşfedin ve yakındaki satıcılara ulaşın.">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="İbul | Online Alışveriş ve Hızlı Teslimat">
-  <meta name="twitter:description" content="İbul ile teknoloji, market ve daha birçok kategoride online alışveriş yapın; hızlı teslimat avantajını yakalayın.">
+  <meta name="twitter:title" content="İBUL | Alışveriş, Mağazalar ve Daha Fazlası">
+  <meta name="twitter:description" content="İBUL ile alışveriş yapın, mağazaları keşfedin ve yakındaki satıcılara ulaşın.">
+  <script type="application/ld+json">
+    {"@context":"https://schema.org","@graph":[{"@type":"Organization","name":"İBUL","url":"https://ibul.com.tr/","logo":"https://ibul.com.tr/favicon.png"},{"@type":"WebSite","name":"İBUL","url":"https://ibul.com.tr/","description":"İBUL ile alışveriş yapın, mağazaları keşfedin ve yakındaki satıcılara ulaşın.","publisher":{"@type":"Organization","name":"İBUL"}}]}
+  </script>
 
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="İbul">
-  <link rel="apple-touch-icon" href="assets/icons/ibul_logo_2.png">
-  <link rel="icon" type="image/png" href="assets/icons/ibul_logo_2.png"/>
+  <link rel="apple-touch-icon" href="favicon.png">
+  <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>İbul | Online Alışveriş ve Hızlı Teslimat</title>
+  <title>İBUL | Alışveriş, Mağazalar ve Daha Fazlası</title>
   <link rel="manifest" href="manifest.json">
 
   <!-- CanvasKit, Roboto fallback fontunu çalışma anında fonts.gstatic.com'dan
@@ -84,58 +89,354 @@
       background: #F9FAFB;
     }
     #ibul-web-chrome { display: block; background: #fff; }
+
+    #ibul-mobile-splash { display: none; }
     @media (max-width: 1099px) {
-      .ibul-top { padding: 10px 12px; gap: 10px; }
-      .ibul-brand span { font-size: 22px; }
-      .ibul-search { height: 42px; font-size: 13px; }
-      .ibul-cats { padding: 8px 12px 0; font-size: 12px; line-height: 36px; }
-      .ibul-skel { padding: 0 12px; margin-top: 12px; }
+      #ibul-web-chrome { display: none; }
+      #ibul-loader-text { display: none; }
+      #ibul-mobile-splash {
+        display: flex; flex-direction: column; align-items: stretch;
+        background: #F7F7FA; flex: 1; overflow: hidden;
+      }
+      .m-sk-header { padding: 12px 16px; background: #fff; }
+      .m-sk-search { height: 42px; border-radius: 12px; background: #f0f0f0; }
+      .m-sk-cats { display: flex; padding: 12px 16px; gap: 12px; background: #fff; border-bottom: 1px solid #eee; }
+      .m-sk-cat { width: 64px; height: 28px; border-radius: 14px; background: #f0f0f0; flex-shrink: 0; }
+      .m-sk-content { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 24px; overflow: hidden; }
+      .m-sk-banner { height: 160px; border-radius: 16px; background: #f0f0f0; flex-shrink: 0; }
+      .m-sk-tools { display: flex; gap: 12px; flex-shrink: 0; }
+      .m-sk-tool { flex: 1; height: 72px; border-radius: 16px; background: #f0f0f0; }
+      .m-sk-title { width: 140px; height: 24px; border-radius: 6px; background: #f0f0f0; flex-shrink: 0; }
+      .m-sk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .m-sk-prod { background: #fff; border-radius: 16px; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+      .m-sk-img { height: 130px; border-radius: 12px; background: #f0f0f0; }
+      .m-sk-txt { height: 14px; border-radius: 4px; background: #f0f0f0; width: 100%; }
+      .m-sk-txt.short { width: 60%; }
+      .m-sk-bottom-nav { height: 60px; background: #fff; border-top: 1px solid #eee; display: flex; justify-content: space-around; align-items: center; padding-bottom: env(safe-area-inset-bottom); flex-shrink: 0; }
+      .m-sk-nav-icon { width: 24px; height: 24px; border-radius: 50%; background: #f0f0f0; }
+      .sk-pulse { animation: sk-pulse 1.5s infinite ease-in-out; }
+      @keyframes sk-pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
     }
-    @media (min-width: 1100px) {
-      .ibul-top { padding: 12px 24px; gap: 32px; }
-    }
+    /* Masaüstü WebHeader ile birebir uyumlu navbar stilleri */
     .ibul-top {
-      max-width: 1400px; margin: 0 auto; padding: 12px 24px;
-      display: flex; align-items: center; gap: 32px;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      box-sizing: border-box;
     }
-    a.ibul-brand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; text-decoration: none; color: inherit; }
-    .ibul-brand img { width: 32px; height: 32px; border-radius: 12px; }
+    a.ibul-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+      text-decoration: none;
+      color: inherit;
+    }
+    .ibul-brand img {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: block;
+      object-fit: cover;
+    }
     .ibul-brand span {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 28px; font-weight: 900; color: #7A2FF4; letter-spacing: -0.5px;
+      font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 24px;
+      font-weight: 500;
+      color: #7A2FF4;
+      letter-spacing: 0.2px;
+      line-height: 1;
+    }
+    .ibul-search-group {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .ibul-notif-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 1px solid #E5E7EB;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      flex-shrink: 0;
+      box-sizing: border-box;
+      transition: background-color 0.15s;
+    }
+    .ibul-notif-btn:hover {
+      background-color: #F9FAFB;
     }
     .ibul-search {
-      flex: 1; height: 48px; border: 1px solid rgba(122,47,244,0.35);
-      border-radius: 12px; display: flex; align-items: center; padding: 0 16px;
-      color: #9e9e9e; font: 14px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #fff; margin: 0;
+      flex: 1;
+      height: 48px;
+      border: 1px solid rgba(124, 58, 237, 0.35);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      padding: 0 4px 0 12px;
+      background: #ffffff;
+      margin: 0;
+      box-sizing: border-box;
+      min-width: 0;
+      gap: 8px;
+    }
+    .ibul-search-leading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #9CA3AF;
+      flex-shrink: 0;
     }
     .ibul-search input {
-      flex: 1; border: 0; outline: 0; background: transparent; color: #111;
-      font: inherit; min-width: 0;
+      flex: 1;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: #111827;
+      font: 14px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      min-width: 0;
+      padding: 0;
     }
-    .ibul-search input::placeholder { color: #9e9e9e; }
-    .ibul-search button {
-      border: 0; background: transparent; color: #7A2FF4; font: 700 13px/1 inherit;
-      cursor: pointer; padding: 0 0 0 8px;
+    .ibul-search input::placeholder {
+      color: #9CA3AF;
     }
-    .ibul-account { display: flex; gap: 16px; flex-shrink: 0; }
-    .ibul-account a {
-      color: #7A2FF4; text-decoration: none; font: 600 13px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    .ibul-search-camera {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px;
+      border-radius: 8px;
+      text-decoration: none;
+      color: #7C3AED;
+      flex-shrink: 0;
+      transition: background-color 0.15s;
+    }
+    .ibul-search-camera:hover {
+      background-color: rgba(124, 58, 237, 0.08);
+    }
+    .ibul-search-btn {
+      background-color: #7C3AED;
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      height: 38px;
+      padding: 0 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background-color 0.15s;
+    }
+    .ibul-search-btn:hover {
+      background-color: #6D28D9;
+    }
+    .ibul-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+    .ibul-action-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 48px;
+      text-decoration: none;
+      color: #1F2937;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      font-weight: 500;
       white-space: nowrap;
+      transition: opacity 0.15s;
+    }
+    .ibul-action-item:hover {
+      opacity: 0.75;
+    }
+    .ibul-action-item svg {
+      flex-shrink: 0;
     }
     .ibul-cats {
-      border-top: 1px solid #eee; border-bottom: 1px solid #eee;
-      padding: 14px 24px 0; overflow: hidden; white-space: nowrap;
-      font: 600 13px/40px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      color: #333;
-    }
-    .ibul-cats a { margin-right: 22px; color: #333; text-decoration: none; }
-    #ibul-loader-text {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 14px; color: #666; letter-spacing: 0.2px;
-      max-width: 420px; text-align: center; line-height: 1.5; padding: 48px 16px 0;
+      border-top: 1px solid #eeeeee;
+      border-bottom: 1px solid #eeeeee;
+      padding: 0 24px;
+      overflow: hidden;
+      white-space: nowrap;
+      font: 500 13px/44px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #374151;
+      max-width: 1400px;
       margin: 0 auto;
+      box-sizing: border-box;
+    }
+    .ibul-cats a {
+      margin-right: 22px;
+      color: #374151;
+      text-decoration: none;
+    }
+    .ibul-cats a:hover {
+      color: #7C3AED;
+    }
+    #ibul-loader-text { display: none !important; }
+
+    /* Desktop Home Skeleton */
+    .d-sk-shimmer {
+      background: linear-gradient(90deg, #EBEBF2 0%, #F5F5F8 50%, #EBEBF2 100%);
+      background-size: 200% 100%;
+      animation: d-sk-shimmer 1.5s infinite ease-in-out;
+    }
+    @keyframes d-sk-shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    #ibul-desktop-skeleton {
+      display: none;
+      width: 100%;
+      max-width: 1400px;
+      margin: 16px auto 0;
+      padding: 0 24px 32px;
+      box-sizing: border-box;
+    }
+    @media (min-width: 1100px) {
+      #ibul-desktop-skeleton { display: block; }
+    }
+
+    /* Hero Row: ~70% Main Banner + ~30% 2 Deals */
+    .d-sk-hero-row {
+      display: flex;
+      gap: 16px;
+      height: 320px;
+      margin-bottom: 32px;
+      width: 100%;
+    }
+    .d-sk-main-banner {
+      flex: 1;
+      height: 100%;
+      border-radius: 16px;
+    }
+    .d-sk-deals-col {
+      width: 290px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      height: 100%;
+    }
+    .d-sk-deal-card {
+      flex: 1;
+      border-radius: 16px;
+    }
+
+    /* Section Header */
+    .d-sk-section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .d-sk-section-title {
+      width: 160px;
+      height: 22px;
+      border-radius: 6px;
+    }
+    .d-sk-section-link {
+      width: 72px;
+      height: 16px;
+      border-radius: 4px;
+    }
+
+    /* Product Rail (5 Product Cards) */
+    .d-sk-product-rail {
+      display: flex;
+      gap: 16px;
+      overflow: hidden;
+      width: 100%;
+    }
+    .d-sk-card {
+      width: 220px;
+      flex: 0 0 220px;
+      height: 348px;
+      background: #ffffff;
+      border-radius: 12px;
+      border: 1px solid #eeeeee;
+      padding: 8px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .d-sk-img-box {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 10px;
+      position: relative;
+    }
+    .d-sk-badge-group {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      display: flex;
+      gap: 4px;
+    }
+    .d-sk-badge-circle {
+      width: 22px;
+      height: 22px;
+      border-radius: 11px;
+      background: rgba(255,255,255,0.7);
+    }
+    .d-sk-tag {
+      width: 72px;
+      height: 12px;
+      border-radius: 4px;
+      margin-top: 8px;
+    }
+    .d-sk-line-1 {
+      width: 95%;
+      height: 12px;
+      border-radius: 4px;
+      margin-top: 6px;
+    }
+    .d-sk-line-2 {
+      width: 65%;
+      height: 12px;
+      border-radius: 4px;
+      margin-top: 4px;
+    }
+    .d-sk-rating {
+      width: 80px;
+      height: 10px;
+      border-radius: 4px;
+      margin-top: 8px;
+    }
+    .d-sk-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: auto;
+      padding-top: 8px;
+    }
+    .d-sk-price {
+      width: 84px;
+      height: 18px;
+      border-radius: 4px;
+    }
+    .d-sk-cart-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
     }
     #ibul-boot-error {
       display: none;
@@ -151,29 +452,202 @@
       background: #7B2FBE; color: #fff; border: none; border-radius: 10px;
       padding: 12px 24px; font-size: 14px; font-weight: 600; cursor: pointer;
     }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
   <div id="ibul-loader" aria-busy="false">
     <div id="ibul-web-chrome">
       <div class="ibul-top">
-        <a class="ibul-brand" href="/">
-          <img src="assets/icons/ibul_logo_2.png" alt="" width="32" height="32">
+        <a class="ibul-brand" href="/" aria-label="İBUL Ana Sayfa">
+          <img src="favicon.png" alt="İBUL" width="36" height="36">
           <span>iBul</span>
         </a>
-        <form class="ibul-search" action="/" method="get">
-          <input name="q" type="search" minlength="3" placeholder="Ürün, kategori veya marka ara..." aria-label="Ara">
-          <button type="submit">Ara</button>
-        </form>
-        <nav class="ibul-account" aria-label="Hesap">
-          <a href="/login">Giriş</a>
-          <a href="/hesabim">Hesabım</a>
+        <div class="ibul-search-group">
+          <a href="/bildirimler" class="ibul-notif-btn" aria-label="Bildirimler" title="Bildirimler">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+            </svg>
+          </a>
+          <form class="ibul-search" action="/" method="get">
+            <span class="ibul-search-leading" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+            </span>
+            <input name="q" type="search" minlength="3" placeholder="Ürün, kategori veya marka ara..." aria-label="Ürün, kategori veya marka ara" autocomplete="off">
+            <a href="/visual-search" class="ibul-search-camera" aria-label="Görsel ile Ara" title="Görsel ile Ara">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                <circle cx="12" cy="13" r="4"></circle>
+              </svg>
+            </a>
+            <button type="submit" class="ibul-search-btn">ARA</button>
+          </form>
+        </div>
+        <nav class="ibul-actions" aria-label="Hızlı Menü">
+          <a href="/map" class="ibul-action-item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
+              <line x1="8" y1="2" x2="8" y2="18"></line>
+              <line x1="16" y1="6" x2="16" y2="22"></line>
+            </svg>
+            <span>Konum / Harita</span>
+          </a>
+          <a href="/hesabim" class="ibul-action-item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1F2937" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            <span>Hesabım</span>
+          </a>
+          <a href="/favoriler" class="ibul-action-item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1F2937" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+            </svg>
+            <span>Favorilerim</span>
+          </a>
+          <a href="/sepet" class="ibul-action-item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1F2937" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="9" cy="21" r="1"></circle>
+              <circle cx="20" cy="21" r="1"></circle>
+              <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+            </svg>
+            <span>Sepetim</span>
+          </a>
         </nav>
       </div>
       <nav class="ibul-cats" aria-label="Kategoriler">
         <a href="/map">Yakın Lokasyon</a><a href="/?category=Erkek">Erkek</a><a href="/?category=Kad%C4%B1n">Kadın</a><a href="/?category=Elektronik">Elektronik</a><a href="/?category=Ayakkab%C4%B1%20%26%20%C3%87anta">Ayakkabı &amp; Çanta</a><a href="/?category=Saat%20%26%20Aksesuar">Saat &amp; Aksesuar</a><a href="/?category=Ev%20%26%20Ya%C5%9Fam">Ev &amp; Yaşam</a>
       </nav>
     </div>
+
+    <div id="ibul-mobile-splash" class="sk-pulse">
+      <div class="m-sk-header"><div class="m-sk-search"></div></div>
+      <div class="m-sk-cats">
+        <div class="m-sk-cat"></div><div class="m-sk-cat"></div>
+        <div class="m-sk-cat"></div><div class="m-sk-cat"></div><div class="m-sk-cat"></div>
+      </div>
+      <div class="m-sk-content">
+        <div class="m-sk-banner"></div>
+        <div class="m-sk-tools"><div class="m-sk-tool"></div><div class="m-sk-tool"></div></div>
+        <div class="m-sk-title"></div>
+        <div class="m-sk-grid">
+          <div class="m-sk-prod"><div class="m-sk-img"></div><div class="m-sk-txt"></div><div class="m-sk-txt short"></div></div>
+          <div class="m-sk-prod"><div class="m-sk-img"></div><div class="m-sk-txt"></div><div class="m-sk-txt short"></div></div>
+          <div class="m-sk-prod"><div class="m-sk-img"></div><div class="m-sk-txt"></div><div class="m-sk-txt short"></div></div>
+          <div class="m-sk-prod"><div class="m-sk-img"></div><div class="m-sk-txt"></div><div class="m-sk-txt short"></div></div>
+        </div>
+      </div>
+      <div class="m-sk-bottom-nav">
+        <div class="m-sk-nav-icon"></div><div class="m-sk-nav-icon"></div>
+        <div class="m-sk-nav-icon"></div><div class="m-sk-nav-icon"></div><div class="m-sk-nav-icon"></div>
+      </div>
+    </div>
+
+    <div id="ibul-desktop-skeleton">
+      <!-- 1. Hero Campaign Row (~70% banner + ~30% deals) -->
+      <div class="d-sk-hero-row">
+        <div class="d-sk-main-banner d-sk-shimmer"></div>
+        <div class="d-sk-deals-col">
+          <div class="d-sk-deal-card d-sk-shimmer"></div>
+          <div class="d-sk-deal-card d-sk-shimmer"></div>
+        </div>
+      </div>
+
+      <!-- 2. Popüler Ürünler Header -->
+      <div class="d-sk-section-header">
+        <div class="d-sk-section-title d-sk-shimmer"></div>
+        <div class="d-sk-section-link d-sk-shimmer"></div>
+      </div>
+
+      <!-- 3. 5'li Ürün Kartı Shimmer Rayı -->
+      <div class="d-sk-product-rail">
+        <div class="d-sk-card">
+          <div class="d-sk-img-box d-sk-shimmer">
+            <div class="d-sk-badge-group">
+              <div class="d-sk-badge-circle"></div>
+              <div class="d-sk-badge-circle"></div>
+            </div>
+          </div>
+          <div class="d-sk-tag d-sk-shimmer"></div>
+          <div class="d-sk-line-1 d-sk-shimmer"></div>
+          <div class="d-sk-line-2 d-sk-shimmer"></div>
+          <div class="d-sk-rating d-sk-shimmer"></div>
+          <div class="d-sk-footer">
+            <div class="d-sk-price d-sk-shimmer"></div>
+            <div class="d-sk-cart-btn d-sk-shimmer"></div>
+          </div>
+        </div>
+        <div class="d-sk-card">
+          <div class="d-sk-img-box d-sk-shimmer">
+            <div class="d-sk-badge-group">
+              <div class="d-sk-badge-circle"></div>
+              <div class="d-sk-badge-circle"></div>
+            </div>
+          </div>
+          <div class="d-sk-tag d-sk-shimmer"></div>
+          <div class="d-sk-line-1 d-sk-shimmer"></div>
+          <div class="d-sk-line-2 d-sk-shimmer"></div>
+          <div class="d-sk-rating d-sk-shimmer"></div>
+          <div class="d-sk-footer">
+            <div class="d-sk-price d-sk-shimmer"></div>
+            <div class="d-sk-cart-btn d-sk-shimmer"></div>
+          </div>
+        </div>
+        <div class="d-sk-card">
+          <div class="d-sk-img-box d-sk-shimmer">
+            <div class="d-sk-badge-group">
+              <div class="d-sk-badge-circle"></div>
+              <div class="d-sk-badge-circle"></div>
+            </div>
+          </div>
+          <div class="d-sk-tag d-sk-shimmer"></div>
+          <div class="d-sk-line-1 d-sk-shimmer"></div>
+          <div class="d-sk-line-2 d-sk-shimmer"></div>
+          <div class="d-sk-rating d-sk-shimmer"></div>
+          <div class="d-sk-footer">
+            <div class="d-sk-price d-sk-shimmer"></div>
+            <div class="d-sk-cart-btn d-sk-shimmer"></div>
+          </div>
+        </div>
+        <div class="d-sk-card">
+          <div class="d-sk-img-box d-sk-shimmer">
+            <div class="d-sk-badge-group">
+              <div class="d-sk-badge-circle"></div>
+              <div class="d-sk-badge-circle"></div>
+            </div>
+          </div>
+          <div class="d-sk-tag d-sk-shimmer"></div>
+          <div class="d-sk-line-1 d-sk-shimmer"></div>
+          <div class="d-sk-line-2 d-sk-shimmer"></div>
+          <div class="d-sk-rating d-sk-shimmer"></div>
+          <div class="d-sk-footer">
+            <div class="d-sk-price d-sk-shimmer"></div>
+            <div class="d-sk-cart-btn d-sk-shimmer"></div>
+          </div>
+        </div>
+        <div class="d-sk-card">
+          <div class="d-sk-img-box d-sk-shimmer">
+            <div class="d-sk-badge-group">
+              <div class="d-sk-badge-circle"></div>
+              <div class="d-sk-badge-circle"></div>
+            </div>
+          </div>
+          <div class="d-sk-tag d-sk-shimmer"></div>
+          <div class="d-sk-line-1 d-sk-shimmer"></div>
+          <div class="d-sk-line-2 d-sk-shimmer"></div>
+          <div class="d-sk-rating d-sk-shimmer"></div>
+          <div class="d-sk-footer">
+            <div class="d-sk-price d-sk-shimmer"></div>
+            <div class="d-sk-cart-btn d-sk-shimmer"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="ibul-loader-text"></div>
   </div>
   <div id="ibul-boot-error" role="alert" aria-live="assertive">

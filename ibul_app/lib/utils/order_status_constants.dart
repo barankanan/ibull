@@ -65,6 +65,39 @@ class OrderStatusConstants {
   static bool isInTransitShipmentStatus(String? raw) {
     return inTransitShipmentStatuses.contains(normalize(raw));
   }
+
+  /// Online marketplace and food delivery stay in the seller Siparişler list.
+  /// Only explicit table / waiter records are excluded for food stores.
+  static bool isTableSourcedSellerOrder(Map<String, dynamic> order) {
+    final explicit = order['is_table_order'];
+    if (explicit is bool) return explicit;
+    return looksLikeTableOrder(order);
+  }
+
+  static bool looksLikeTableOrder(Map<String, dynamic> order) {
+    final orderNumber = (order['order_number'] ?? '')
+        .toString()
+        .trim()
+        .toUpperCase();
+    if (orderNumber.startsWith('TBL-')) return true;
+
+    final orderType = normalize(order['order_type']?.toString());
+    if (orderType == 'table' || orderType.startsWith('table_')) return true;
+
+    final deliveryType = normalize(order['delivery_type']?.toString());
+    if (deliveryType == 'table' ||
+        deliveryType.startsWith('table_') ||
+        deliveryType == 'masa' ||
+        deliveryType.startsWith('masa_')) {
+      return true;
+    }
+
+    final tableId = order['table_id']?.toString().trim() ?? '';
+    if (tableId.isNotEmpty && tableId.toLowerCase() != 'null') return true;
+
+    final waiterId = order['waiter_id']?.toString().trim() ?? '';
+    return waiterId.isNotEmpty;
+  }
 }
 
 class AdminApprovalStatusConstants {

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:csv/csv.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 import '../models/db_product.dart';
@@ -178,29 +179,14 @@ class CSVImporter {
     return normalized;
   }
 
-  /// CSV alanlarını parse eder (tırnak içi virgülleri dikkate alır)
+  /// CSV alanlarını parse eder (tırnak içi virgülleri ve JSON alanlarını dikkate alır)
   List<String> _parseCSVFields(String line) {
-    final fields = <String>[];
-    final buffer = StringBuffer();
-    bool inQuotes = false;
-
-    for (int i = 0; i < line.length; i++) {
-      final char = line[i];
-
-      if (char == '"') {
-        inQuotes = !inQuotes;
-      } else if (char == ',' && !inQuotes) {
-        fields.add(buffer.toString().trim());
-        buffer.clear();
-      } else {
-        buffer.write(char);
-      }
-    }
-
-    // Son alanı ekle
-    fields.add(buffer.toString().trim());
-
-    return fields;
+    final rows = const CsvToListConverter(
+      shouldParseNumbers: false,
+      allowInvalid: true,
+    ).convert(line);
+    if (rows.isEmpty || rows.first.isEmpty) return <String>[];
+    return rows.first.map((dynamic e) => e?.toString().trim() ?? '').toList();
   }
 
   /// Veritabanını temizler

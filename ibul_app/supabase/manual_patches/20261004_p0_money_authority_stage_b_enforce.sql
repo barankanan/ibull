@@ -137,6 +137,7 @@ create trigger trg_order_items_money_authority
 drop policy if exists "categories_public_insert" on storage.objects;
 drop policy if exists "categories_public_update" on storage.objects;
 drop policy if exists "categories_public_delete" on storage.objects;
+-- Defensive. The emergency categories patch may already have dropped these.
 drop policy if exists "categories_auth_insert" on storage.objects;
 drop policy if exists "categories_auth_update" on storage.objects;
 drop policy if exists "categories_auth_delete" on storage.objects;

@@ -34,6 +34,16 @@ extension _AppStateCartFavoritesDomain on AppState {
     }
   }
 
+  void _noteCartMutation(String event, Product? product) {
+    _cartRevision++;
+    if (!kDebugMode) return;
+    final ids = cart.map((item) => item.productId ?? item.name).join(',');
+    debugPrint(
+      '[CART_TRACE] $event product=${product?.productId ?? product?.name ?? '-'} '
+      'instance=${identityHashCode(this)} count_after_add=${cart.length} ids=$ids',
+    );
+  }
+
   void _addToCartImpl(Product product) {
     final resolvedProduct = product.copyWith(
       productId: (product.productId ?? '').trim().isEmpty
@@ -44,6 +54,7 @@ extension _AppStateCartFavoritesDomain on AppState {
     _cartState.addOrReplace(resolvedProduct);
     _selectedCartTabIndex = CartState.tabIndexForProduct(resolvedProduct);
     _clearCartAttention(resolvedProduct);
+    _noteCartMutation('add', resolvedProduct);
     unawaited(_persistCartState());
     _syncPushInterests();
     notifyListeners();
@@ -52,6 +63,7 @@ extension _AppStateCartFavoritesDomain on AppState {
   void _removeFromCartImpl(Product product) {
     _cartState.remove(product);
     _clearCartAttention(product);
+    _noteCartMutation('remove', product);
     unawaited(_persistCartState());
     _syncPushInterests();
     notifyListeners();

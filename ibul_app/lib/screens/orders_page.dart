@@ -15,6 +15,7 @@ import '../features/vehicle/models/vehicle_commerce.dart';
 import '../features/vehicle/screens/vehicle_rental_detail_page.dart';
 import '../features/vehicle/services/vehicle_service.dart';
 import '../services/order_service.dart';
+import '../utils/dynamic_value_helpers.dart';
 import 'order_detail_page.dart';
 
 class OrdersPage extends StatefulWidget {
@@ -29,6 +30,7 @@ class _OrdersPageState extends State<OrdersPage> {
   bool _isLoading = false;
   List<Map<String, dynamic>> _realOrders = [];
   String? _lastLoadedUserId;
+  int _loadedOrdersRevision = -1;
 
   final List<String> _tabs = [
     'Tümü',
@@ -110,10 +112,14 @@ class _OrdersPageState extends State<OrdersPage> {
     super.didChangeDependencies();
     final appState = Provider.of<AppState>(context);
     final userId = appState.currentUser?['uid']?.toString();
+    final revision = appState.customerOrdersRevision;
     final isGuestUser = UserIdentity.isGuest(appState.currentUser);
     if (isGuestUser || userId == null || userId.isEmpty) return;
-    if (_lastLoadedUserId == userId) return;
+    if (_lastLoadedUserId == userId && _loadedOrdersRevision == revision) {
+      return;
+    }
     _lastLoadedUserId = userId;
+    _loadedOrdersRevision = revision;
     _loadOrders();
   }
 
@@ -135,8 +141,16 @@ class _OrdersPageState extends State<OrdersPage> {
         rentals = const [];
       }
       if (!mounted) return;
+      final mappedOrders = <Map<String, dynamic>>[];
+      for (final order in orders) {
+        try {
+          mappedOrders.add(_mapRealOrderForUi(order));
+        } catch (error, stackTrace) {
+          debugPrint('OrdersPage skipped order: $error\n$stackTrace');
+        }
+      }
       final mapped = [
-        ...orders.map(_mapRealOrderForUi),
+        ...mappedOrders,
         ...rentals.where((row) => row.status.isAccountVisible).map((row) {
           return {
             ...VehicleRentalAccountFeed.toOrderCard(row),
@@ -144,9 +158,24 @@ class _OrdersPageState extends State<OrdersPage> {
             'statusColor': AppColors.primary,
           };
         }),
+        ...appState.foodOrders.map((o) {
+          final mapped = _mapRealOrderForUi({
+            ...o,
+            // Format for _mapRealOrderForUi to parse
+            'id': o['id']?.toString() ?? '',
+            'created_at': o['created_at']?.toString() ?? '',
+            'status': o['status']?.toString() ?? 'new',
+            'total_amount': o['grand_total'] ?? o['total_amount'] ?? 0,
+            'items': o['items'] ?? [],
+          });
+          return {
+            ...mapped,
+            'isTableOrder': true,
+          };
+        }),
       ]..sort((a, b) {
-          final da = a['sortAt'];
-          final db = b['sortAt'];
+          final da = a['sortAt'] ?? DateTime.tryParse(a['date'] ?? '');
+          final db = b['sortAt'] ?? DateTime.tryParse(b['date'] ?? '');
           if (da is DateTime && db is DateTime) return db.compareTo(da);
           return 0;
         });
@@ -589,7 +618,7 @@ class _OrdersPageState extends State<OrdersPage> {
       'statusColor': statusConfig['color'],
       'statusType': statusConfig['type'],
       'totalPrice':
-          '${(order['total_amount'] as num? ?? 0).toStringAsFixed(2)} TL',
+          '${readDouble(order['total_amount']).toStringAsFixed(2)} TL',
       'dateGroup': _dateGroup(createdAt),
       'sortAt': createdAt,
       'sellerName': firstItem['store_name']?.toString() ?? '-',

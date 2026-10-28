@@ -5,8 +5,10 @@ import '../../../app/marketplace_paths.dart';
 import '../../../features/vehicle/domain/vehicle_category.dart';
 import '../../../models/db_category.dart';
 import 'mobile_home_catalog.dart';
+import 'mobile_home_collections.dart';
 import 'mobile_home_chrome.dart';
 import 'mobile_home_hero.dart';
+import 'mobile_home_see_all_page.dart';
 import 'mobile_home_models.dart';
 import 'mobile_home_places.dart';
 
@@ -24,6 +26,7 @@ class MobileHomeFeed extends StatefulWidget {
     this.trailing,
     this.gateway,
     this.cacheExtent = 900,
+    this.onPullRefresh,
   });
 
   final List<String> bannerUrls;
@@ -37,6 +40,7 @@ class MobileHomeFeed extends StatefulWidget {
   final Widget? trailing;
   final MobileHomeGateway? gateway;
   final double cacheExtent;
+  final Future<void> Function()? onPullRefresh;
 
   @override
   State<MobileHomeFeed> createState() => _MobileHomeFeedState();
@@ -51,6 +55,8 @@ class _MobileHomeFeedState extends State<MobileHomeFeed> {
   var _bundle = MobileHomeBundle.empty;
   var _loading = true;
   var _chip = 'Sana Özel';
+  var _generation = 0;
+  Future<void>? _loadFuture;
 
   @override
   void initState() {
@@ -58,12 +64,32 @@ class _MobileHomeFeedState extends State<MobileHomeFeed> {
     _load();
   }
 
-  Future<void> _load() async {
-    final bundle = await _gateway.load();
-    if (!mounted) return;
+  Future<void> _load({bool pull = false}) {
+    final current = _loadFuture;
+    if (current != null) return current;
+    late final Future<void> future;
+    future = _loadBody(pull: pull).whenComplete(() {
+      if (identical(_loadFuture, future)) _loadFuture = null;
+    });
+    _loadFuture = future;
+    return future;
+  }
+
+  Future<void> _loadBody({required bool pull}) async {
+    MobileHomeBundle? bundle;
+    final tasks = <Future<void>>[
+      _gateway.load().then((value) => bundle = value),
+    ];
+    if (pull) {
+      final extra = widget.onPullRefresh;
+      if (extra != null) tasks.add(extra());
+    }
+    await Future.wait(tasks);
+    if (!mounted || bundle == null) return;
     setState(() {
-      _bundle = bundle;
+      _bundle = bundle!;
       _loading = false;
+      _generation++;
     });
   }
 
@@ -132,11 +158,17 @@ class _MobileHomeFeedState extends State<MobileHomeFeed> {
       return;
     }
     if (id == 'deals') {
-      if (_bundle.deals.isEmpty) {
-        widget.onOpenCategories();
-      } else {
-        _reveal(_dealsKey);
-      }
+      final deals = _bundle.products
+          .where(productHasRecordedDiscount)
+          .toList(growable: false);
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => MobileHomeSeeAllPage.products(
+            title: 'Kampanyalar',
+            products: deals,
+          ),
+        ),
+      );
     }
   }
 
@@ -163,11 +195,15 @@ class _MobileHomeFeedState extends State<MobileHomeFeed> {
             ),
           ),
           Expanded(
-            child: ListView(
+            child: RefreshIndicator(
+              key: const ValueKey('mobile-home-refresh'),
+              onRefresh: () => _load(pull: true),
+              child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               cacheExtent: widget.cacheExtent,
               padding: const EdgeInsets.only(bottom: 28),
               children: [
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 MobileHomeChips(
                   categories: _bundle.categories,
                   loading: _loading,
@@ -185,39 +221,67 @@ class _MobileHomeFeedState extends State<MobileHomeFeed> {
                   const _FeedSkeleton()
                 else ...[
                   KeyedSubtree(
-                    key: _storesKey,
-                    child: MobileHomeNearbyStores(
-                      stores: _bundle.stores,
-                      onSeeAll: widget.onOpenMap,
+                    key: _productsKey,
+                    child: MobileHomeProductRails(
+                      products: _bundle.products.take(8).toList(growable: false),
+                      onSeeAllFeatured: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => MobileHomeSeeAllPage.products(
+                              title: 'Sana Özel',
+                              products: _bundle.products,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                   MobileHomeMalls(
                     malls: _bundle.malls,
-                    onSeeAll: widget.onOpenMap,
+                    onSeeAll: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => MobileHomeSeeAllPage.malls(
+                            title: 'Yakınındaki AVM\'ler',
+                            malls: _bundle.malls,
+                          ),
+                        ),
+                      );
+                    },
                   ),
                   KeyedSubtree(
-                    key: _productsKey,
-                    child: MobileHomeProductRails(
-                      products: _bundle.products,
-                      onSeeAllFeatured: widget.onOpenCategories,
+                    key: _storesKey,
+                    child: MobileHomeNearbyStores(
+                      stores: _bundle.stores,
+                      generation: _generation,
+                      onSeeAll: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => MobileHomeSeeAllPage.stores(
+                              title: 'Yakınındaki Mağazalar',
+                              stores: _bundle.stores,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
+                  const MobileHomeRecent(),
+                  const MobileHomeLiked(),
                   KeyedSubtree(
                     key: _dealsKey,
-                    child: MobileHomeDeals(products: _bundle.products),
-                  ),
-                  MobileHomeCategoryRails(
-                    products: _bundle.products,
-                    onSeeAllCategory: _onChip,
+                    child: MobileHomeSmartCollections(
+                      products: _bundle.products,
+                    ),
                   ),
                   MobileHomeVehicles(
                     listings: _bundle.vehicles,
                     onSeeAll: widget.onOpenVehicles,
                   ),
-                  const MobileHomeRecent(),
                   if (widget.trailing != null) widget.trailing!,
                 ],
               ],
+            ),
             ),
           ),
         ],

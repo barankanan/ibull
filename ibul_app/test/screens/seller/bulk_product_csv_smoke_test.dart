@@ -13,7 +13,7 @@ void main() {
 
   group('CSV smoke (dosya sistemi)', () {
     test('Downloads\'a yazılır, BOM ve Türkçe karakterler korunur', () async {
-      final bytes = buildBulkProductImportTemplateBytes();
+      final bytes = buildBulkProductImportTemplateBytes(false);
       expect(bytes[0], 0xEF);
       expect(bytes[1], 0xBB);
       expect(bytes[2], 0xBF);

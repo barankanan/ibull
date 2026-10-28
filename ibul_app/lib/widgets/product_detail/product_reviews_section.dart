@@ -150,6 +150,8 @@ class ProductReviewsSection extends StatelessWidget {
                       brand: product.brand,
                       storeName: product.store,
                       images: List<String>.from(product.images),
+                      productId: product.productId,
+                      sellerId: product.sellerId,
                     ),
                   ),
                 );

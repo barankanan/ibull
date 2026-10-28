@@ -46,7 +46,7 @@ class _MobileHomeTopBarState extends State<MobileHomeTopBar> {
           .getUserNotifications(userId);
       if (!mounted) return;
       setState(() {
-        _unread = rows.where((row) => row['read_at'] == null).length;
+        _unread = rows.where(_isPersistedUnread).length;
       });
     } catch (_) {}
   }
@@ -71,6 +71,12 @@ class _MobileHomeTopBarState extends State<MobileHomeTopBar> {
       onTap: _openNotifications,
     );
   }
+}
+
+bool _isPersistedUnread(Map<dynamic, dynamic> row) {
+  final id = row['id']?.toString() ?? '';
+  if (id.startsWith('fallback-')) return false;
+  return row['read_at'] == null;
 }
 
 class _IconBadge extends StatelessWidget {
@@ -313,12 +319,14 @@ class MobileHomeChips extends StatelessWidget {
   final String selected;
   final ValueChanged<String> onSelect;
 
+  static const double barHeight = 32;
+
   @override
   Widget build(BuildContext context) {
     if (loading) {
       return const SizedBox(
         key: ValueKey('mobile-home-chip-skeleton'),
-        height: 38,
+        height: barHeight,
         child: _BoneRow(widths: [88, 112, 72, 96]),
       );
     }
@@ -333,7 +341,7 @@ class MobileHomeChips extends StatelessWidget {
     ];
     return SizedBox(
       key: const ValueKey('mobile-home-chips'),
-      height: 38,
+      height: barHeight,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -362,8 +370,16 @@ class MobileHomeChips extends StatelessWidget {
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  strutStyle: const StrutStyle(
+                    fontSize: 14,
+                    height: 1,
+                    forceStrutHeight: true,
+                    leading: 0,
+                  ),
                   style: TextStyle(
                     fontSize: 14,
+                    height: 1,
                     fontWeight: active ? FontWeight.w600 : FontWeight.w500,
                     color: active ? Colors.white : const Color(0xFF4B5563),
                   ),
@@ -535,7 +551,7 @@ class HomeQuickActionCard extends StatelessWidget {
 
 abstract final class MobileHomeTypography {
   static const sectionTitle = TextStyle(
-    fontSize: 22,
+    fontSize: 19,
     fontWeight: FontWeight.w600,
     height: 1.2,
     color: mobileHomeInk,
@@ -549,9 +565,15 @@ abstract final class MobileHomeTypography {
 }
 
 class MobileHomeSectionTitle extends StatelessWidget {
-  const MobileHomeSectionTitle({super.key, required this.title, this.onSeeAll});
+  const MobileHomeSectionTitle({
+    super.key,
+    required this.title,
+    this.heading,
+    this.onSeeAll,
+  });
 
   final String title;
+  final Widget? heading;
   final VoidCallback? onSeeAll;
 
   @override
@@ -561,12 +583,13 @@ class MobileHomeSectionTitle extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: MobileHomeTypography.sectionTitle,
-            ),
+            child: heading ??
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: MobileHomeTypography.sectionTitle,
+                ),
           ),
           if (onSeeAll != null)
             TextButton(
@@ -601,7 +624,7 @@ class _BoneRow extends StatelessWidget {
         for (final width in widths) ...[
           Container(
             width: width,
-            height: 36,
+            height: MobileHomeChips.barHeight - 2,
             decoration: BoxDecoration(
               color: const Color(0xFFE6E7EE),
               borderRadius: BorderRadius.circular(18),

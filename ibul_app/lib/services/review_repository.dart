@@ -1,6 +1,81 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'review_service.dart';
+
+/// Shared review identity for product detail and compare.
+///
+/// A row with [productId] matches only that id, even when the stored name or
+/// store text is wrong. Name and store apply only when the row has no id.
+/// Ambiguous legacy rows (same name and seller on more than one product) are
+/// left unmatched.
+List<Map<String, dynamic>> reviewsVisibleForProduct({
+  required String? productId,
+  required String productName,
+  required String? storeName,
+  required List<Map<String, dynamic>> reviews,
+  String? sellerId,
+  bool legacyNameIsAmbiguous = false,
+}) {
+  final selectedId = productId?.trim() ?? '';
+  final selectedName = productName.trim().toLowerCase();
+  final selectedStore = (storeName ?? '').trim().toLowerCase();
+  final selectedSeller = (sellerId ?? '').trim();
+  return [
+    for (final review in reviews)
+      if (_reviewVisibleForProduct(
+        review,
+        selectedId: selectedId,
+        selectedName: selectedName,
+        selectedStore: selectedStore,
+        selectedSeller: selectedSeller,
+        legacyNameIsAmbiguous: legacyNameIsAmbiguous,
+      ))
+        review,
+  ];
+}
+
+bool _reviewVisibleForProduct(
+  Map<String, dynamic> review, {
+  required String selectedId,
+  required String selectedName,
+  required String selectedStore,
+  required String selectedSeller,
+  required bool legacyNameIsAmbiguous,
+}) {
+  final reviewId =
+      (review['productId'] ?? review['product_id'])?.toString().trim() ?? '';
+  if (reviewId.isNotEmpty) {
+    return selectedId.isNotEmpty && reviewId == selectedId;
+  }
+  if (legacyNameIsAmbiguous) return false;
+  final reviewName =
+      (review['productName'] ?? review['product_name'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+  final reviewStore =
+      (review['storeName'] ?? review['store_name'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+  final reviewSeller =
+      (review['sellerId'] ?? review['seller_id'] ?? '').toString().trim();
+  if (reviewName.isEmpty) return true;
+  if (selectedName.isEmpty || reviewName != selectedName) return false;
+  if (selectedSeller.isNotEmpty &&
+      reviewSeller.isNotEmpty &&
+      reviewSeller != selectedSeller) {
+    return false;
+  }
+  if (selectedStore.isNotEmpty &&
+      reviewStore.isNotEmpty &&
+      reviewStore != selectedStore) {
+    return false;
+  }
+  return true;
+}
+
 class ReviewSummary {
   const ReviewSummary({
     required this.reviews,
@@ -236,37 +311,53 @@ class ReviewRepository {
     }
   }
 
+  bool _productIdColumnMissing = false;
+
   Future<ReviewSummary> getProductReviewSummary({
     required String productName,
     String? storeName,
+    String? productId,
+    String? sellerId,
     List<Map<String, dynamic>> localReviews = const [],
     int limit = 50,
   }) {
     final trimmedProductName = productName.trim();
     final trimmedStoreName = (storeName ?? '').trim();
+    final trimmedProductId = productId?.trim() ?? '';
     final cacheKey = _buildProductSummaryCacheKey(
       productName: trimmedProductName,
       storeName: trimmedStoreName,
       limit: limit,
+      productId: trimmedProductId,
     );
 
     return _getCachedSummary(cacheKey, () async {
       try {
-        var query = _supabase
-            .from('product_reviews')
-            .select(_productReviewSelect)
-            .ilike('product_name', trimmedProductName);
-        if (trimmedStoreName.isNotEmpty) {
-          query = query.ilike('store_name', trimmedStoreName);
+        if (trimmedProductId.isNotEmpty && !_productIdColumnMissing) {
+          try {
+            final identified = await _reviewsForProductId(
+              productId: trimmedProductId,
+              productName: trimmedProductName,
+              storeName: trimmedStoreName,
+              sellerId: sellerId,
+              localReviews: localReviews,
+              limit: limit,
+            );
+            return ReviewSummary.fromReviews(identified);
+          } catch (error) {
+            if (!_isMissingProductIdColumn(error)) rethrow;
+            _productIdColumnMissing = true;
+          }
         }
-        final rows = await query
-            .order('created_at', ascending: false)
-            .limit(limit);
-        final remoteReviews = List<Map<String, dynamic>>.from(
-          rows as List,
-        ).map(_mapProductReviewRow).toList(growable: false);
         return ReviewSummary.fromReviews(
-          _mergeReviews(localReviews, remoteReviews),
+          _mergeReviews(
+            localReviews,
+            await _reviewsByNameAndStore(
+              productName: trimmedProductName,
+              storeName: trimmedStoreName,
+              limit: limit,
+            ),
+          ),
         );
       } catch (e) {
         debugPrint('ReviewRepository.getProductReviewSummary warn: $e');
@@ -274,6 +365,89 @@ class ReviewRepository {
       }
     });
   }
+
+  Future<List<Map<String, dynamic>>> _reviewsForProductId({
+    required String productId,
+    required String productName,
+    required String storeName,
+    required String? sellerId,
+    required List<Map<String, dynamic>> localReviews,
+    required int limit,
+  }) async {
+    final select = '$_productReviewSelect,product_id';
+    final byId = await _supabase
+        .from('product_reviews')
+        .select(select)
+        .eq('product_id', productId)
+        .order('created_at', ascending: false)
+        .limit(limit);
+    final identified = List<Map<String, dynamic>>.from(byId as List)
+        .map(_mapProductReviewRow)
+        .toList(growable: false);
+    final ambiguous = await _legacyNameIsAmbiguous(
+      sellerId: sellerId,
+      productName: productName,
+    );
+    final legacy = ambiguous
+        ? const <Map<String, dynamic>>[]
+        : await _reviewsByNameAndStore(
+            productName: productName,
+            storeName: storeName,
+            limit: limit,
+            onlyNullProductId: true,
+          );
+    return reviewsVisibleForProduct(
+      productId: productId,
+      productName: productName,
+      storeName: storeName,
+      sellerId: sellerId,
+      legacyNameIsAmbiguous: ambiguous,
+      reviews: _mergeReviews(localReviews, [...identified, ...legacy]),
+    );
+  }
+
+  Future<bool> _legacyNameIsAmbiguous({
+    required String? sellerId,
+    required String productName,
+  }) async {
+    final seller = (sellerId ?? '').trim();
+    if (seller.isEmpty || productName.isEmpty) return false;
+    try {
+      final rows = await _supabase
+          .from('products')
+          .select('id')
+          .eq('seller_id', seller)
+          .ilike('name', productName)
+          .limit(2);
+      return (rows as List).length > 1;
+    } catch (error) {
+      debugPrint('ReviewRepository legacy ambiguity check warn: $error');
+      return false;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _reviewsByNameAndStore({
+    required String productName,
+    required String storeName,
+    required int limit,
+    bool onlyNullProductId = false,
+  }) async {
+    var query = _supabase.from('product_reviews').select(_productReviewSelect);
+    if (onlyNullProductId) {
+      query = query.isFilter('product_id', null);
+    }
+    query = query.ilike('product_name', productName);
+    if (storeName.isNotEmpty) {
+      query = query.ilike('store_name', storeName);
+    }
+    final rows = await query.order('created_at', ascending: false).limit(limit);
+    return List<Map<String, dynamic>>.from(rows as List)
+        .map(_mapProductReviewRow)
+        .toList(growable: false);
+  }
+
+  bool _isMissingProductIdColumn(Object error) =>
+      reviewWriteMissingProductIdColumn(error);
 
   Future<ReviewSummary> getSellerReviewSummary({
     String? sellerId,
@@ -352,8 +526,12 @@ class ReviewRepository {
     required String productName,
     String? storeName,
     int limit = 50,
+    String productId = '',
   }) {
-    return '${buildProductLookupKey(productName: productName, storeName: storeName)}::$limit';
+    final base =
+        '${buildProductLookupKey(productName: productName, storeName: storeName)}::$limit';
+    final id = productId.trim();
+    return id.isEmpty ? base : '$base::$id';
   }
 
   void _seedProductSummary({
@@ -416,6 +594,7 @@ class ReviewRepository {
       'sellerId': row['seller_id']?.toString() ?? '',
       'productImageUrl': row['product_image_url']?.toString() ?? '',
       'productCode': row['product_code']?.toString() ?? '',
+      if (row['product_id'] != null) 'productId': row['product_id'].toString(),
       'rating': (row['rating'] as num?)?.toDouble() ?? 0,
       'comment': row['comment']?.toString() ?? '',
       'imageUrls': List<String>.from(row['image_urls'] ?? const []),

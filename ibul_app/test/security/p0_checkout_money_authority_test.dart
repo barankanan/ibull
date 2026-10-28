@@ -337,4 +337,34 @@ void main() {
       isFalse,
     );
   });
+
+  test('cancel unpaid order restores stock once and stays owner-scoped', () {
+    final cancel = stageASql
+        .split('create or replace function public.cancel_marketplace_order_if_unpaid')
+        .last
+        .split('revoke all on function public.cancel_marketplace_order_if_unpaid')
+        .first;
+    final stockAt = cancel.indexOf('set stock = coalesce(stock, 0) + v_qty');
+    final deleteAt = cancel.indexOf('delete from public.order_items');
+    expect(stockAt, greaterThan(0));
+    expect(deleteAt, greaterThan(stockAt));
+    expect(cancel, contains('order by product_id'));
+    expect(cancel, contains('order by oi.product_id'));
+    expect(cancel, contains("sum(oi.quantity)::int"));
+    expect(cancel, contains('ORDER_NOT_FOUND'));
+    expect(cancel, contains('ORDER_OWNER_MISMATCH'));
+    expect(cancel, contains('ORDER_NOT_CANCELLABLE'));
+    expect(cancel.indexOf('ORDER_NOT_CANCELLABLE'), lessThan(stockAt));
+    expect(cancel, contains("'pending', 'unpaid', ''"));
+    expect(cancel, isNot(contains('stock = stock -')));
+    final categoryPatch = File(
+      'supabase/manual_patches/20261004_categories_authenticated_write_hardening.sql',
+    ).readAsStringSync();
+    expect(categoryPatch, contains('drop policy if exists "categories_auth_insert"'));
+    expect(categoryPatch, contains('drop policy if exists "categories_auth_update"'));
+    expect(categoryPatch, contains('drop policy if exists "categories_auth_delete"'));
+    expect(categoryPatch, contains('is_admin_user(auth.uid())'));
+    expect(categoryPatch, isNot(contains('drop policy if exists "categories_public_read"')));
+    expect(categoryPatch, isNot(contains('public.orders')));
+  });
 }

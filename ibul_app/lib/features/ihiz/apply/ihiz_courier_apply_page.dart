@@ -458,9 +458,8 @@ class _IhizCourierApplyPageState extends State<IhizCourierApplyPage> {
                               children: [
                                 const IhizSectionHeader(
                                   eyebrow: 'İHIZ',
-                                  title: 'Kurye başvuru formu',
-                                  subtitle:
-                                      'Bilgilerinizi adım adım tamamlayın. Belgeler güvenli şekilde kaydedilir.',
+                                  title: 'İHIZ Kuryesi Ol',
+                                  subtitle: 'Başvurunu birkaç adımda tamamla.',
                                 ),
                                 const SizedBox(height: 18),
                                 IhizApplyStepIndicator(

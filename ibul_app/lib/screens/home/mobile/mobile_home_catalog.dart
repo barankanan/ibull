@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/app_state.dart';
+import '../../../core/auth/user_identity.dart';
+import '../../../core/constants.dart';
+import '../../../core/favorite_state.dart';
 import '../../../features/vehicle/domain/vehicle_catalog.dart';
 import '../../../features/vehicle/models/vehicle_enums.dart';
 import '../../../features/vehicle/models/vehicle_listing.dart';
@@ -11,7 +14,9 @@ import '../../../models/product_model.dart';
 import '../../../models/product_pricing.dart';
 import '../../../widgets/optimized_image.dart';
 import '../../../widgets/product_card.dart';
+import '../../favorites_page.dart';
 import 'mobile_home_chrome.dart';
+import 'mobile_home_see_all_page.dart';
 
 class MobileHomeProductRails extends StatelessWidget {
   const MobileHomeProductRails({
@@ -26,91 +31,100 @@ class MobileHomeProductRails extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (products.isEmpty) return const SizedBox.shrink();
+    final user = context.select<AppState, Map<String, dynamic>?>(
+      (state) => state.currentUser,
+    );
+    final title = mobilePersonalizedTitle(user);
     return MobileProductRail(
-      title: 'Sana Özel',
+      title: title,
+      heading: MobilePersonalizedHeading(title: title),
+      sectionKey: 'mobile-product-rail-Sana Özel',
       products: products,
       onSeeAll: onSeeAllFeatured,
     );
   }
 }
 
-class MobileHomeCategoryRails extends StatelessWidget {
-  const MobileHomeCategoryRails({
-    super.key,
-    required this.products,
-    required this.onSeeAllCategory,
-  });
+String mobilePersonalizedTitle(Map<String, dynamic>? user) {
+  if (user == null || UserIdentity.isGuest(user)) return 'Sana Özel';
+  const keys = ['display_name', 'displayName', 'name', 'fullName', 'full_name'];
+  var raw = '';
+  for (final key in keys) {
+    final value = user[key]?.toString().trim() ?? '';
+    if (value.isNotEmpty) {
+      raw = value;
+      break;
+    }
+  }
+  if (raw.isEmpty) return 'Sana Özel';
+  final lowered = raw.toLowerCase();
+  if (lowered == 'kullanıcı' ||
+      lowered == 'misafir' ||
+      lowered == 'misafir kullanıcı') {
+    return 'Sana Özel';
+  }
+  final first = raw.split(RegExp(r'\s+')).first.trim();
+  if (first.isEmpty || first.contains('@') || first.length < 2) {
+    return 'Sana Özel';
+  }
+  return '$first Sana Özel';
+}
 
-  final List<Product> products;
-  final ValueChanged<String> onSeeAllCategory;
+class MobilePersonalizedHeading extends StatelessWidget {
+  const MobilePersonalizedHeading({super.key, required this.title});
+
+  final String title;
 
   @override
   Widget build(BuildContext context) {
-    final rails = mobileCategoryRails(products);
-    if (rails.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    const style = MobileHomeTypography.sectionTitle;
+    const suffix = ' Sana Özel';
+    if (title == 'Sana Özel' || !title.endsWith(suffix)) {
+      return const Text(
+        'Sana Özel',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: style,
+      );
+    }
+    final name = title.substring(0, title.length - suffix.length);
+    return Row(
       children: [
-        for (final rail in rails)
-          MobileProductRail(
-            title: rail.title,
-            products: rail.products,
-            onSeeAll: () => onSeeAllCategory(rail.title),
+        Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: style.copyWith(color: AppColors.primary),
+        ),
+        const SizedBox(width: 6),
+        const Flexible(
+          child: Text(
+            'Sana Özel',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
           ),
+        ),
       ],
     );
   }
-}
-
-class MobileCategoryRail {
-  const MobileCategoryRail({required this.title, required this.products});
-
-  final String title;
-  final List<Product> products;
-}
-
-List<MobileCategoryRail> mobileCategoryRails(List<Product> products) {
-  final grouped = <String, List<Product>>{};
-  final order = <String>[];
-  void add(String raw, Product product) {
-    final title = raw.trim();
-    if (title.isEmpty) return;
-    final bucket = grouped.putIfAbsent(title, () {
-      order.add(title);
-      return <Product>[];
-    });
-    final id = product.productId;
-    if (id != null && bucket.any((item) => item.productId == id)) return;
-    bucket.add(product);
-  }
-
-  for (final product in products) {
-    final main = product.category ?? '';
-    final sub = product.subCategory ?? '';
-    if (main.trim().isNotEmpty) add(main, product);
-    if (sub.trim().isNotEmpty &&
-        sub.trim().toLowerCase() != main.trim().toLowerCase()) {
-      add(sub, product);
-    }
-  }
-  return [
-    for (final title in order)
-      if ((grouped[title] ?? const []).isNotEmpty)
-        MobileCategoryRail(title: title, products: grouped[title]!),
-  ];
 }
 
 class MobileProductRail extends StatelessWidget {
   const MobileProductRail({
     super.key,
     required this.title,
+    this.heading,
     required this.products,
     this.onSeeAll,
+    this.sectionKey,
   });
 
   final String title;
+  final Widget? heading;
   final List<Product> products;
   final VoidCallback? onSeeAll;
+  final String? sectionKey;
 
   static double cardWidthFor(double viewport) {
     final inner = viewport - 16;
@@ -129,9 +143,13 @@ class MobileProductRail extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          MobileHomeSectionTitle(title: title, onSeeAll: onSeeAll),
+          MobileHomeSectionTitle(
+            title: title,
+            heading: heading,
+            onSeeAll: onSeeAll,
+          ),
           SizedBox(
-            key: ValueKey('mobile-product-rail-$title'),
+            key: ValueKey(sectionKey ?? 'mobile-product-rail-$title'),
             height: 312,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
@@ -239,8 +257,83 @@ class MobileHomeRecent extends StatelessWidget {
     final recent = context.select<AppState, List<Product>>(
       (state) => state.recentlyViewedProducts,
     );
-    if (recent.isEmpty) return const SizedBox.shrink();
-    return MobileProductRail(title: 'Son Baktıkların', products: recent);
+    if (recent.isEmpty) {
+      return const _HomeMemoryEmpty(
+        title: 'Daha Önce Gezdiklerin',
+        message: 'Gezdiğin ürünler burada görünecek.',
+      );
+    }
+    return MobileProductRail(
+      title: 'Daha Önce Gezdiklerin',
+      products: recent.take(10).toList(growable: false),
+      onSeeAll: () {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => MobileHomeSeeAllPage.products(
+              title: 'Daha Önce Gezdiklerin',
+              products: recent,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class MobileHomeLiked extends StatelessWidget {
+  const MobileHomeLiked({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final liked = context.select<FavoriteState, List<Product>>(
+      (state) => state.favorites,
+    );
+    if (liked.isEmpty) {
+      return const _HomeMemoryEmpty(
+        title: 'Beğendiklerin',
+        message: 'Beğendiğin ürünler burada görünecek.',
+      );
+    }
+    return MobileProductRail(
+      title: 'Beğendiklerin',
+      products: liked.take(10).toList(growable: false),
+      onSeeAll: () {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const FavoritesPage()),
+        );
+      },
+    );
+  }
+}
+
+class _HomeMemoryEmpty extends StatelessWidget {
+  const _HomeMemoryEmpty({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          MobileHomeSectionTitle(title: title),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text(
+              message,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: mobileHomeMuted,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

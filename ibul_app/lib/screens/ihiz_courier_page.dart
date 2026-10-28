@@ -118,7 +118,6 @@ class _IhizCourierPageState extends State<IhizCourierPage> {
         onCourierApply: _openCourierApply,
       ),
       body: IhizLandingBody(
-        onLogin: _openLogin,
         onCourierApply: _openCourierApply,
         onBusinessJoin: _openBusinessJoin,
         onBindBusiness: (serial) => _openBusinessJoin(serial),

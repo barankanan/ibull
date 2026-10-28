@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/app_image_cdn.dart';
 import '../../../widgets/optimized_image.dart';
 
 /// Fixed 16:6.4 banner slot. Skeleton and image share the same box.
@@ -33,7 +34,7 @@ class _MobileHomeHeroState extends State<MobileHomeHero> {
   Widget build(BuildContext context) {
     if (!widget.loading && widget.urls.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
       child: AspectRatio(
         key: const ValueKey('mobile-home-banner'),
         aspectRatio: MobileHomeHero.aspectRatio,
@@ -52,7 +53,13 @@ class _MobileHomeHeroState extends State<MobileHomeHero> {
                       itemCount: widget.urls.length,
                       onPageChanged: (value) => setState(() => _index = value),
                       itemBuilder: (context, index) => OptimizedImage(
-                        imageUrlOrPath: widget.urls[index],
+                        imageUrlOrPath: AppImageCdn.supabasePublicRenderUrl(
+                          widget.urls[index],
+                          width: 960,
+                          height: 384,
+                          quality: 75,
+                          resize: 'cover',
+                        ),
                         fit: BoxFit.cover,
                         cacheWidth: 960,
                         cacheHeight: 384,

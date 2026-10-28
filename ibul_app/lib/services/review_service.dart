@@ -1,6 +1,54 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+/// Order-item product id. Never derived from product_code.
+String? reviewProductIdFromOrderItem(Map<String, dynamic> item) {
+  final raw = item['product_id'] ?? item['productId'];
+  final id = raw?.toString().trim() ?? '';
+  return id.isEmpty ? null : id;
+}
+
+/// Insert body for a new product review. [productId] is omitted when blank.
+Map<String, dynamic> productReviewInsertPayload({
+  required String productName,
+  required String storeName,
+  required String sellerId,
+  required String productImageUrl,
+  required String productCode,
+  required double rating,
+  required String comment,
+  required List<String> imageUrls,
+  required String userId,
+  required String userName,
+  String? productId,
+}) {
+  final payload = <String, dynamic>{
+    'user_id': userId,
+    'user_name': userName,
+    'product_name': productName,
+    'store_name': storeName,
+    'seller_id': sellerId,
+    'product_image_url': productImageUrl,
+    'product_code': productCode,
+    'rating': rating,
+    'comment': comment.trim(),
+    'image_urls': imageUrls,
+  };
+  final id = productId?.trim() ?? '';
+  if (id.isNotEmpty) payload['product_id'] = id;
+  return payload;
+}
+
+bool reviewWriteMissingProductIdColumn(Object error) {
+  if (error is PostgrestException) {
+    final message = error.message.toLowerCase();
+    return error.code == '42703' ||
+        (message.contains('product_id') && message.contains('does not exist'));
+  }
+  final text = error.toString().toLowerCase();
+  return text.contains('42703') && text.contains('product_id');
+}
+
 class ReviewService {
   ReviewService._();
   static final ReviewService instance = ReviewService._();
@@ -50,24 +98,41 @@ class ReviewService {
     required List<String> imageUrls,
     required String userId,
     required String userName,
+    String? productId,
   }) async {
+    final payload = productReviewInsertPayload(
+      productName: productName,
+      storeName: storeName,
+      sellerId: sellerId,
+      productImageUrl: productImageUrl,
+      productCode: productCode,
+      rating: rating,
+      comment: comment,
+      imageUrls: imageUrls,
+      userId: userId,
+      userName: userName,
+      productId: productId,
+    );
+    try {
+      return await _insertProductReview(payload);
+    } catch (error) {
+      if (!payload.containsKey('product_id') ||
+          !reviewWriteMissingProductIdColumn(error)) {
+        rethrow;
+      }
+      payload.remove('product_id');
+      return _insertProductReview(payload);
+    }
+  }
+
+  Future<Map<String, dynamic>> _insertProductReview(
+    Map<String, dynamic> payload,
+  ) async {
     final row = await _supabase
         .from('product_reviews')
-        .insert({
-          'user_id': userId,
-          'user_name': userName,
-          'product_name': productName,
-          'store_name': storeName,
-          'seller_id': sellerId,
-          'product_image_url': productImageUrl,
-          'product_code': productCode,
-          'rating': rating,
-          'comment': comment.trim(),
-          'image_urls': imageUrls,
-        })
+        .insert(payload)
         .select()
         .single();
-
     return _mapProductReviewRow(Map<String, dynamic>.from(row));
   }
 

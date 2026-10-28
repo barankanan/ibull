@@ -3,25 +3,25 @@ set -e
 
 DEVICE_ID="00008030-001610AC14BB802E"
 SUPABASE_URL="https://ihmixxzqnpamcwmrfibx.supabase.co"
-PLIST="ios/Runner/GoogleService-Info.plist"
-
 SUPABASE_ANON_KEY=$(grep '^SUPABASE_ANON_KEY=' run_ios_release.sh | sed 's/^SUPABASE_ANON_KEY="//; s/"$//')
 
-FIREBASE_IOS_API_KEY=$(/usr/libexec/PlistBuddy -c "Print :API_KEY" "$PLIST")
-FIREBASE_IOS_APP_ID=$(/usr/libexec/PlistBuddy -c "Print :GOOGLE_APP_ID" "$PLIST")
-FIREBASE_PROJECT_ID=$(/usr/libexec/PlistBuddy -c "Print :PROJECT_ID" "$PLIST")
-FIREBASE_MESSAGING_SENDER_ID=$(/usr/libexec/PlistBuddy -c "Print :GCM_SENDER_ID" "$PLIST")
-FIREBASE_STORAGE_BUCKET=$(/usr/libexec/PlistBuddy -c "Print :STORAGE_BUCKET" "$PLIST")
-FIREBASE_IOS_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :BUNDLE_ID" "$PLIST")
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ios_runtime_env.sh"
+ios_runtime_prepare
+ios_runtime_status
+if ! ios_runtime_ready; then
+  echo "iOS runtime config eksik. flutter run başlatılmadı."
+  exit 1
+fi
 
 echo "iPhone DEBUG başlatılıyor..."
 echo "Hot Reload: r"
 echo "Hot Restart: R"
 echo "Çıkış: q"
-echo "BUNDLE_ID=$FIREBASNDLE_ID"
 
 flutter run -d "$DEVICE_ID" --debug \
   --target lib/main.dart \
+  --dart-define=ENABLE_TEST_CHECKOUT=true \
   --dart-define=IBUL_SUPABASE_URL="$SUPABASE_URL" \
   --dart-define=IBUL_SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
   --dart-define=IBUL_FIREBASE_IOS_API_KEY="$FIREBASE_IOS_API_KEY" \

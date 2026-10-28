@@ -128,7 +128,7 @@ void main() {
 
     await tester.tap(find.widgetWithText(FilledButton, 'Karşılaştır'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
     expect(VehicleCompareStore.instance.contains('listing-1'), isTrue);
     expect(VehicleCompareStore.instance.contains('listing-2'), isTrue);
     expect(find.text('Araç Karşılaştırma'), findsWidgets);
@@ -178,4 +178,42 @@ void main() {
       inInclusiveRange(38, 42),
     );
   });
+
+  for (final width in <double>[360, 390, 430]) {
+    testWidgets('hub vehicle cards fit a 250px rail at $width', (tester) async {
+      await tester.binding.setSurfaceSize(Size(width, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      Future<void> pump(VehicleListing listing) {
+        return tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                height: 250,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    VehicleCard(listing: listing),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+
+      await pump(_listing(id: 'sale-fit', type: VehicleListingType.sale));
+      expect(find.text('İletişime Geç'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await pump(
+        _listing(
+          id: 'rent-fit',
+          type: VehicleListingType.rental,
+          salePrice: null,
+        ),
+      );
+      expect(find.text('Kirala'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

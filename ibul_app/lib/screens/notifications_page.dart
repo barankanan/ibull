@@ -64,6 +64,46 @@ class _NotificationsPageState extends State<NotificationsPage>
     _loadNotifications();
   }
 
+  Future<void> _markOneRead(Map<String, dynamic> notification) async {
+    if (notification['read_at'] != null) return;
+    final id = notification['id']?.toString().trim() ?? '';
+    if (id.isNotEmpty && !id.startsWith('fallback-')) {
+      await OrderService.instance.markNotificationRead(id);
+    }
+    if (!mounted) return;
+    setState(() {
+      final index = _notifications.indexWhere(
+        (element) => element['id'] == notification['id'],
+      );
+      if (index == -1) return;
+      _notifications[index] = {
+        ..._notifications[index],
+        'read_at': DateTime.now().toIso8601String(),
+      };
+    });
+  }
+
+  Future<void> _markAllRead() async {
+    final pending = _notifications.where((row) {
+      final id = row['id']?.toString() ?? '';
+      return row['read_at'] == null &&
+          id.isNotEmpty &&
+          !id.startsWith('fallback-');
+    }).toList(growable: false);
+    for (final row in pending) {
+      await OrderService.instance.markNotificationRead(row['id'].toString());
+    }
+    if (!mounted) return;
+    setState(() {
+      for (var i = 0; i < _notifications.length; i++) {
+        _notifications[i] = {
+          ..._notifications[i],
+          'read_at': DateTime.now().toIso8601String(),
+        };
+      }
+    });
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
@@ -992,10 +1032,23 @@ class _NotificationsPageState extends State<NotificationsPage>
       onRefresh: _loadNotifications,
       child: ListView.separated(
         padding: const EdgeInsets.all(16),
-        itemCount: visibleNotifications.length,
+        itemCount: visibleNotifications.length + 1,
         separatorBuilder: (_, _) => const SizedBox(height: 12),
         itemBuilder: (context, index) {
-          final notification = visibleNotifications[index];
+          if (index == 0) {
+            final hasUnread = visibleNotifications.any(
+              (row) => row['read_at'] == null,
+            );
+            if (!hasUnread) return const SizedBox.shrink();
+            return Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _markAllRead,
+                child: const Text('Tümünü okundu say'),
+              ),
+            );
+          }
+          final notification = visibleNotifications[index - 1];
           final data = _notificationData(notification);
           final notificationType =
               data['type']?.toString().trim().toLowerCase() ?? '';
@@ -1121,13 +1174,16 @@ class _NotificationsPageState extends State<NotificationsPage>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
-                              child: Text(
-                                _notificationTitle(notification),
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.primary,
-                                  height: 1.15,
+                              child: GestureDetector(
+                                onTap: () => _markOneRead(notification),
+                                child: Text(
+                                  _notificationTitle(notification),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primary,
+                                    height: 1.15,
+                                  ),
                                 ),
                               ),
                             ),

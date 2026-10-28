@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import '../../../features/vehicle/models/vehicle_listing.dart';
 import '../../../models/db_product.dart';
 import '../../../models/home_products_fetch_report.dart';
+import '../../../services/location_access_service.dart';
 import '../../../services/supabase_service.dart';
 import '../home_discovery_loader.dart';
 import '../home_discovery_resolver.dart';
@@ -22,6 +23,7 @@ class _HomeDiscoveryBlockState extends State<HomeDiscoveryBlock> {
   var _loadingProducts = true;
   var _loadingVehicles = true;
   var _loadingLocation = true;
+  var _offerLocation = false;
   String? _error;
   
   List<DBProduct> _products = [];
@@ -94,9 +96,11 @@ class _HomeDiscoveryBlockState extends State<HomeDiscoveryBlock> {
       if (!mounted) return;
       if (pos == null) {
         _loadingLocation = false;
+        _offerLocation = true;
         _rebuildItems();
         return;
       }
+      _offerLocation = false;
       _position = pos;
       
       // Wait for products and vehicles to know all sellers
@@ -119,6 +123,27 @@ class _HomeDiscoveryBlockState extends State<HomeDiscoveryBlock> {
     }));
   }
 
+  Future<void> _useLocation() async {
+    final pos = await LocationAccessService.instance.getBestAvailablePosition(
+      requestPermissionIfNeeded: true,
+    );
+    if (!mounted || pos == null) return;
+    _position = pos;
+    _offerLocation = false;
+    final sellerIds = <String>{
+      for (final product in _products)
+        if (product.sellerId != null) product.sellerId!,
+      for (final vehicle in _vehicles)
+        if (vehicle.sellerId.isNotEmpty) vehicle.sellerId,
+    };
+    _distanceBySeller = await HomeDiscoveryLoader.distancesFor(
+      sellerIds: sellerIds,
+      position: pos,
+    ).catchError((_) => const <String, double>{});
+    if (!mounted) return;
+    _rebuildItems();
+  }
+
   @override
   Widget build(BuildContext context) {
     return HomeNearbyDiscoverySection(
@@ -126,6 +151,7 @@ class _HomeDiscoveryBlockState extends State<HomeDiscoveryBlock> {
       isLoading: _loadingProducts && _loadingVehicles,
       errorMessage: _error,
       onRetry: _load,
+      onUseLocation: _offerLocation ? _useLocation : null,
     );
   }
 }

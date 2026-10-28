@@ -11,8 +11,18 @@ class FavoriteState extends ChangeNotifier {
 
   final List<Product> _favorites = [];
   final Set<String> _favoriteKeys = <String>{};
+  bool _hydrated = false;
 
   List<Product> get favorites => List.unmodifiable(_favorites);
+
+  /// True after the existing auth/cache hydrate writes the collection.
+  bool get hydrated => _hydrated;
+
+  void markHydrated() {
+    if (_hydrated) return;
+    _hydrated = true;
+    notifyListeners();
+  }
 
   static String productKey(Product product) {
     if (product.productId != null && product.productId!.trim().isNotEmpty) {
@@ -29,6 +39,7 @@ class FavoriteState extends ChangeNotifier {
       ..clear()
       ..addAll(products);
     _rebuildKeys();
+    _hydrated = true;
     if (notify) {
       notifyListeners();
     }
@@ -49,6 +60,7 @@ class FavoriteState extends ChangeNotifier {
   void clear({bool notify = true}) {
     _favorites.clear();
     _favoriteKeys.clear();
+    _hydrated = false;
     if (notify) {
       notifyListeners();
     }

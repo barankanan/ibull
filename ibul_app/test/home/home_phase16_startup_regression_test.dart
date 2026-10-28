@@ -59,7 +59,8 @@ void main() {
           File('lib/screens/home/home_viewport_section.dart').readAsStringSync();
       expect(source, contains('HomeSectionError'));
       expect(source, contains('_retry'));
-      expect(source, contains('_triggered = false'));
+      expect(source, contains('_codeTriggered = false'));
+      expect(source, contains('_dataTriggered = false'));
     });
   });
 
@@ -107,10 +108,11 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
 
       expect(find.byType(SkeletonLoading), findsWidgets);
       expect(find.byType(HomeHeroSlotPlaceholder), findsNothing);
+      await tester.pump(const Duration(seconds: 5));
     });
 
     test('qr fast-path clears hero loading so it cannot hang', () {

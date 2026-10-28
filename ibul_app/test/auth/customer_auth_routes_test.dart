@@ -45,8 +45,8 @@ void main() {
     test('customer app mounts auth-capable providers without seller modules', () {
       IbulAppModeRegistry.current = IbulAppMode.customer;
       final providers = buildCustomerProviders();
-      expect(providers.length, 5);
-      expect(countMountedProviders(IbulAppMode.customer), 5);
+      expect(providers.length, 6);
+      expect(countMountedProviders(IbulAppMode.customer), 6);
       final source = providers.map((p) => p.toString()).join('\n');
       expect(source, isNot(contains('DesktopPrintHub')));
     });

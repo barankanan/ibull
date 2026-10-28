@@ -5,6 +5,7 @@ import 'package:ibul_app/utils/browser_file_download.dart';
 import 'bulk_product_csv_file_picker.dart';
 import 'bulk_product_import_models.dart';
 import 'bulk_product_import_service.dart';
+import 'package:ibul_app/services/store_service.dart';
 
 class BulkProductUploadModal extends StatefulWidget {
   const BulkProductUploadModal({super.key});
@@ -49,7 +50,10 @@ class _BulkProductUploadModalState extends State<BulkProductUploadModal> {
 
   Future<void> _downloadTemplate() async {
     try {
-      final List<int> bytes = buildBulkProductImportTemplateBytes();
+      final Map<String, dynamic>? profile = await StoreService().getStoreProfile();
+      final String? storeCategory = profile?['category']?.toString();
+      final bool isFood = storeCategory?.trim() == 'Yemek';
+      final List<int> bytes = buildBulkProductImportTemplateBytes(isFood);
       final String? savedPath = await BrowserFileDownload.saveBytes(
         bytes: bytes,
         fileName: bulkProductImportTemplateFileName,

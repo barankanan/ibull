@@ -2,6 +2,8 @@
 
 import 'dart:html' as html;
 
+import 'public_seo.dart';
+
 void setSeoMeta({
   required String title,
   String? description,
@@ -65,8 +67,9 @@ void setSeoMeta({
     final normalizedPath = canonical.startsWith('/')
         ? canonical
         : '/$canonical';
-    final canonicalUrl = '${html.window.location.origin}$normalizedPath';
+    final canonicalUrl = publicCanonicalUrl(normalizedPath);
     _canonicalLink().href = canonicalUrl;
+    _metaByProperty('og:url').content = canonicalUrl;
   }
 }
 

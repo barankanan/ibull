@@ -294,15 +294,25 @@ class StoreMediaService {
 
     final data = await compressImage(file);
 
-    await _supabase.storage
-        .from('product-images')
-        .uploadBinary(
-          path,
-          data,
-          fileOptions: FileOptions(contentType: _contentType, upsert: true),
-        );
-
-    return _supabase.storage.from('product-images').getPublicUrl(path);
+    try {
+      await _supabase.storage
+          .from('product-variants')
+          .uploadBinary(
+            path,
+            data,
+            fileOptions: FileOptions(contentType: _contentType, upsert: true),
+          );
+      return _supabase.storage.from('product-variants').getPublicUrl(path);
+    } catch (_) {
+      await _supabase.storage
+          .from('product-images')
+          .uploadBinary(
+            path,
+            data,
+            fileOptions: FileOptions(contentType: _contentType, upsert: true),
+          );
+      return _supabase.storage.from('product-images').getPublicUrl(path);
+    }
   }
 
   Future<String> uploadProductDescriptionImage(

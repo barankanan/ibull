@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
+import '../product_discount_price.dart';
 import '../../core/home_navigation.dart';
+import '../../screens/home_lazy_routes.dart';
 import '../../screens/checkout_page.dart';
 import '../../screens/business_detail_page.dart';
 import '../../core/app_state.dart';
@@ -44,9 +46,13 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ProductDetailViewModel>(
+    return ListenableBuilder(
+      listenable: AppState(),
+      builder: (context, _) {
+        return Consumer<ProductDetailViewModel>(
       builder: (context, viewModel, child) {
         final product = viewModel.displayProduct;
+        final inCart = AppState().isInCart(product);
         final category = (product.category ?? '').toLowerCase();
         final isFoodCategory = category.contains('yemek');
         return Container(
@@ -66,7 +72,8 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
             child: Row(
               children: [
                 // Price Area (Left)
-                Column(
+                Expanded(
+                  child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -108,14 +115,7 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                               ),
                             ),
                           ),
-                        Text(
-                          viewModel.totalPrice,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w500,
-                            color: Color(0xFF673AB7), // Purple
-                          ),
-                        ),
+                        Flexible(child: _detailPrice(viewModel)),
                       ],
                     ),
                     const Text(
@@ -127,8 +127,9 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                       ),
                     ),
                   ],
+                  ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 8),
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -205,7 +206,7 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                             InteractionFeedback.forInteraction(
                               InteractionFeedbackType.addToCart,
                             );
-                            if (viewModel.isAddedToCart) {
+                            if (inCart) {
                               viewModel.removeFromCart();
                               InteractionFeedback.forInteraction(
                                 InteractionFeedbackType.successState,
@@ -243,7 +244,7 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                             }
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: viewModel.isAddedToCart
+                            backgroundColor: inCart
                                 ? Colors.green
                                 : const Color(0xFF6200EA),
                             foregroundColor: Colors.white,
@@ -265,7 +266,7 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                                   ),
                                 )
                               : Text(
-                            viewModel.isAddedToCart ? 'SEPETTE' : 'SEPETE EKLE',
+                            inCart ? 'SEPETTE' : 'SEPETE EKLE',
                             maxLines: 1,
                             softWrap: false,
                             overflow: TextOverflow.ellipsis,
@@ -278,6 +279,34 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                           ),
                         ),
                       ),
+                      if (inCart) ...[
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: ElevatedButton(
+                            key: const ValueKey('product-detail-open-cart'),
+                            onPressed: () {
+                              HomeLazyRoutes.openCart(context);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(40, 40),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              elevation: 0,
+                            ),
+                            child: const Icon(
+                              Icons.shopping_cart_outlined,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                      ],
                       const SizedBox(width: 8),
                       SizedBox(
                         height: 40,
@@ -367,6 +396,38 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
           ),
         );
       },
+        );
+      },
+    );
+  }
+
+  Widget _detailPrice(ProductDetailViewModel viewModel) {
+    final product = viewModel.displayProduct;
+    final extras =
+        viewModel.selectedParts.isNotEmpty || viewModel.isWarrantyAdded;
+    final discount = ProductDiscountView.resolve(
+      price: product.price,
+      oldPrice: product.oldPrice,
+    );
+    if (extras || !discount.hasDiscount) {
+      return Text(
+        viewModel.totalPrice,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.w700,
+          color: Color(0xFF673AB7),
+        ),
+      );
+    }
+    return ProductDiscountPrice(
+      price: product.price,
+      oldPrice: product.oldPrice,
+      currentFontSize: 18,
+      oldFontSize: 12,
+      currentColor: const Color(0xFF673AB7),
+      compact: true,
     );
   }
 

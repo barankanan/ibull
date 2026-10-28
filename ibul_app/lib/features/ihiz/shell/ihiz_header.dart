@@ -26,7 +26,38 @@ class IhizHeader extends StatefulWidget {
 }
 
 class _IhizHeaderState extends State<IhizHeader> {
-  bool _menuOpen = false;
+  Future<void> _openDrawer() async {
+    final width = MediaQuery.sizeOf(context).width;
+    final panelWidth = width < 420 ? width * 0.86 : 340.0;
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Menüyü kapat',
+      barrierColor: IhizBrand.navy.withValues(alpha: 0.28),
+      transitionDuration: const Duration(milliseconds: 220),
+      pageBuilder: (dialogContext, _, _) {
+        return Align(
+          alignment: Alignment.centerRight,
+          child: _IhizSideDrawer(
+            width: panelWidth,
+            links: _links,
+            onClose: () => Navigator.of(dialogContext).pop(),
+            onLogin: () {
+              Navigator.of(dialogContext).pop();
+              widget.onLogin();
+            },
+          ),
+        );
+      },
+      transitionBuilder: (context, animation, _, child) {
+        final slide = Tween<Offset>(
+          begin: const Offset(1, 0),
+          end: Offset.zero,
+        ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
+        return SlideTransition(position: slide, child: child);
+      },
+    );
+  }
 
   List<_IhizHeaderLink> get _links => [
         _IhizHeaderLink('Ana Sayfa', widget.onHome),
@@ -55,7 +86,7 @@ class _IhizHeaderState extends State<IhizHeader> {
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final compact = constraints.maxWidth < 1180;
+            final compact = constraints.maxWidth < 900;
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -85,116 +116,94 @@ class _IhizHeaderState extends State<IhizHeader> {
                             ),
                           ),
                         ),
-                        if (compact) const Spacer() else const SizedBox(width: 16),
-                        if (compact)
+                        if (compact) ...[
+                          const Spacer(),
                           IconButton(
-                            onPressed: () =>
-                                setState(() => _menuOpen = !_menuOpen),
+                            onPressed: _openDrawer,
                             tooltip: 'Menü',
-                            icon: Icon(
-                              _menuOpen
-                                  ? Icons.close_rounded
-                                  : Icons.menu_rounded,
+                            icon: const Icon(
+                              Icons.menu_rounded,
                               color: IhizBrand.ink,
                               size: 28,
                             ),
-                          )
-                        else
+                          ),
+                        ] else ...[
                           Expanded(
-                            child: Align(
-                              alignment: Alignment.centerRight,
-                              child: SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    for (final link in _links)
-                                      TextButton(
-                                        onPressed: link.onTap,
-                                        style: TextButton.styleFrom(
-                                          foregroundColor: IhizBrand.ink,
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 8,
-                                          ),
-                                          visualDensity: VisualDensity.compact,
-                                          textStyle: const TextStyle(
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 13.5,
-                                          ),
-                                        ),
-                                        child: Text(link.label),
-                                      ),
-                                    const SizedBox(width: 6),
-                                    OutlinedButton(
-                                      onPressed: widget.onLogin,
-                                      style: OutlinedButton.styleFrom(
-                                        foregroundColor: IhizBrand.navy,
-                                        side: const BorderSide(
-                                          color: IhizBrand.blue,
-                                          width: 1.4,
-                                        ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                for (final link in _links)
+                                  Flexible(
+                                    child: TextButton(
+                                      onPressed: link.onTap,
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: IhizBrand.inkSoft,
+                                        minimumSize: const Size(44, 44),
                                         padding: const EdgeInsets.symmetric(
-                                          horizontal: 14,
-                                          vertical: 10,
-                                        ),
-                                        visualDensity: VisualDensity.compact,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(999),
+                                          horizontal: 8,
                                         ),
                                         textStyle: const TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 14,
                                         ),
                                       ),
-                                      child: const Text('Giriş Yap'),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    FilledButton(
-                                      onPressed: widget.onCourierApply,
-                                      style: FilledButton.styleFrom(
-                                        backgroundColor: IhizBrand.blue,
-                                        foregroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 10,
-                                        ),
-                                        visualDensity: VisualDensity.compact,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(999),
-                                        ),
-                                        textStyle: const TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 13,
-                                        ),
+                                      child: Text(
+                                        link.label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                      child: const Text('Kurye Ol'),
                                     ),
-                                  ],
-                                ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          OutlinedButton(
+                            onPressed: widget.onLogin,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: IhizBrand.navy,
+                              side: const BorderSide(color: IhizBrand.line),
+                              backgroundColor: Colors.white,
+                              minimumSize: const Size(44, 42),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              textStyle: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 13.5,
+                              ),
+                            ),
+                            child: const Text('Giriş Yap'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton.icon(
+                            onPressed: widget.onCourierApply,
+                            icon: const Icon(Icons.two_wheeler_rounded, size: 16),
+                            label: const Text('Kurye Ol'),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: IhizBrand.blue,
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size(44, 42),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              textStyle: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 13.5,
                               ),
                             ),
                           ),
+                        ],
                       ],
                     ),
                     ),
                   ),
                 ),
-                if (compact && _menuOpen)
-                  _IhizMobileMenu(
-                    links: _links,
-                    onLogin: () {
-                      setState(() => _menuOpen = false);
-                      widget.onLogin();
-                    },
-                    onCourierApply: () {
-                      setState(() => _menuOpen = false);
-                      widget.onCourierApply();
-                    },
-                    onNavigate: () => setState(() => _menuOpen = false),
-                  ),
               ],
             );
           },
@@ -211,74 +220,86 @@ class _IhizHeaderLink {
   final VoidCallback onTap;
 }
 
-class _IhizMobileMenu extends StatelessWidget {
-  const _IhizMobileMenu({
+class _IhizSideDrawer extends StatelessWidget {
+  const _IhizSideDrawer({
+    required this.width,
     required this.links,
+    required this.onClose,
     required this.onLogin,
-    required this.onCourierApply,
-    required this.onNavigate,
   });
 
+  final double width;
   final List<_IhizHeaderLink> links;
+  final VoidCallback onClose;
   final VoidCallback onLogin;
-  final VoidCallback onCourierApply;
-  final VoidCallback onNavigate;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
+    final height = MediaQuery.sizeOf(context).height;
+    return Material(
       color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final link in links)
-            TextButton(
-              onPressed: () {
-                onNavigate();
-                link.onTap();
-              },
-              style: TextButton.styleFrom(
-                foregroundColor: IhizBrand.ink,
-                alignment: Alignment.centerLeft,
-                minimumSize: const Size.fromHeight(44),
-                textStyle: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15.5,
+      elevation: 8,
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: IconButton(
+                    tooltip: 'Kapat',
+                    onPressed: onClose,
+                    icon: const Icon(Icons.close_rounded, size: 26),
+                  ),
                 ),
-              ),
-              child: Text(link.label),
+                for (final link in links)
+                  TextButton(
+                    onPressed: () {
+                      onClose();
+                      link.onTap();
+                    },
+                    style: TextButton.styleFrom(
+                      foregroundColor: IhizBrand.ink,
+                      alignment: Alignment.centerLeft,
+                      minimumSize: const Size.fromHeight(44),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15.5,
+                      ),
+                    ),
+                    child: Text(link.label),
+                  ),
+                const Divider(height: 28),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(
+                    'Hesap',
+                    style: TextStyle(
+                      color: IhizBrand.inkSoft,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: onLogin,
+                  style: TextButton.styleFrom(
+                    foregroundColor: IhizBrand.blue,
+                    alignment: Alignment.centerLeft,
+                    minimumSize: const Size.fromHeight(48),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  child: const Text('Giriş Yap'),
+                ),
+              ],
             ),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            onPressed: onLogin,
-            style: OutlinedButton.styleFrom(
-              foregroundColor: IhizBrand.navy,
-              side: const BorderSide(color: IhizBrand.blue, width: 1.4),
-              minimumSize: const Size.fromHeight(48),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              textStyle: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-            child: const Text('Giriş Yap'),
           ),
-          const SizedBox(height: 8),
-          FilledButton(
-            onPressed: onCourierApply,
-            style: FilledButton.styleFrom(
-              backgroundColor: IhizBrand.blue,
-              foregroundColor: Colors.white,
-              minimumSize: const Size.fromHeight(48),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              textStyle: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-            child: const Text('Kurye Ol'),
-          ),
-        ],
+        ),
       ),
     );
   }

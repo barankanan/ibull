@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/ibul_router.dart';
+import '../../../app/marketplace_paths.dart';
 import '../../../core/constants.dart';
 import '../../../core/home_data_diagnostics.dart';
 import '../../../widgets/optimized_image.dart';
 import '../../../features/coupon/data/coupon_repository.dart';
 import '../../../features/coupon/domain/coupon_campaign.dart';
 import '../../../features/coupon/domain/coupon_models.dart';
-import '../../../features/coupon/screens/customer/coupon_discover_page.dart';
-import '../../../features/coupon/screens/customer/daily_deals_page.dart';
+import '../../../features/coupon/screens/customer/coupon_discover_page.dart'
+    deferred as coupon_discover;
+import '../../../features/coupon/screens/customer/daily_deals_page.dart'
+    deferred as daily_deals;
 import '../../../models/product_model.dart';
-import '../../../screens/home_lazy_routes.dart';
+import '../../../widgets/product_card_links.dart';
 import '../../../widgets/skeleton_loading.dart';
-import '../../coupons_page.dart';
+import '../../coupons_page.dart' deferred as coupons_page;
 
 /// Sağ sütun: Günün Fırsatı + Kupon alanı (legacy görünüm, gerçek veri).
 class HomeCouponDealColumn extends StatefulWidget {
@@ -219,7 +223,7 @@ class _HomeCouponDealColumnState extends State<HomeCouponDealColumn> {
   }
 
   void _openDeal(DailyDealProduct deal) {
-    HomeLazyRoutes.openProductDetail(
+    ProductCardLinks.openProductDetail(
       context,
       Product(
         productId: deal.id,
@@ -233,6 +237,36 @@ class _HomeCouponDealColumnState extends State<HomeCouponDealColumn> {
         images: [if ((deal.imageUrl ?? '').isNotEmpty) deal.imageUrl!],
         store: deal.storeName,
         sellerId: deal.sellerId,
+      ),
+    );
+  }
+
+  Future<void> _openDailyDeals() async {
+    await daily_deals.loadLibrary();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => daily_deals.DailyDealsPage()),
+    );
+  }
+
+  Future<void> _openCoupons() async {
+    if (IbulRouter.usesRootRouter) {
+      await IbulRouter.push(context, MarketplacePaths.coupons);
+      return;
+    }
+    await coupons_page.loadLibrary();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => coupons_page.CouponsPage()),
+    );
+  }
+
+  Future<void> _openCouponDiscover() async {
+    await coupon_discover.loadLibrary();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => coupon_discover.CouponDiscoverPage(),
       ),
     );
   }
@@ -270,11 +304,7 @@ class _HomeCouponDealColumnState extends State<HomeCouponDealColumn> {
                     ),
                   ),
                   InkWell(
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const DailyDealsPage(),
-                      ),
-                    ),
+                    onTap: _openDailyDeals,
                     child: const Text(
                       'Tümünü Gör',
                       style: TextStyle(fontSize: 12, color: AppColors.primary),
@@ -369,11 +399,7 @@ class _HomeCouponDealColumnState extends State<HomeCouponDealColumn> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () {
-          Navigator.of(
-            context,
-          ).push(MaterialPageRoute<void>(builder: (_) => const CouponsPage()));
-        },
+        onTap: _openCoupons,
         borderRadius: BorderRadius.circular(12),
         child: Ink(
           width: double.infinity,
@@ -403,13 +429,7 @@ class _HomeCouponDealColumnState extends State<HomeCouponDealColumn> {
               ),
               const SizedBox(height: 2),
               GestureDetector(
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const CouponDiscoverPage(),
-                    ),
-                  );
-                },
+                onTap: _openCouponDiscover,
                 child: const Row(
                   children: [
                     Icon(

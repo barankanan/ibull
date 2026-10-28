@@ -4,9 +4,9 @@ class StoreLogoHelper {
     final normalized = storeName.toLowerCase().trim();
     
     // Logo eşleştirmeleri
+    // Only files that exist under assets/store_logos. Missing files fall
+    // through to the remote logo URL or the letter avatar.
     final logoMap = {
-      'teknosa': 'assets/store_logos/teknosa.jpeg',
-      'arçelik': 'assets/store_logos/Arçelik-Logo.wine.png',
       'queen iletişim': 'assets/store_logos/queen iletişim.jpg',
       'flo': 'assets/store_logos/Flo.jpg',
       'lc waikiki': 'assets/store_logos/lc waikiki.webp',
@@ -15,9 +15,6 @@ class StoreLogoHelper {
       'arsuz parfüm evi': 'assets/store_logos/arsuz parfüm evi.jpeg',
       'eve': 'assets/store_logos/eve.png',
       'a101': 'assets/store_logos/A101.png',
-      'şok': 'assets/store_logos/şok.png',
-      'bim': 'assets/store_logos/bim.png',
-      'migros': 'assets/store_logos/migros.png',
       'işler kitapevi': 'assets/store_logos/işler kitapevi.png',
       'fp pro tamir': 'assets/store_logos/FP PRO tamir.png',
     };

@@ -55,7 +55,7 @@ void main() {
 
       expect(find.text('Uygulama başlatılamadı'), findsOneWidget);
       expect(find.text('Test fatal message'), findsOneWidget);
-      expect(find.text('detail'), findsOneWidget);
+      expect(find.textContaining('error: detail'), findsOneWidget);
       expect(find.text('Sayfayı Yenile'), findsOneWidget);
     });
 

@@ -12,7 +12,10 @@ class GoogleSignInGateway {
   GoogleSignIn? _client;
 
   GoogleSignIn get _google {
-    final clientId = AppRuntimeConfig.googleClientId;
+    final clientId = AppRuntimeConfig.optionalGoogleClientId;
+    if (clientId == null || clientId.isEmpty) {
+      throw StateError('IBUL_GOOGLE_CLIENT_ID is not configured');
+    }
     final serverClientId = AppRuntimeConfig.googleServerClientId;
     return _client ??= kIsWeb
         ? GoogleSignIn(clientId: clientId)

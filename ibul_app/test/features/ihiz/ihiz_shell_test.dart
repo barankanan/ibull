@@ -68,8 +68,11 @@ void main() {
 
     await tester.tap(find.byTooltip('Menü'));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
     expect(find.text('Ana Sayfa'), findsWidgets);
     expect(find.text('Nasıl Çalışır?'), findsWidgets);
+    expect(find.text('Giriş Yap'), findsWidgets);
+    expect(find.byTooltip('Kapat'), findsOneWidget);
   });
 
   testWidgets('IHIZ tablet uses IHIZ menu not marketplace header', (

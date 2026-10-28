@@ -39,7 +39,7 @@ void main() {
     });
 
     test('UTF-8 BOM içerir', () {
-      final bytes = buildBulkProductImportTemplateBytes();
+      final bytes = buildBulkProductImportTemplateBytes(false);
       expect(bytes.length, greaterThan(3));
       expect(bytes[0], 0xEF);
       expect(bytes[1], 0xBB);
@@ -47,7 +47,7 @@ void main() {
     });
 
     test('örnek satırlar içerir', () {
-      final csv = buildBulkProductImportTemplateCsv();
+      final csv = buildBulkProductImportTemplateCsv(false);
       expect(csv, contains('iPhone 15 Pro 256 GB'));
       expect(csv, contains('highlights_json'));
       expect(csv, contains('256 GB depolama'));
@@ -67,7 +67,7 @@ void main() {
 
   group('CSV validator', () {
     test('geçerli elektronik satırı kabul eder', () {
-      final String csv = buildBulkProductImportTemplateCsv();
+      final String csv = buildBulkProductImportTemplateCsv(false);
       final document = parser.parseString(csv);
       final preview = validator.validate(
         fileName: 'test.csv',

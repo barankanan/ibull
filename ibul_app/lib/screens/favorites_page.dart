@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
+import '../core/web_boot_loader.dart';
 import '../core/app_state.dart';
 import '../core/favorite_state.dart';
 import '../core/app_motion.dart';
@@ -17,17 +18,23 @@ import 'login_page.dart';
 import '../widgets/account_search_filter_row.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
+import '../services/supabase_service.dart';
 import '../widgets/product_card.dart';
-import '../widgets/premium_interactions.dart';
 import '../features/vehicle/models/vehicle_listing.dart';
 import '../features/vehicle/services/vehicle_service.dart';
 import '../features/vehicle/widgets/vehicle_card.dart';
 import '../widgets/restaurant_order/product_quick_view_dialog.dart';
 import '../widgets/account_sidebar.dart';
 import '../widgets/ibul_page_state.dart';
+import 'favorites/favorite_browse_card.dart';
+import 'favorites/favorites_filters.dart';
+import 'cart/cart_selection_page.dart';
 
 class FavoritesPage extends StatefulWidget {
-  const FavoritesPage({super.key});
+  const FavoritesPage({super.key, this.showAccountSidebar = false});
+
+  /// Account management keeps the sidebar. The header Favorilerim route does not.
+  final bool showAccountSidebar;
 
   @override
   State<FavoritesPage> createState() => _FavoritesPageState();
@@ -35,6 +42,11 @@ class FavoritesPage extends StatefulWidget {
 
 class _FavoritesPageState extends State<FavoritesPage> {
   String _selectedTab = 'Beğeniler';
+  String _searchQuery = '';
+  String _selectedFavoriteCategory = 'Tümü';
+  String _recommendationChip = 'Sana Göre';
+  List<Product> _catalogProducts = const [];
+  bool _recommendationsLoading = false;
 
   final List<String> _tabs = ['Beğeniler', 'Listelerim', 'Öneriler'];
   final AppState _appState = AppState();
@@ -88,10 +100,12 @@ class _FavoritesPageState extends State<FavoritesPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => dismissWebBootLoader());
     _appState.addListener(_onAppStateChanged);
     _favoriteState.addListener(_onAppStateChanged);
     _appState.refreshCommunityLists();
     unawaited(_loadVehicleFavorites());
+    unawaited(_loadRecommendationCatalog());
   }
 
   @override
@@ -104,6 +118,21 @@ class _FavoritesPageState extends State<FavoritesPage> {
   void _onAppStateChanged() {
     if (mounted) {
       setState(() {});
+    }
+  }
+
+  Future<void> _loadRecommendationCatalog() async {
+    setState(() => _recommendationsLoading = true);
+    try {
+      final rows = await SupabaseService.instance.getProductsPage(limit: 40);
+      if (!mounted) return;
+      setState(() {
+        _catalogProducts = rows.map(Product.fromDBProduct).toList();
+        _recommendationsLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _recommendationsLoading = false);
     }
   }
 
@@ -355,13 +384,15 @@ class _FavoritesPageState extends State<FavoritesPage> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const SizedBox(
-                          width: 280,
-                          child: AccountSidebar(
-                            activePage: 'Favorilerim',
+                        if (widget.showAccountSidebar) ...[
+                          const SizedBox(
+                            width: 280,
+                            child: AccountSidebar(
+                              activePage: 'Favorilerim',
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 32),
+                          const SizedBox(width: 32),
+                        ],
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -869,59 +900,66 @@ class _FavoritesPageState extends State<FavoritesPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: AccountSearchFilterRow(
-              filterLabel: _selectedTab == 'Listelerim' ? 'Ekle' : 'Filtre',
+              hintText: _selectedTab == 'Beğeniler'
+                  ? 'Beğenilerde ara'
+                  : _selectedTab == 'Listelerim'
+                  ? 'Listelerde ara'
+                  : 'Listeler ve ürünlerde ara',
+              filterLabel: _selectedTab == 'Listelerim' ? 'Yeni Liste' : 'Filtre',
               filterIcon: _selectedTab == 'Listelerim' ? Icons.add : Icons.tune,
+              onSearchChanged: (value) => setState(() => _searchQuery = value),
               onFilterTap: _selectedTab == 'Listelerim'
                   ? _showCreateListDialog
                   : null,
             ),
           ),
 
-          // Horizontal Tab Bar
-          Container(
-            height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: _tabs.length,
-              itemBuilder: (context, index) {
-                final tab = _tabs[index];
-                final isSelected = _selectedTab == tab;
-                return GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _selectedTab = tab;
-                    });
-                  },
-                  child: Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? AppColors.primary
-                          : Colors.transparent,
-                      border: Border.all(color: AppColors.primary),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Center(
-                      child: Text(
-                        tab,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: isSelected ? Colors.white : AppColors.primary,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFFF4F4F7),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  for (final tab in _tabs)
+                    Expanded(
+                      child: GestureDetector(
+                        key: ValueKey('favorites-tab-$tab'),
+                        onTap: () => setState(() => _selectedTab = tab),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          margin: const EdgeInsets.all(3),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: _selectedTab == tab
+                                ? AppColors.primary
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            tab,
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: _selectedTab == tab
+                                  ? Colors.white
+                                  : const Color(0xFF4B5563),
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              },
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 16),
+          if (_selectedTab == 'Beğeniler') _buildFavoriteCategoryBar(),
+          const SizedBox(height: 12),
 
           // Content based on selected tab
           Expanded(
@@ -936,11 +974,62 @@ class _FavoritesPageState extends State<FavoritesPage> {
     );
   }
 
+  Widget _buildFavoriteCategoryBar() {
+    final categories = favoriteCategoriesOf(_appState.favorites);
+    return SizedBox(
+      height: 34,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: categories.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final category = categories[index];
+          final selected = _selectedFavoriteCategory == category;
+          return ChoiceChip(
+            visualDensity: VisualDensity.compact,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+            label: Text(category, overflow: TextOverflow.ellipsis),
+            selected: selected,
+            selectedColor: AppColors.primary.withValues(alpha: 0.12),
+            backgroundColor: Colors.white,
+            side: BorderSide(
+              color: selected ? AppColors.primary : const Color(0xFFE5E7EB),
+            ),
+            labelStyle: TextStyle(
+              color: selected ? AppColors.primary : const Color(0xFF4B5563),
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+            ),
+            onSelected: (_) => setState(() {
+              _selectedFavoriteCategory = category;
+            }),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildFavoritesGrid() {
+    final filtered = filterFavoriteProducts(
+      _appState.favorites,
+      FavoriteBrowseQuery(
+        query: _searchQuery,
+        category: _selectedFavoriteCategory,
+      ),
+    );
     if (!_hasFavoriteItems) {
       return const IbulPageState.empty(
         icon: Icons.favorite_border,
-        title: 'Henüz beğenilen ürün yok',
+        title: 'Henüz beğendiğin ürün yok',
+        padding: EdgeInsets.zero,
+      );
+    }
+    if (filtered.isEmpty) {
+      return const IbulPageState.empty(
+        icon: Icons.search_off,
+        title: 'Bu filtrede beğeni yok',
         padding: EdgeInsets.zero,
       );
     }
@@ -949,36 +1038,157 @@ class _FavoritesPageState extends State<FavoritesPage> {
     // Kolon sayısı mağaza sayfasıyla aynı ProductGridSizing helper'ından gelir.
     return LayoutBuilder(
       builder: (context, constraints) {
+        final available = constraints.maxWidth - 24;
         final columns = ProductGridSizing.columnCountForWidth(
-          constraints.maxWidth - 24,
+          available,
           spacing: 10,
         );
-        return GridView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            childAspectRatio: 0.78,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 12,
-          ),
-          itemCount: _favoriteItemCount,
-          itemBuilder: (context, index) {
-            return _buildFavoriteGridItem(index, web: false);
-          },
+        final tileWidth = ProductGridSizing.cardWidthFor(
+          available,
+          spacing: 10,
+        );
+        return CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(child: _buildFavoriteSummary()),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              sliver: SliverGrid(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: columns,
+                  mainAxisExtent: FavoriteBrowseCardLayout.extent(
+                    tileWidth: tileWidth,
+                    textScaler: MediaQuery.textScalerOf(context),
+                  ),
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 12,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _buildProductCard(filtered[index]),
+                  childCount: filtered.length,
+                ),
+              ),
+            ),
+          ],
         );
       },
     );
   }
 
+  Widget _buildFavoriteSummary() {
+    final products = _appState.favorites;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Text(
+        '${products.length} beğeni · ${favoriteCategoryCount(products)} kategori',
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF6B7280),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildListActions() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: _actionCard(
+              icon: Icons.add,
+              title: 'Yeni Liste Oluştur',
+              subtitle: 'Beğendiğin ürünleri kendi listende topla.',
+              onTap: _showCreateListDialog,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _actionCard(
+              icon: Icons.shopping_cart_outlined,
+              title: 'Sepetten Liste Oluştur',
+              subtitle: 'Sepetindeki seçili ürünleri listeye ekle.',
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const CartSelectionPage(),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      height: 76,
+      child: Material(
+        color: AppColors.softPurple,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(
+              children: [
+                Icon(icon, color: AppColors.primary, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                        ),
+                      ),
+                      Text(
+                        subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textGrey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildListsView() {
-    final displayLists = _appState.userLists;
+    final needle = _searchQuery.trim().toLowerCase();
+    final displayLists = _appState.userLists.where((list) {
+      if (needle.isEmpty) return true;
+      return (list['name']?.toString() ?? '').toLowerCase().contains(needle);
+    }).toList();
 
     if (displayLists.isEmpty) {
       return IbulPageState.empty(
         icon: Icons.list_alt,
         iconSize: 64,
         iconColor: Colors.grey[400],
-        title: 'Henüz listeniz yok',
+        title: 'Henüz listen yok',
         titleSize: 16,
         titleColor: Colors.grey[600],
         actionLabel: 'Yeni Liste Oluştur',
@@ -988,616 +1198,221 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: displayLists.length,
+      itemCount: displayLists.length + 1,
       itemBuilder: (context, index) {
-        final list = displayLists[index];
-        return Card(
-          margin: const EdgeInsets.only(bottom: 16),
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: InkWell(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => ListDetailPage(listData: list),
-                ),
-              );
-            },
-            borderRadius: BorderRadius.circular(12),
-            child: Column(
-              children: [
-                Container(
-                  height: 150,
-                  decoration: const BoxDecoration(
-                    borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(12),
-                    ),
-                    color: Color(0xFFF2F0F8),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: (list['coverImage']?.toString().isNotEmpty ?? false)
-                      ? (list['coverImage'].toString().startsWith('http')
-                            ? OptimizedImage(
-                                imageUrlOrPath: list['coverImage'],
-                                fit: BoxFit.cover,
-                              )
-                            : Image.asset(
-                                list['coverImage'],
-                                fit: BoxFit.cover,
-                              ))
-                      : const Center(
-                          child: Icon(
-                            Icons.collections_bookmark_outlined,
-                            size: 40,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          color: const Color(0xFFF2F0F8),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: (list['logo']?.toString().isNotEmpty ?? false)
-                            ? (list['logo'].toString().startsWith('http')
-                                  ? OptimizedImage(
-                                      imageUrlOrPath: list['logo'],
-                                      fit: BoxFit.cover,
-                                    )
-                                  : Image.asset(
-                                      list['logo'],
-                                      fit: BoxFit.cover,
-                                    ))
-                            : const Icon(
-                                Icons.bookmark_border,
-                                color: AppColors.primary,
-                              ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              list['name'],
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              '${list['visibilityLabel'] ?? 'Sadece Ben'} • ${list['itemCount']} Ürün',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
+        if (index == 0) return _buildListActions();
+        final list = displayLists[index - 1];
+        return _compactOwnedListTile(list);
       },
     );
   }
 
-  Widget _buildListCardNew(Map<String, dynamic> list) {
-    final coverImage = list['coverImage']?.toString() ?? '';
-    final logoImage = list['logo']?.toString() ?? '';
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ListDetailPage(listData: list),
-          ),
-        );
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Cover Image
-            Stack(
+  Widget _compactOwnedListTile(Map<String, dynamic> list) {
+    final products = list['products'];
+    final thumbs = products is List<Product>
+        ? products
+            .where((product) => product.images.isNotEmpty)
+            .take(3)
+            .toList()
+        : const <Product>[];
+    final extra = (list['itemCount'] as int? ?? thumbs.length) - thumbs.length;
+    final description = (list['description']?.toString() ?? '').trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ListDetailPage(listData: list),
+              ),
+            );
+          },
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(12),
-                  ),
-                  child: coverImage.isEmpty
-                      ? Container(
-                          width: double.infinity,
-                          height: 120,
-                          color: const Color(0xFFF2F0F8),
-                          alignment: Alignment.center,
-                          child: const Icon(
-                            Icons.collections_bookmark_outlined,
-                            color: AppColors.primary,
-                            size: 36,
-                          ),
-                        )
-                      : coverImage.startsWith('assets/')
-                      ? Image.asset(
-                          coverImage,
-                          width: double.infinity,
-                          height: 120,
-                          fit: BoxFit.cover,
-                        )
-                      : OptimizedImage(
-                          imageUrlOrPath: coverImage,
-                          width: double.infinity,
-                          height: 120,
-                          fit: BoxFit.cover,
-                        ),
-                ),
-                // Logo overlay
-                Positioned(
-                  left: 16,
-                  bottom: -20,
+                  borderRadius: BorderRadius.circular(12),
                   child: Container(
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 3),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.1),
-                          blurRadius: 8,
+                    width: 88,
+                    height: 88,
+                    color: const Color(0xFFF4F0FF),
+                    child: thumbs.isEmpty
+                        ? const Icon(Icons.collections_bookmark_outlined, color: AppColors.primary)
+                        : OptimizedImage(
+                            imageUrlOrPath: thumbs.first.images.first,
+                            fit: BoxFit.cover,
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        list['name']?.toString() ?? 'Liste',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${list['visibilityLabel'] ?? 'Özel'} • ${list['itemCount'] ?? 0} ürün',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: AppColors.textGrey),
+                      ),
+                      if (description.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          description,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12),
                         ),
                       ],
-                    ),
-                    child: ClipOval(
-                      child: logoImage.isEmpty
-                          ? const ColoredBox(
-                              color: Color(0xFFF2F0F8),
-                              child: Icon(
-                                Icons.bookmark_border,
-                                color: AppColors.primary,
-                              ),
-                            )
-                          : logoImage.startsWith('assets/')
-                          ? Image.asset(logoImage, fit: BoxFit.cover)
-                          : OptimizedImage(
-                              imageUrlOrPath: logoImage,
-                              fit: BoxFit.cover,
-                            ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 28),
-
-            // List Info
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          list['name'],
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                          ),
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
+                      if (thumbs.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Row(
                           children: [
-                            const Icon(
-                              Icons.person,
-                              size: 14,
-                              color: AppColors.primary,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${list['followerCount'] ?? list['memberCount'] ?? 0} takipçi',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: AppColors.primary,
-                                fontWeight: FontWeight.w600,
+                            for (final product in thumbs)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 4),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: SizedBox(
+                                    width: 28,
+                                    height: 28,
+                                    child: OptimizedImage(
+                                      imageUrlOrPath: product.images.first,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                ),
                               ),
-                            ),
+                            if (extra > 0)
+                              Text(
+                                '+$extra',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.primary,
+                                ),
+                              ),
                           ],
                         ),
-                      ),
+                      ],
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${list['visibilityLabel'] ?? 'Sadece Ben'} • ${list['description']}',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey[600],
-                      height: 1.3,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Icon(Icons.bookmark, size: 16, color: Colors.grey[500]),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${list['itemCount']} Ürün',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                ),
+                const Icon(Icons.more_horiz, color: AppColors.iconMuted, size: 18),
+              ],
             ),
-
-            const SizedBox(height: 16),
-          ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildRecommendationsGrid() {
-    final communityLists = _appState.communityUserLists;
-    if (communityLists.isEmpty) {
-      return Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              children: [
-                Icon(Icons.info_outline, color: AppColors.primary, size: 18),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Henüz herkese açık liste yok. İlk paylaşımı sen yap.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final columns = ProductGridSizing.columnCountForWidth(
-                  constraints.maxWidth - 24,
-                  spacing: 10,
-                );
-                return GridView.builder(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: columns,
-                    childAspectRatio: 0.78,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 12,
-                  ),
-                  itemCount: _recommendedProducts.length,
-                  itemBuilder: (context, index) {
-                    final product = _recommendedProducts[index];
-                    return _buildProductCard(product);
-                  },
-                );
-              },
-            ),
-          ),
-        ],
-      );
-    }
-
+    final recommended = rankRecommendedProducts(
+      catalog: _catalogProducts,
+      favorites: _appState.favorites,
+      recentlyViewed: _appState.recentlyViewedProducts,
+      chip: _recommendationChip,
+      query: _searchQuery,
+    );
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            children: [
-              Icon(Icons.public, color: AppColors.primary, size: 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '${communityLists.length} herkese açık liste keşfet',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: GridView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              childAspectRatio: 0.78,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 12,
-            ),
-            itemCount: communityLists.length,
+        SizedBox(
+          height: 36,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: recommendationChips.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 8),
             itemBuilder: (context, index) {
-              return _buildListCardNew(communityLists[index]);
+              final chip = recommendationChips[index];
+              final selected = _recommendationChip == chip;
+              return ChoiceChip(
+                label: Text(chip),
+                selected: selected,
+                selectedColor: AppColors.primary,
+                labelStyle: TextStyle(
+                  color: selected ? Colors.white : AppColors.ink,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+                onSelected: (_) => setState(() => _recommendationChip = chip),
+              );
             },
           ),
         ),
+        const SizedBox(height: 8),
+        Expanded(child: _buildRecommendationBody(recommended)),
       ],
     );
   }
 
+  Widget _buildRecommendationBody(List<Product> recommended) {
+    if (_recommendationsLoading && _catalogProducts.isEmpty) {
+      return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+    }
+    if (recommended.isEmpty) {
+      return IbulPageState.empty(
+        icon: Icons.auto_awesome_outlined,
+        title: 'Henüz sana özel ürün önerisi oluşturamadık.',
+        actionLabel: 'Popüler ürünleri keşfet',
+        onAction: () {
+          setState(() => _recommendationChip = 'Trend');
+          unawaited(_loadRecommendationCatalog());
+        },
+        padding: EdgeInsets.zero,
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth < 360 ? 1 : 2;
+        final tileWidth =
+            (constraints.maxWidth - 24 - (10 * (columns - 1))) / columns;
+        return GridView.builder(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisExtent: FavoriteBrowseCardLayout.extent(
+              tileWidth: tileWidth,
+              textScaler: MediaQuery.textScalerOf(context),
+            ),
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 12,
+          ),
+          itemCount: recommended.length,
+          itemBuilder: (context, index) => _buildProductCard(recommended[index]),
+        );
+      },
+    );
+  }
+
   Widget _buildProductCard(Product product) {
-    final isFavorite = _appState.isFavorite(product);
-    final image = product.images.isNotEmpty ? product.images.first : null;
-    final primaryTag = product.tags.isNotEmpty
-        ? product.tags.first
-        : 'Önerilen';
-    final ratingValue = product.rating;
-    final int filledStars = ratingValue.isFinite
-        ? ratingValue.clamp(0, 4).floor()
-        : 0;
-
-    return GestureDetector(
+    return FavoriteBrowseProductCard(
+      product: product,
+      isFavorite: _appState.isFavorite(product),
       onTap: () => _openProductDetail(product),
-      onLongPress: () => _showProductQuickView(product),
-      child: PremiumPressable(
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.grey.shade200),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Image
-              Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(8),
-                    ),
-                    child: AspectRatio(
-                      aspectRatio: 1.2,
-                      child: Container(
-                        color: Colors.grey[100],
-                        child: image != null && image.isNotEmpty
-                            ? (image.startsWith('http')
-                                  ? OptimizedImage(
-                                      imageUrlOrPath: image,
-                                      fit: BoxFit.contain,
-                                      cacheWidth: 200,
-                                      cacheHeight: 200,
-                                      filterQuality: FilterQuality.medium,
-                                      errorBuilder:
-                                          (context, error, stackTrace) => Icon(
-                                            Icons.image_not_supported,
-                                            color: Colors.grey[400],
-                                            size: 30,
-                                          ),
-                                    )
-                                  : Image.asset(
-                                      image,
-                                      fit: BoxFit.contain,
-                                      cacheWidth: 200,
-                                      cacheHeight: 200,
-                                      filterQuality: FilterQuality.medium,
-                                      errorBuilder:
-                                          (context, error, stackTrace) => Icon(
-                                            Icons.image_not_supported,
-                                            color: Colors.grey[400],
-                                            size: 30,
-                                          ),
-                                    ))
-                            : Icon(
-                                Icons.image_not_supported,
-                                color: Colors.grey[400],
-                                size: 30,
-                              ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 6,
-                    left: 6,
-                    child: GestureDetector(
-                      onTap: () => _showProductQuickView(product),
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.96),
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.1),
-                              blurRadius: 4,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.remove_red_eye_outlined,
-                          color: AppColors.primary,
-                          size: 16,
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 6,
-                    right: 6,
-                    child: GestureDetector(
-                      onTap: () {
-                        if (!_appState.isLoggedIn) {
-                          _showLoginRequiredDialog(context);
-                          return;
-                        }
-                        setState(() {
-                          _appState.toggleFavorite(product);
-                        });
-                      },
-                      child: PremiumPressable(
-                        pressedScale: 0.9,
-                        hoverScale: 1.04,
-                        hoverLift: 0.5,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.1),
-                                blurRadius: 4,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: Icon(
-                            isFavorite ? Icons.favorite : Icons.favorite_border,
-                            color: isFavorite
-                                ? Colors.red
-                                : Colors.grey.shade400,
-                            size: 16,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              // Content
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Badges
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          primaryTag,
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 8,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-
-                      // Title
-                      Text(
-                        product.name,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.black87,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 1),
-
-                      // Rating
-                      Row(
-                        children: [
-                          ...List.generate(
-                            4,
-                            (index) => Icon(
-                              index < filledStars
-                                  ? Icons.star
-                                  : Icons.star_border,
-                              color: Colors.orange,
-                              size: 10,
-                            ),
-                          ),
-                          const SizedBox(width: 3),
-                          Flexible(
-                            child: Text(
-                              '(${product.reviewCount})',
-                              style: const TextStyle(
-                                fontSize: 9,
-                                color: Colors.grey,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-
-                      // Price
-                      Text(
-                        product.price,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      onQuickView: () => _showProductQuickView(product),
+      onToggleFavorite: () {
+        if (!_appState.isLoggedIn) {
+          _showLoginRequiredDialog(context);
+          return;
+        }
+        setState(() => _appState.toggleFavorite(product));
+      },
     );
   }
 }

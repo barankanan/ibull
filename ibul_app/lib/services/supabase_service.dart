@@ -33,7 +33,7 @@ class SupabaseService {
   static const int defaultPageSize = 20;
 
   /// First-paint page size for categorized home rails.
-  static const int homeInitialPageSize = 24;
+  static const int homeInitialPageSize = 12;
 
   /// Anonim alışveriş vitrininde gösterilen ürün durumları (admin onaylı).
   /// Supabase `products` SELECT RLS politikası bu liste ile uyumlu olmalıdır.
@@ -195,16 +195,6 @@ class SupabaseService {
       'portion_price, price_per_kg, size_options, discount_price, status, '
       'approval_status, admin_approval_status, stock, created_at, updated_at';
 
-  /// Richer home select when quick-view / eye preview needs description fields.
-  /// Same as below but without `stores(...)` embed.
-  /// PostgREST can fail on embeds when FK hints are missing or store RLS differs;
-  /// we retry with this projection so the home grid still loads.
-  static const String _homeProductSelectFieldsSansStore =
-      'id, seller_id, name, brand, image_url, image_urls, main_category, '
-      'sub_category, price, pricing_type, pricing_mode, base_price, '
-      'portion_price, price_per_kg, size_options, discount_price, status, '
-      'approval_status, admin_approval_status, stock, description, specifications, '
-      'attributes, created_at, updated_at';
   static const String _productSelectFieldsSansStore =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
       'sub_category, price, pricing_type, pricing_mode, base_price, '
@@ -660,15 +650,8 @@ class SupabaseService {
         return List<Map<String, dynamic>>.from(response as List);
       }
 
-      List<Map<String, dynamic>> rows;
-      try {
-        rows = await runSuggestionQuery(useNormalizedFields: true);
-        if (rows.isEmpty && rawPattern.isNotEmpty) {
-          rows = await runSuggestionQuery(useNormalizedFields: false);
-        }
-      } catch (_) {
-        rows = await runSuggestionQuery(useNormalizedFields: false);
-      }
+      // name/brand/description exist. search_text_norm/name_norm/brand_norm do not.
+      final rows = await runSuggestionQuery(useNormalizedFields: false);
 
       final products = rows.map(_mapToDBProduct).toList(growable: false);
 
@@ -720,14 +703,14 @@ class SupabaseService {
   DBProduct mapRowToDBProduct(Map<String, dynamic> row) => _mapToDBProduct(row);
 
   static const String _cartValidationSelect =
-      'id, seller_id, store_id, name, brand, image_url, image_urls, main_category, '
-      'sub_category, price, discount_price, sale_price, stock, status, '
-      'approval_status, admin_approval_status, variant_group_id, variants, '
+      'id, seller_id, name, brand, image_url, image_urls, main_category, '
+      'sub_category, price, discount_price, stock, status, '
+      'approval_status, admin_approval_status, variants, '
       'updated_at, stores(business_name)';
   static const String _cartValidationSelectSansStore =
-      'id, seller_id, store_id, name, brand, image_url, image_urls, main_category, '
-      'sub_category, price, discount_price, sale_price, stock, status, '
-      'approval_status, admin_approval_status, variant_group_id, variants, '
+      'id, seller_id, name, brand, image_url, image_urls, main_category, '
+      'sub_category, price, discount_price, stock, status, '
+      'approval_status, admin_approval_status, variants, '
       'updated_at';
 
   Future<Map<String, Map<String, dynamic>>> getProductRowsForCartValidation(
@@ -772,7 +755,7 @@ class SupabaseService {
       return byId;
     } catch (e) {
       debugPrint('Error fetching cart validation rows: $e');
-      return const <String, Map<String, dynamic>>{};
+      rethrow;
     }
   }
 
@@ -815,11 +798,8 @@ class SupabaseService {
 
       try {
         return await runSelect(
-          'video_url, video_path, video_public_url, thumbnail_path, thumbnail_public_url, '
-          'video_duration_seconds, video_size_bytes, thumbnail_size_bytes, video_status, '
-          'variants, attributes, faq, additional_info, accessories, barcode, model_code, '
-          'variant_group_id, stock, status, approval_status, admin_approval_status, '
-          'specifications',
+          'video_url, variants, attributes, faq, additional_info, accessories, '
+          'stock, status, approval_status, admin_approval_status, specifications',
         );
       } catch (e) {
         final msg = e.toString();
@@ -1380,16 +1360,18 @@ class SupabaseService {
     }
 
     try {
+      // Live products has id, name, brand, and seller_id. It has no barcode,
+      // model_code, or store_name columns. Other-seller matching uses name +
+      // brand. Store display name comes from stores.business_name.
       const offerFields =
-          'id, seller_id, name, brand, barcode, model_code, image_url, image_urls, '
+          'id, seller_id, name, brand, image_url, image_urls, '
           'main_category, sub_category, price, discount_price, stock, status, '
           'approval_status, admin_approval_status, attributes, specifications, '
-          'variant_options, stores(business_name, logo_url)';
+          'stores(business_name, logo_url)';
       const offerFieldsSansStore =
-          'id, seller_id, name, brand, barcode, model_code, image_url, image_urls, '
+          'id, seller_id, name, brand, image_url, image_urls, '
           'main_category, sub_category, price, discount_price, stock, status, '
-          'approval_status, admin_approval_status, attributes, specifications, '
-          'variant_options';
+          'approval_status, admin_approval_status, attributes, specifications';
 
       Future<List<Map<String, dynamic>>> fetchRows({
         required Future<dynamic> Function(String fields) request,
@@ -1409,38 +1391,6 @@ class SupabaseService {
           excludeProductId: excludeProductId,
           limit: limit,
         );
-      }
-
-      final trimmedBarcode = barcode?.trim() ?? '';
-      if (trimmedBarcode.isNotEmpty) {
-        final byBarcode = await fetchRows(
-          request: (fields) => _supabase
-              .from('products')
-              .select(fields)
-              .eq('barcode', trimmedBarcode)
-              .inFilter('status', publicCatalogProductStatuses)
-              .order('price', ascending: true)
-              .limit(limit * 2),
-        );
-        if (byBarcode.isNotEmpty) {
-          return byBarcode;
-        }
-      }
-
-      final trimmedModelCode = modelCode?.trim() ?? '';
-      if (trimmedModelCode.isNotEmpty) {
-        final byModel = await fetchRows(
-          request: (fields) => _supabase
-              .from('products')
-              .select(fields)
-              .eq('model_code', trimmedModelCode)
-              .inFilter('status', publicCatalogProductStatuses)
-              .order('price', ascending: true)
-              .limit(limit * 2),
-        );
-        if (byModel.isNotEmpty) {
-          return byModel;
-        }
       }
 
       if (trimmedName.isEmpty) {
@@ -1467,39 +1417,14 @@ class SupabaseService {
     }
   }
 
+  /// Live `products` has no `variant_group_id` column. The group id is only
+  /// available when the loaded product row already carries it.
   Future<String?> lookupVariantGroupIdByNameBrand({
     required String name,
     required String brand,
   }) async {
-    final trimmedName = name.trim();
-    if (trimmedName.isEmpty) return null;
-
-    try {
-      Future<String?> runSelect(String fields) async {
-        var query = _supabase
-            .from('products')
-            .select(fields)
-            .eq('name', trimmedName);
-        final trimmedBrand = brand.trim();
-        if (trimmedBrand.isNotEmpty) {
-          query = query.eq('brand', trimmedBrand);
-        }
-        final response = await query.limit(1).maybeSingle();
-        if (response == null) return null;
-        final row = Map<String, dynamic>.from(response as Map);
-        final groupId = row['variant_group_id']?.toString().trim() ?? '';
-        return groupId.isEmpty ? null : groupId;
-      }
-
-      try {
-        return await runSelect('variant_group_id');
-      } catch (_) {
-        return null;
-      }
-    } catch (e) {
-      debugPrint('Error looking up variant group id: $e');
-      return null;
-    }
+    if (name.trim().isEmpty && brand.trim().isEmpty) return null;
+    return null;
   }
 
   Future<PagedResult<DBProduct>> searchProductsPaged({
@@ -1559,15 +1484,9 @@ class SupabaseService {
         return List<Map<String, dynamic>>.from(response as List);
       }
 
-      List<Map<String, dynamic>> rows;
-      try {
-        rows = await runSearchQuery(useNormalizedFields: true);
-        if (rows.isEmpty && rawPattern.isNotEmpty) {
-          rows = await runSearchQuery(useNormalizedFields: false);
-        }
-      } catch (_) {
-        rows = await runSearchQuery(useNormalizedFields: false);
-      }
+      // Live products has name/brand/description/category, not
+      // search_text_norm/name_norm/brand_norm. Query those directly.
+      final rows = await runSearchQuery(useNormalizedFields: false);
 
       final items = ProductVisibilityHelper.filterPublicProductMaps(
         rows,

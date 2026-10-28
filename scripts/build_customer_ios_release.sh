@@ -52,6 +52,12 @@ fi
 echo "✓ IBUL_SUPABASE_URL  = ${IBUL_SUPABASE_URL:0:40}..."
 echo "✓ IBUL_SUPABASE_ANON_KEY = ${IBUL_SUPABASE_ANON_KEY:0:20}..."
 
+if [[ -z "${IBUL_GOOGLE_CLIENT_ID:-}" ]]; then
+  echo "GOOGLE SIGN-IN: disabled for this build (IBUL_GOOGLE_CLIENT_ID not set)"
+else
+  echo "GOOGLE SIGN-IN: enabled"
+fi
+
 # ── 3. Build dart-define array ────────────────────────────────────────────────
 declare -a DART_DEFINES=()
 
@@ -92,7 +98,7 @@ if ! command -v xcodebuild &> /dev/null; then
   exit 1
 fi
 
-GOOGLE_SERVICE_PLIST="$PROJECT_DIR/ios/Runner/GoogleService-Info.plist"
+GOOGLE_SERVICE_PLIST="$PROJECT_DIR/ibul_app/ios/Runner/GoogleService-Info.plist"
 if [[ ! -f "$GOOGLE_SERVICE_PLIST" ]]; then
   echo ""
   echo "⚠  GoogleService-Info.plist bulunamadı: $GOOGLE_SERVICE_PLIST"

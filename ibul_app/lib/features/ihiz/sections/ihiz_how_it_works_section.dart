@@ -8,28 +8,22 @@ class IhizHowItWorksSection extends StatelessWidget {
 
   static const _steps = [
     (
-      '01',
-      'Sipariş oluşur',
-      'Müşteri siparişi tamamlar; mağaza paketi hazırlar.',
-      Icons.receipt_long_rounded,
+      '1',
+      'Sipariş Oluştur',
+      'İşletmen siparişi sisteme girer, adres ve teslimat detaylarını paylaşır.',
+      Icons.storefront_outlined,
     ),
     (
-      '02',
-      'Kurye eşleşir',
-      'İhız, en yakın uygun kuryeyi otomatik eşleştirir.',
-      Icons.person_search_rounded,
+      '2',
+      'Kurye Eşleşir',
+      'İHIZ, bölgedeki en uygun kuryeyi yönlendirir.',
+      Icons.two_wheeler_rounded,
     ),
     (
-      '03',
-      'Kurye teslim alır',
-      'Kurye mağazadan paketi doğrulayıp yola çıkar.',
-      Icons.inventory_2_rounded,
-    ),
-    (
-      '04',
-      'Müşteriye ulaşır',
-      'Canlı takip ile paket kapıya güvenle teslim edilir.',
-      Icons.home_rounded,
+      '3',
+      'Teslim Edilir',
+      'Kurye siparişi alır ve müşteriye güvenle ulaştırır.',
+      Icons.inventory_2_outlined,
     ),
   ];
 
@@ -37,24 +31,37 @@ class IhizHowItWorksSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = !IhizBrand.useMediumGrid(constraints.maxWidth);
+        final stacked = constraints.maxWidth < 860;
 
         return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const IhizSectionHeader(
               eyebrow: 'NASIL ÇALIŞIR?',
-              title: 'Dört adımda şeffaf teslimat',
+              title: '3 adımda kolay teslimat',
               subtitle:
-                  'Siparişten kapıya kadar her aşama net, hızlı ve izlenebilir.',
+                  'İHIZ, işletmeler ile kuryeleri tek platformda buluşturur. Siparişler daha hızlı, daha kolay ve daha güvenli şekilde teslim edilir.',
+              center: true,
             ),
-            SizedBox(height: compact ? 18 : 24),
-            IhizResponsiveCardGrid(
-              children: [
-                for (final step in _steps)
-                  _StepCard(step: step, compact: compact),
-              ],
-            ),
+            SizedBox(height: stacked ? 18 : 28),
+            if (stacked)
+              Column(
+                children: [
+                  for (var i = 0; i < _steps.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 12),
+                    _StepCard(step: _steps[i]),
+                  ],
+                ],
+              )
+            else
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < _steps.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 16),
+                    Expanded(child: _StepCard(step: _steps[i])),
+                  ],
+                ],
+              ),
           ],
         );
       },
@@ -63,74 +70,68 @@ class IhizHowItWorksSection extends StatelessWidget {
 }
 
 class _StepCard extends StatelessWidget {
-  const _StepCard({required this.step, required this.compact});
+  const _StepCard({required this.step});
 
   final (String, String, String, IconData) step;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(compact ? 14 : 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(compact ? 16 : 20),
-        border: Border.all(color: IhizBrand.line),
-        boxShadow: IhizBrand.cardShadow,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                color: IhizBrand.blue,
+                shape: BoxShape.circle,
+              ),
+              child: Text(
                 step.$1,
-                style: TextStyle(
-                  color: IhizBrand.blue,
-                  fontWeight: FontWeight.w900,
-                  fontSize: compact ? 17 : 20,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
                 ),
               ),
-              const Spacer(),
-              Container(
-                width: compact ? 34 : 40,
-                height: compact ? 34 : 40,
-                decoration: BoxDecoration(
-                  color: IhizBrand.blue.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  step.$4,
-                  color: IhizBrand.blue,
-                  size: compact ? 18 : 20,
-                ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: IhizBrand.blue.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(14),
               ),
-            ],
-          ),
-          SizedBox(height: compact ? 10 : 12),
-          Text(
-            step.$2,
-            style: TextStyle(
-              color: IhizBrand.ink,
-              fontWeight: FontWeight.w900,
-              fontSize: compact ? 15 : 16.5,
+              child: Icon(step.$4, color: IhizBrand.blue, size: 22),
             ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          step.$2,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: IhizBrand.ink,
+            fontWeight: FontWeight.w800,
+            fontSize: 16,
           ),
-          const SizedBox(height: 6),
-          Text(
-            step.$3,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: IhizBrand.inkSoft,
-              fontWeight: FontWeight.w600,
-              fontSize: compact ? 13 : 14,
-              height: 1.4,
-            ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          step.$3,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: IhizBrand.inkSoft,
+            fontWeight: FontWeight.w600,
+            fontSize: 13.5,
+            height: 1.4,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

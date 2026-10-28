@@ -23,6 +23,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:video_player/video_player.dart';
 import '../widgets/image_cropper_widget.dart';
+import '../widgets/common/product_card_skeleton.dart';
 import '../core/app_state.dart';
 import '../core/app_motion.dart';
 import '../core/auth/ibul_auth_context.dart';
@@ -40,6 +41,7 @@ import '../features/seller/panel/cargo/seller_cargo_dialog.dart';
 import '../features/seller/panel/cargo/seller_cargo_dialog_config.dart';
 import '../features/seller/panel/widgets/store_location_change_dialog.dart';
 import '../utils/dynamic_value_helpers.dart';
+import '../utils/order_status_constants.dart';
 import '../services/kitchen_print_trace_log.dart';
 import '../services/order_print_job_service.dart';
 import '../services/desktop_print_orchestrator.dart';
@@ -127,6 +129,7 @@ import '../features/seller/achievements/models/seller_badge_models.dart';
 import '../features/seller/achievements/screens/seller_achievements_page.dart';
 import 'seller/product_management/bulk_product_price_stock_update_button.dart';
 import 'seller/product_management/bulk_product_upload_button.dart';
+import 'seller/product_management/product_import_button.dart';
 import 'seller/product_management/product_quick_edit_button.dart';
 import 'seller/product_management/product_quick_edit_models.dart';
 import 'seller/product_management/product_quick_edit_row.dart';
@@ -345,6 +348,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   Timer? _productSearchDebounce;
   _ProductHealthFilter _selectedProductHealthFilter = _ProductHealthFilter.all;
   bool _isProductQuickEditMode = false;
+  bool _isProductHealthCenterExpanded = false;
   Map<String, ProductQuickEditDraft> _productQuickEditDrafts =
       <String, ProductQuickEditDraft>{};
   final Set<String> _quickEditSelectedProductIds = <String>{};
@@ -2513,6 +2517,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       userInitiated: true,
     );
     if (!changed && previousModule == module) {
+      if (module == SellerModule.orders) {
+        unawaited(_loadSellerOrders());
+      }
       _scheduleLocalPrintStatusRefreshIfNeeded(
         module: module,
         reason: 'module_selected_noop',
@@ -2937,12 +2944,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         );
         break;
       case SellerModule.orders:
-        final shouldLoadSellerOrders = !_hasLoadedSellerOrdersData;
-        logDecision('seller_orders', shouldLoadSellerOrders);
-        if (shouldLoadSellerOrders) {
-          _hasLoadedSellerOrdersData = true;
-          unawaited(_loadSellerOrders());
-        }
+        // Online food and marketplace orders share this fetch. Re-entering
+        // Siparişler must not keep the first snapshot.
+        logDecision('seller_orders', true);
+        unawaited(_loadSellerOrders());
         break;
       case SellerModule.garson:
         unawaited(
@@ -4022,41 +4027,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   bool _shouldIncludeInSellerOrdersModule(Map<String, dynamic> order) {
     if (!_isFoodStoreCategory(_storeCategory)) return true;
-    return !_isSellerTableSourcedOrder(order);
-  }
-
-  bool _isSellerTableSourcedOrder(Map<String, dynamic> order) {
-    final explicit = order['is_table_order'];
-    if (explicit is bool) return explicit;
-
-    final orderNumber = (order['order_number'] ?? '')
-        .toString()
-        .trim()
-        .toUpperCase();
-    if (orderNumber.startsWith('TBL-')) return true;
-
-    final orderType = (order['order_type'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
-    if (orderType == 'table' || orderType.startsWith('table_')) return true;
-
-    final deliveryType = (order['delivery_type'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
-    if (deliveryType == 'table' ||
-        deliveryType.startsWith('table_') ||
-        deliveryType.contains('masa') ||
-        deliveryType.contains('table')) {
-      return true;
-    }
-
-    final tableId = order['table_id']?.toString().trim() ?? '';
-    if (tableId.isNotEmpty) return true;
-
-    final waiterId = order['waiter_id']?.toString().trim() ?? '';
-    return waiterId.isNotEmpty;
+    return !OrderStatusConstants.isTableSourcedSellerOrder(order);
   }
 
   bool _isIhizCargoCompany(String? cargoCompany) {
@@ -4191,7 +4162,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     final sellerId = await _ensureSellerDataOwnerIdResolved(
       source: '_loadSellerOrders',
     );
-    if (sellerId.isEmpty) return;
+    if (sellerId.isEmpty) {
+      _hasLoadedSellerOrdersData = false;
+      return;
+    }
     final requestId = ++_sellerOrdersLoadRequestId;
     final requestUrl = 'OrderService.getSellerOrders(sellerId=$sellerId)';
     final watch = Stopwatch()..start();
@@ -9520,6 +9494,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                   ),
                                 ),
                               ),
+                              _sellerTestOrderMark(order),
                               Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 8,
@@ -9847,6 +9822,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       : _toggleProductQuickEditMode,
                 ),
                 BulkProductUploadButton(
+                  isCompact: true,
+                  onImportCompleted: _refreshProducts,
+                ),
+                ProductImportButton(
                   isCompact: true,
                   onImportCompleted: _refreshProducts,
                 ),
@@ -10653,6 +10632,21 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
+  Widget _sellerTestOrderMark(Map<String, dynamic> order) {
+    if (order['is_test'] != true) return const SizedBox.shrink();
+    return const Padding(
+      padding: EdgeInsets.only(right: 6),
+      child: Text(
+        'TEST SİPARİŞİ',
+        style: TextStyle(
+          color: Color(0xFF1F64D6),
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
   Widget _buildMobileOrderCard(Map<String, dynamic> order) {
     final statusColor = _sellerOrderStatusColor(order['status']?.toString());
     final orderNo = order['order_number']?.toString() ?? '-';
@@ -10686,6 +10680,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     ),
                   ),
                 ),
+                _sellerTestOrderMark(order),
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
@@ -18043,8 +18038,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
   Widget _buildProductsModule() {
     const double selectionColumnWidth = 44;
-    const double imageColumnWidth = 88;
-    const double priceColumnWidth = 116;
+    const double imageColumnWidth = 64;
+    const double priceColumnWidth = 108;
     const double stockColumnWidth = 84;
     const double statusColumnWidth = 120;
     const double actionColumnWidth = 120;
@@ -18124,6 +18119,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     BulkProductUploadButton(
                       onImportCompleted: _refreshProducts,
                     ),
+                    ProductImportButton(
+                      onImportCompleted: _refreshProducts,
+                    ),
                     BulkProductPriceStockUpdateButton(
                       onUpdateCompleted: _refreshProducts,
                     ),
@@ -18175,30 +18173,29 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
                   if (!compactToolbar) {
                     return Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Expanded(child: searchField),
-                        const SizedBox(width: 10),
-                        ...actionButtons
-                            .expand<Widget>(
-                              (Widget button) => <Widget>[
-                                button,
-                                const SizedBox(width: 10),
-                              ],
-                            )
-                            .toList()
-                          ..removeLast(),
+                        const SizedBox(width: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: actionButtons,
+                        ),
                       ],
                     );
                   }
 
                   return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       searchField,
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
+                        spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.start,
                         children: actionButtons,
                       ),
                     ],
@@ -18225,8 +18222,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               color: Colors.white,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Column(
-              children: [
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(
+                    width: constraints.maxWidth > 860 ? constraints.maxWidth : 860,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
                 // Tablo Başlıkları
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -18368,32 +18372,36 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           final product = displayedProducts[index];
                           if (!_isProductQuickEditMode ||
                               _isMixedServiceTemplateProduct(product)) {
-                            return _buildProductRowReal(product);
+                            return RepaintBoundary(
+                              child: _buildProductRowReal(product),
+                            );
                           }
                           final draft = _draftForProduct(product);
-                          return ProductQuickEditRow(
-                            key: ValueKey('quick-edit-${product.id}'),
-                            draft: draft,
-                            categoryLabel: product.subCategory.isNotEmpty
-                                ? '${product.mainCategory} > ${product.subCategory}'
-                                : product.mainCategory,
-                            selectionColumnWidth: selectionColumnWidth,
-                            isSelected: _quickEditSelectedProductIds.contains(
-                              product.id,
+                          return RepaintBoundary(
+                            child: ProductQuickEditRow(
+                              key: ValueKey('quick-edit-${product.id}'),
+                              draft: draft,
+                              categoryLabel: product.subCategory.isNotEmpty
+                                  ? '${product.mainCategory} > ${product.subCategory}'
+                                  : product.mainCategory,
+                              selectionColumnWidth: selectionColumnWidth,
+                              isSelected: _quickEditSelectedProductIds.contains(
+                                product.id,
+                              ),
+                              onSelectionChanged: (bool selected) {
+                                _setQuickEditProductSelected(product.id, selected);
+                              },
+                              imageColumnWidth: imageColumnWidth,
+                              priceColumnWidth: priceColumnWidth,
+                              stockColumnWidth: stockColumnWidth,
+                              statusColumnWidth: statusColumnWidth,
+                              actionsColumnWidth: actionColumnWidth,
+                              onChanged: _updateProductQuickEditDraft,
+                              onSave: () =>
+                                  _saveProductQuickEditDraft(product.id),
+                              onCancel: () =>
+                                  _resetProductQuickEditDraft(product.id),
                             ),
-                            onSelectionChanged: (bool selected) {
-                              _setQuickEditProductSelected(product.id, selected);
-                            },
-                            imageColumnWidth: imageColumnWidth,
-                            priceColumnWidth: priceColumnWidth,
-                            stockColumnWidth: stockColumnWidth,
-                            statusColumnWidth: statusColumnWidth,
-                            actionsColumnWidth: actionColumnWidth,
-                            onChanged: _updateProductQuickEditDraft,
-                            onSave: () =>
-                                _saveProductQuickEditDraft(product.id),
-                            onCancel: () =>
-                                _resetProductQuickEditDraft(product.id),
                           );
                         },
                       );
@@ -18403,7 +18411,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               ],
             ),
           ),
-        ),
+        );
+      },
+    ),
+  ),
+),
       ],
     );
   }
@@ -18417,9 +18429,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         ? 'Eksik veya aksiyon gerektiren ürünleri tek dokunuşla filtreleyin.'
         : 'Arama sonucundaki ürünler içinde hızlıca aksiyon gerektirenleri ayıklayın.';
 
+    int totalIssues = 0;
+    counts.forEach((key, value) {
+      if (key != _ProductHealthFilter.all) totalIssues += value;
+    });
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFFF8F5FF),
         borderRadius: BorderRadius.circular(10),
@@ -18428,75 +18444,124 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: const Icon(
-                  Icons.health_and_safety_outlined,
-                  size: 16,
-                  color: AppColors.primary,
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () {
+                setState(() {
+                  _isProductHealthCenterExpanded = !_isProductHealthCenterExpanded;
+                });
+              },
+              borderRadius: _isProductHealthCenterExpanded 
+                  ? const BorderRadius.vertical(top: Radius.circular(9))
+                  : BorderRadius.circular(9),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: const Icon(
+                        Icons.health_and_safety_outlined,
+                        size: 16,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text(
+                                'Eksik İçerik Merkezi',
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                              ),
+                              if (totalIssues > 0) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.shade50,
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: Colors.red.shade200),
+                                  ),
+                                  child: Text(
+                                    '$totalIssues Sorun',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.red.shade700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          if (!_isProductHealthCenterExpanded)
+                            Text(
+                              helperText,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: Colors.grey.shade700,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (!compact && !_isProductHealthCenterExpanded)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: const Color(0xFFE7D8FF)),
+                        ),
+                        child: Text(
+                          '$totalVisibleProducts ürün',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF5B21B6),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      _isProductHealthCenterExpanded ? Icons.expand_less : Icons.expand_more,
+                      color: Colors.grey.shade500,
+                    ),
+                  ],
                 ),
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Eksik İçerik Merkezi',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-                  ),
-                  Text(
-                    helperText,
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      color: Colors.grey.shade700,
-                    ),
-                  ),
-                ],
+            ),
+          ),
+          if (_isProductHealthCenterExpanded) ...[
+            const Divider(height: 1, color: Color(0xFFE7D8FF)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _productHealthFilters()
+                    .map((filter) {
+                      return _buildProductHealthFilterChip(
+                        filter: filter,
+                        count: counts[filter] ?? 0,
+                      );
+                    })
+                    .toList(growable: false),
               ),
-              if (!compact)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: const Color(0xFFE7D8FF)),
-                  ),
-                  child: Text(
-                    '$totalVisibleProducts ürün listeleniyor',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF5B21B6),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _productHealthFilters()
-                .map((filter) {
-                  return _buildProductHealthFilterChip(
-                    filter: filter,
-                    count: counts[filter] ?? 0,
-                  );
-                })
-                .toList(growable: false),
-          ),
+            ),
+          ],
         ],
       ),
     );
@@ -18712,104 +18777,114 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final isOutOfStock = product.stock == 0;
     final isTemplate = _isMixedServiceTemplateProduct(product);
     final bool isDeleting = _deletingProductIds.contains(product.id);
-    const double imageColumnWidth = 80;
+    const double imageColumnWidth = 64;
     const double priceColumnWidth = 108;
     const double stockColumnWidth = 84;
     const double statusColumnWidth = 120;
     const double actionColumnWidth = 120;
     final String? displayImage = _primaryProductImage(product);
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
-      ),
-      child: Row(
-        children: [
-          // Ürün Görseli
-          Container(
-            width: imageColumnWidth,
-            height: 64,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: (displayImage != null && displayImage.isNotEmpty)
-                ? ProductListThumbnail(
-                    key: ValueKey(
-                      'seller_product_thumb_${product.id}_$displayImage',
-                    ),
-                    imageUrlOrPath: displayImage,
-                    width: imageColumnWidth,
-                    height: 64,
-                    borderRadius: BorderRadius.circular(9),
-                    padding: const EdgeInsets.all(6),
-                    cacheWidth: 176,
-                    cacheHeight: 144,
-                    fallbackIconSize: 24,
-                  )
-                : Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.image_outlined,
-                        color: Colors.grey,
-                        size: 24,
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Görsel yok',
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                    ],
-                  ),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          // Future: Edit on tap
+        },
+        hoverColor: Colors.grey.shade50,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
           ),
-          const SizedBox(width: 16),
-
-          // Ürün Adı
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  product.name.isEmpty ? 'İsimsiz Ürün' : product.name,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+          child: Row(
+            children: [
+              // Ürün Görseli
+              Container(
+                width: imageColumnWidth,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade200),
                 ),
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
+                child: (displayImage != null && displayImage.isNotEmpty)
+                    ? ProductListThumbnail(
+                        key: ValueKey(
+                          'seller_product_thumb_${product.id}_$displayImage',
+                        ),
+                        imageUrlOrPath: displayImage,
+                        width: imageColumnWidth,
+                        height: 52,
+                        borderRadius: BorderRadius.circular(7),
+                        padding: const EdgeInsets.all(4),
+                        cacheWidth: 176,
+                        cacheHeight: 144,
+                        fallbackIconSize: 20,
+                      )
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.image_outlined,
+                            color: Colors.grey,
+                            size: 18,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Görsel yok',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+              const SizedBox(width: 16),
+
+              // Ürün Adı
+              Expanded(
+                flex: 3,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
-                      'SKU: ${product.sku}',
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        color: Colors.grey.shade600,
+                      product.name.isEmpty ? 'İsimsiz Ürün' : product.name,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF111827),
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    if (isTemplate) _templateTypeBadge(product),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          'SKU: ${product.sku}',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: Colors.grey.shade500,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        if (isTemplate) _templateTypeBadge(product),
+                      ],
+                    ),
                   ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
+              ),
+              const SizedBox(width: 16),
 
-          // Kategori
-          Expanded(
-            child: Text(
+              // Kategori
+              Expanded(
+                child: Text(
               _templateCategoryLabel(product),
               style: TextStyle(fontSize: 11.5, color: Colors.grey.shade700),
               maxLines: 1,
@@ -18975,7 +19050,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           ),
         ],
       ),
-    );
+    )));
   }
 
   void _deleteProduct(String productId) {
@@ -19882,6 +19957,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                   ),
                                 ),
                               ),
+                              _sellerTestOrderMark(order),
                               const SizedBox(width: 10),
                               Container(
                                 padding: const EdgeInsets.symmetric(
@@ -35448,23 +35524,36 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         ),
         // ── Product list ─────────────────────────────────────────────────
         Expanded(
-          child: _isLoadingProducts && sourceProducts.isEmpty
-              ? const Center(child: CircularProgressIndicator())
-              : emptyMessage.isNotEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      emptyMessage,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade600,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            child: _isLoadingProducts && sourceProducts.isEmpty
+                ? const KeyedSubtree(
+                    key: ValueKey('seller-products-skeleton'),
+                    child: ProductCardSkeletonGrid(
+                      itemCount: 8,
+                      padding: EdgeInsets.fromLTRB(12, 8, 12, 16),
+                    ),
+                  )
+                : emptyMessage.isNotEmpty
+                ? KeyedSubtree(
+                    key: const ValueKey('seller-products-empty'),
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          emptyMessage,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                )
-              : ListView.builder(
+                  )
+                : KeyedSubtree(
+                    key: const ValueKey('seller-products-list'),
+                    child: ListView.builder(
                   padding: EdgeInsets.fromLTRB(12, 2, 12, extraBottomPadding),
                   itemCount: products.length,
                   itemBuilder: (context, index) {
@@ -35898,6 +35987,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                     );
                   },
                 ),
+              ),
+          ),
         ),
       ],
     );

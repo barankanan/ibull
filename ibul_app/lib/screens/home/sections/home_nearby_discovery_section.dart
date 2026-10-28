@@ -14,12 +14,14 @@ class HomeNearbyDiscoverySection extends StatefulWidget {
     this.isLoading = false,
     this.errorMessage,
     this.onRetry,
+    this.onUseLocation,
   });
 
   final List<HomeDiscoveryItem> items;
   final bool isLoading;
   final String? errorMessage;
   final VoidCallback? onRetry;
+  final VoidCallback? onUseLocation;
 
   @override
   State<HomeNearbyDiscoverySection> createState() =>
@@ -92,13 +94,24 @@ class _HomeNearbyDiscoverySectionState extends State<HomeNearbyDiscoverySection>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Yakın Lokasyon',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF333333),
-            ),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Yakın Lokasyon',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF333333),
+                  ),
+                ),
+              ),
+              if (widget.onUseLocation != null)
+                TextButton(
+                  onPressed: widget.onUseLocation,
+                  child: const Text('Konumumu kullan'),
+                ),
+            ],
           ),
           const SizedBox(height: 16),
           SizedBox(

@@ -248,8 +248,13 @@ String buildBulkImportSpecificationsJson(
     'condition': candidate.condition,
     'isFeatured': candidate.isFeatured,
     'color': candidate.color,
+    'color_hex': candidate.colorHex,
     'freeShipping': candidate.freeShipping,
   };
+
+  if (candidate.stockAlertLevel != null) {
+    specifications['stockAlertLevel'] = candidate.stockAlertLevel;
+  }
 
   if (candidate.attributesMap.isNotEmpty) {
     specifications['attributes'] = candidate.attributesMap;

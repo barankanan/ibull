@@ -3,16 +3,22 @@ import 'package:flutter/material.dart';
 import '../core/qr_initial_params.dart';
 import '../core/route_trace_logger.dart';
 import '../features/blog/blog_paths.dart';
+import '../features/visual_search/navigation/visual_search_paths.dart';
+import '../features/visual_search/visual_search_route.dart'
+    deferred as visual_search_routes;
 import '../features/blog/blog_route_pages.dart' deferred as blog_pages;
 import '../features/ihiz/delivery/ihiz_route_paths.dart';
 import '../features/vehicle/screens/vehicle_detail_page.dart'
     deferred as vehicle_detail;
-import '../features/mall/application/mall_application_page.dart';
-import '../features/mall/application/mall_auth_page.dart';
-import '../features/mall/application/mall_hub_page.dart';
+import '../features/mall/application/mall_application_page.dart'
+    deferred as mall_application;
+import '../features/mall/application/mall_auth_page.dart'
+    deferred as mall_auth;
+import '../features/mall/application/mall_hub_page.dart' deferred as mall_hub;
 import '../features/mall/management/mall_management_location.dart';
-import '../features/mall/management/pages/mall_management_page.dart';
-import '../features/mall/public/mall_public_page.dart';
+import '../features/mall/management/pages/mall_management_page.dart'
+    deferred as mall_management;
+import '../features/mall/public/mall_public_page.dart' deferred as mall_public;
 import '../models/product_model.dart';
 import '../screens/cart_page.dart' deferred as cart_page;
 import '../features/vehicle/screens/vehicle_hub_page.dart'
@@ -126,15 +132,31 @@ Widget? pageForAppRoute(
     case '/become-seller':
       return SellerRoutes.buildBecomeSeller();
     case MarketplacePaths.mallHub:
-      return const MallHubPage();
+      return _deferredRoutePage(
+        moduleName: 'mall_hub_page',
+        loadLibrary: mall_hub.loadLibrary,
+        builder: () => mall_hub.MallHubPage(),
+      );
     case MarketplacePaths.mallLogin:
-      return const MallAuthPage(register: false);
+      return _deferredRoutePage(
+        moduleName: 'mall_auth_page',
+        loadLibrary: mall_auth.loadLibrary,
+        builder: () => mall_auth.MallAuthPage(register: false),
+      );
     case MarketplacePaths.mallRegister:
-      return const MallApplicationPage();
+      return _deferredRoutePage(
+        moduleName: 'mall_application_page',
+        loadLibrary: mall_application.loadLibrary,
+        builder: () => mall_application.MallApplicationPage(),
+      );
     case MarketplacePaths.mallApplication:
     case MarketplacePaths.legacyMallApplication:
     case MarketplacePaths.legacyPublicMallApplication:
-      return const MallApplicationPage();
+      return _deferredRoutePage(
+        moduleName: 'mall_application_page',
+        loadLibrary: mall_application.loadLibrary,
+        builder: () => mall_application.MallApplicationPage(),
+      );
     case '/yatirimci':
       return SellerRoutes.buildInvestorPage();
     case '/ihiz':
@@ -165,12 +187,25 @@ Widget? pageForAppRoute(
         arguments: settings.arguments,
       );
     default:
+      if (VisualSearchPaths.matches(normalizedPath)) {
+        return _deferredRoutePage(
+          moduleName: 'visual_search_route',
+          loadLibrary: visual_search_routes.loadLibrary,
+          builder: () =>
+              visual_search_routes.visualSearchPageForPath(normalizedPath) ??
+              visual_search_routes.VisualSearchHubPage(),
+        );
+      }
       final management = MallManagementLocation.parse(normalizedPath);
       if (management != null) {
         final arguments = settings.arguments;
-        return MallManagementPage(
-          location: management,
-          chooseMall: arguments is Map && arguments['sec'] == '1',
+        return _deferredRoutePage(
+          moduleName: 'mall_management_page',
+          loadLibrary: mall_management.loadLibrary,
+          builder: () => mall_management.MallManagementPage(
+            location: management,
+            chooseMall: arguments is Map && arguments['sec'] == '1',
+          ),
         );
       }
       final publicMallId = MarketplacePaths.idFrom(
@@ -179,10 +214,14 @@ Widget? pageForAppRoute(
       );
       if (publicMallId != null) {
         final args = settings.arguments;
-        return MallPublicPage(
-          mallId: Uri.decodeComponent(publicMallId),
-          floorId: args is Map ? args['kat']?.toString() : null,
-          storeId: args is Map ? args['magaza']?.toString() : null,
+        return _deferredRoutePage(
+          moduleName: 'mall_public_page',
+          loadLibrary: mall_public.loadLibrary,
+          builder: () => mall_public.MallPublicPage(
+            mallId: Uri.decodeComponent(publicMallId),
+            floorId: args is Map ? args['kat']?.toString() : null,
+            storeId: args is Map ? args['magaza']?.toString() : null,
+          ),
         );
       }
       if (BlogPaths.isBlogPath(normalizedPath)) {

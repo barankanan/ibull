@@ -84,16 +84,17 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    final loginCta = find.text('Giriş Yap').at(0);
-    await tester.ensureVisible(loginCta);
-    await tester.tap(loginCta);
+    await tester.tap(find.byTooltip('Menü'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.text('Giriş Yap'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.byType(IhizCourierLoginPage), findsOneWidget);
-    expect(find.text('İhız kurye paneline giriş'), findsOneWidget);
-    expect(find.text('Kurye Paneline Gir'), findsOneWidget);
-    expect(find.text('Kayıt Ol / Başvur'), findsOneWidget);
+    expect(find.text('Tekrar hoş geldin'), findsOneWidget);
+    expect(find.text('Giriş Yap'), findsWidgets);
+    expect(find.text('Kurye Ol'), findsWidgets);
     expect(find.textContaining('Hoş Geldiniz'), findsNothing);
   });
 
@@ -107,7 +108,7 @@ void main() {
     await tester.pumpWidget(wrap(viewport, const IhizCourierLoginPage()));
     await tester.pump();
 
-    await tester.tap(find.text('Kurye Paneline Gir'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Giriş Yap'));
     await tester.pump();
     expect(find.text('E-posta ve şifre zorunlu.'), findsOneWidget);
   });
@@ -122,7 +123,7 @@ void main() {
     await tester.pumpWidget(wrap(viewport, const IhizCourierLoginPage()));
     await tester.pump();
 
-    await tester.tap(find.text('Kayıt Ol / Başvur'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Kurye Ol'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
@@ -149,18 +150,39 @@ void main() {
     expect(find.byType(IhizCourierApplyPage), findsOneWidget);
   });
 
-  testWidgets('login page mobile layout has no overflow', (tester) async {
-    const viewport = Size(360, 720);
-    await tester.binding.setSurfaceSize(viewport);
+  testWidgets('login page mobile and desktop layouts have no overflow', (
+    tester,
+  ) async {
     addTearDown(() async {
       await tester.binding.setSurfaceSize(null);
     });
-
-    await tester.pumpWidget(wrap(viewport, const IhizCourierLoginPage()));
+    for (final viewport in const [
+      Size(360, 720),
+      Size(390, 844),
+      Size(430, 932),
+      Size(1024, 800),
+      Size(1280, 800),
+      Size(1440, 900),
+    ]) {
+      await tester.binding.setSurfaceSize(viewport);
+      await tester.pumpWidget(wrap(viewport, const IhizCourierLoginPage()));
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: '$viewport');
+      expect(find.text('Tekrar hoş geldin'), findsOneWidget);
+      expect(find.text('Giriş Yap'), findsWidgets);
+    }
+    await tester.binding.setSurfaceSize(const Size(360, 780));
+    await tester.pumpWidget(
+      wrap(
+        const Size(360, 780),
+        const MediaQuery(
+          data: MediaQueryData(textScaler: TextScaler.linear(1.4)),
+          child: IhizCourierLoginPage(),
+        ),
+      ),
+    );
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
-
     expect(tester.takeException(), isNull);
-    expect(find.text('Kurye Paneline Gir'), findsOneWidget);
+    expect(find.text('Giriş Yap'), findsWidgets);
   });
 }

@@ -59,6 +59,8 @@ class ProductInfoSection extends StatelessWidget {
                       brand: product.brand,
                       storeName: product.store,
                       images: product.images,
+                      productId: product.productId,
+                      sellerId: product.sellerId,
                     ),
                   ),
                 );

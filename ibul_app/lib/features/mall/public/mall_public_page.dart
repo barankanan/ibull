@@ -6,6 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/ibul_router.dart';
 import '../../../app/marketplace_paths.dart';
+import '../../../core/public_seo.dart';
+import '../../../core/web_seo.dart';
 import 'mall_public_chrome.dart';
 import 'mall_public_format.dart';
 import 'mall_public_repository.dart';
@@ -76,6 +78,34 @@ class _MallPublicPageState extends State<MallPublicPage> {
       future: _detail,
       builder: (context, snapshot) {
         final detail = snapshot.data;
+        if (detail != null) {
+          final path = MarketplacePaths.mallProfile(detail.id);
+          setSeoMeta(
+            title: mallSeoTitle(detail.name),
+            description: clipMetaDescription(
+              detail.address ?? detail.locationLabel,
+              fallback: '${detail.name} mağazaları ve bilgileri.',
+            ),
+            canonicalPath: path,
+            imageUrl: detail.coverUrl ?? detail.logoUrl,
+            noIndex: detail.preview,
+            jsonLd: mallJsonLd(
+                  name: detail.name,
+                  canonicalPath: path,
+                  streetAddress: detail.address,
+                  city: detail.city,
+                  district: detail.district,
+                  phone: detail.phone,
+                  imageUrl: detail.coverUrl ?? detail.logoUrl,
+                  latitude: detail.latitude,
+                  longitude: detail.longitude,
+                ) ??
+                breadcrumbJsonLd([
+                  (name: 'İBUL', path: '/'),
+                  (name: detail.name, path: path),
+                ]),
+          );
+        }
         return Scaffold(
           backgroundColor: mallPublicCanvas,
           appBar: AppBar(

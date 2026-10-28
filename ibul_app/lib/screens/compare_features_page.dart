@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/ibul_chrome.dart';
 import '../widgets/compare_page_helpers.dart';
 
 class CompareFeaturesPage extends StatelessWidget {
@@ -9,7 +10,7 @@ class CompareFeaturesPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isWeb = MediaQuery.of(context).size.width >= 800;
+    final isWeb = IbulChrome.isWebOf(context);
     final content = _buildContent(isWeb);
 
     if (isWeb) {
@@ -44,7 +45,10 @@ class CompareFeaturesPage extends StatelessWidget {
   }
 
   Widget _buildContent(bool isWeb) {
-    final displayProducts = compareDisplayProducts(products);
+    final displayProducts = compareDisplayProducts(
+      products,
+      maxCount: isWeb ? 4 : 2,
+    );
     final productModels = compareProductsFromMaps(displayProducts);
 
     if (productModels.isEmpty) {

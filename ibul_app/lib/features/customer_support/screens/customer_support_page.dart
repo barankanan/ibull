@@ -518,10 +518,19 @@ class _CustomerSupportPageState extends State<CustomerSupportPage> {
         color: const Color(0xFFF9FAFB),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        style: TextStyle(color: Colors.grey.shade600),
+      child: Column(
+        children: [
+          Icon(Icons.inbox_outlined, color: Colors.grey.shade400, size: 28),
+          const SizedBox(height: 8),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }

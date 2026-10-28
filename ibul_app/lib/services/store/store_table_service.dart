@@ -495,24 +495,8 @@ class StoreTableService {
     final resolved = sellerId.trim();
     if (resolved.isEmpty) return const <int>{};
     try {
-      try {
-        final rpcRows = await _supabase
-            .rpc(
-              'list_occupied_table_numbers',
-              params: {'p_seller_id': resolved},
-            )
-            .timeout(tableOrderTimeout);
-        if (rpcRows is List) {
-          return rpcRows
-              .map((value) => _parseTableNumberValue(value))
-              .where((value) => value > 0)
-              .toSet();
-        }
-      } catch (error) {
-        debugPrint(
-          '[StoreTableService] list_occupied_table_numbers fallback: $error',
-        );
-      }
+      // Live database has table_orders. list_occupied_table_numbers is in a
+      // migration that is not in the schema cache, so it is not called.
       final rows = await _supabase
           .from('table_orders')
           .select('table_number, status')
@@ -933,7 +917,7 @@ class StoreTableService {
           'line_total, item_note)',
         )
         .eq('restaurant_id', restaurantId)
-        .or('order_type.eq.table,delivery_type.eq.table')
+        .or('order_type.eq.table,delivery_type.eq.table,order_type.eq.online')
         .not('status', 'in', OrderStatusConstants.terminalStatuses.toList())
         .order('created_at', ascending: false)
         .limit(50)
@@ -1472,7 +1456,7 @@ class StoreTableService {
             'updated_at': DateTime.now().toUtc().toIso8601String(),
           })
           .eq('restaurant_id', sellerId)
-          .or('order_type.eq.table,delivery_type.eq.table')
+          .or('order_type.eq.table,delivery_type.eq.table,order_type.eq.online')
           .inFilter('table_id', tableIds)
           .not(
             'status',

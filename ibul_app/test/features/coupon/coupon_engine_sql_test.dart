@@ -102,8 +102,13 @@ void main() {
       'lib/screens/home/sections/home_section_coupon_deal_column.dart',
     ).readAsStringSync();
     expect(home, contains('listDailyDeals'));
-    expect(home, contains('Bugün aktif fırsat bulunmuyor.'));
+    expect(home, contains('Şu anda yayında fırsat bulunmuyor.'));
     expect(home, contains('CouponDiscoverPage'));
     expect(home, contains('DailyDealsPage'));
+    final deals = File(
+      'lib/features/coupon/screens/customer/daily_deals_page.dart',
+    ).readAsStringSync();
+    expect(deals, contains('listDailyDeals'));
+    expect(deals, contains('Bugün aktif fırsat bulunmuyor.'));
   });
 }

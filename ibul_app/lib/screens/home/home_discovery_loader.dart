@@ -125,7 +125,7 @@ abstract final class HomeDiscoveryLoader {
       final position = debugPositionQuery != null
           ? await debugPositionQuery!()
           : await LocationAccessService.instance
-                .getBestAvailablePosition()
+                .getBestAvailablePosition(requestPermissionIfNeeded: false)
                 .timeout(const Duration(seconds: 4));
       if (position != null) {
         _positionCache.write('current', position);

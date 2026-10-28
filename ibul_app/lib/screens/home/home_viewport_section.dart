@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import '../../widgets/skeleton_loading.dart';
 import 'home_section_error.dart';
 
 /// Bölüm görünür olana ya da kullanıcı ona [prefetchViewports] viewport kadar
@@ -15,8 +16,9 @@ class HomeViewportSection extends StatefulWidget {
     required this.loadLibrary,
     required this.builder,
     this.errorMessage = 'Bu bölüm şu an yüklenemedi.',
-    this.prefetchViewports = 1.25,
+    this.prefetchViewports = 0.5,
     this.debugName = 'Section',
+    this.placeholderBuilder,
   });
 
   final double placeholderHeight;
@@ -24,6 +26,7 @@ class HomeViewportSection extends StatefulWidget {
   final Widget Function() builder;
   final String errorMessage;
   final String debugName;
+  final Widget Function()? placeholderBuilder;
 
   /// Prefetch penceresi scrollable'ın GERÇEK viewport yüksekliğinin katı olarak
   /// ifade edilir; mobil/tablet/desktop için ayrı sabit gerekmeden ölçeklenir.
@@ -43,20 +46,10 @@ class _HomeViewportSectionState extends State<HomeViewportSection> {
   bool _failed = false;
   Widget? _child;
   DateTime? _prefetchStart;
-  Timer? _fallbackTimer;
-
   @override
   void initState() {
     super.initState();
     _scheduleEvaluate();
-    // Fallback: ensure all sections trigger within 3 seconds even if
-    // the scroll-proximity logic fails to reach them (e.g., user doesn't
-    // scroll and the section is outside the no-scroll threshold).
-    _fallbackTimer = Timer(const Duration(seconds: 3), () {
-      if (!mounted || _dataTriggered) return;
-      debugPrint('[Phase17] ${widget.debugName} fallback_trigger (3s)');
-      _triggerCodeAndData();
-    });
   }
 
   @override
@@ -75,7 +68,6 @@ class _HomeViewportSectionState extends State<HomeViewportSection> {
 
   @override
   void dispose() {
-    _fallbackTimer?.cancel();
     _detachScroll();
     super.dispose();
   }
@@ -128,11 +120,6 @@ class _HomeViewportSectionState extends State<HomeViewportSection> {
     if (distanceAhead <= 0) {
       _triggerCodeAndData();
       return;
-    }
-
-    // Code prefetch occurs earlier (1.5 viewports)
-    if (!_codeTriggered && distanceAhead <= viewportExtent * 1.5) {
-      _triggerCode();
     }
 
     // P1 section threshold without scroll
@@ -210,13 +197,35 @@ class _HomeViewportSectionState extends State<HomeViewportSection> {
 
   @override
   Widget build(BuildContext context) {
-    if (_ready && _child != null) return _child!;
-    if (_failed) {
-      return SizedBox(
+    Widget content;
+    if (_ready && _child != null) {
+      content = KeyedSubtree(
+        key: ValueKey('${widget.debugName}-ready'),
+        child: _child!,
+      );
+    } else if (_failed) {
+      content = SizedBox(
+        key: ValueKey('${widget.debugName}-failed'),
         height: widget.placeholderHeight,
         child: HomeSectionError(message: widget.errorMessage, onRetry: _retry),
       );
+    } else {
+      content = SizedBox(
+        key: ValueKey('${widget.debugName}-loading'),
+        height: widget.placeholderHeight,
+        child: widget.placeholderBuilder?.call() ??
+            (widget.placeholderHeight >= 300
+                ? const SingleChildScrollView(
+                    physics: NeverScrollableScrollPhysics(),
+                    child: HomeProductRailSkeleton(itemCount: 6),
+                  )
+                : const SizedBox.shrink()),
+      );
     }
-    return SizedBox(height: widget.placeholderHeight);
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 250),
+      child: content,
+    );
   }
 }

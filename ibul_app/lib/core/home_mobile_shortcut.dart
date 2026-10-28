@@ -11,7 +11,7 @@ import '../screens/feature_coming_soon_page.dart'
     deferred as feature_coming_soon_page;
 import '../screens/lists_page.dart' deferred as lists_page;
 import '../screens/map_page.dart' deferred as map_page;
-import '../screens/visual_search_selection_page.dart'
+import '../features/visual_search/visual_search_route.dart'
     deferred as visual_search_page;
 import '../services/database_helper.dart' deferred as database_helper;
 
@@ -170,21 +170,25 @@ abstract final class HomeMobileShortcutNavigator {
           MaterialPageRoute<void>(builder: (_) => lists_page.ListsPage()),
         );
       case HomeMobileShortcutType.visualSearch:
-        logTap(action, target: 'VisualSearchSelectionPage');
+        logTap(action, target: 'VisualSearchCapturePage');
         await visual_search_page.loadLibrary();
         if (!context.mounted) return;
         await Navigator.of(context, rootNavigator: true).push(
           MaterialPageRoute<void>(
-            builder: (_) => visual_search_page.VisualSearchSelectionPage(),
+            builder: (_) => visual_search_page.VisualSearchCapturePage(
+              jobType: visual_search_page.VisualSearchJobType.visualSearch,
+            ),
           ),
         );
       case HomeMobileShortcutType.productBreakdown:
-        logTap(action, target: 'VisualSearchSelectionPage');
+        logTap(action, target: 'VisualSearchCapturePage');
         await visual_search_page.loadLibrary();
         if (!context.mounted) return;
         await Navigator.of(context, rootNavigator: true).push(
           MaterialPageRoute<void>(
-            builder: (_) => visual_search_page.VisualSearchSelectionPage(),
+            builder: (_) => visual_search_page.VisualSearchCapturePage(
+              jobType: visual_search_page.VisualSearchJobType.combined,
+            ),
           ),
         );
       case HomeMobileShortcutType.comingSoonShelf:

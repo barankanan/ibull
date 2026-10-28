@@ -19,8 +19,11 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../models/courier_application_data.dart';
 import '../../../services/ihiz_delivery_service.dart';
 import '../delivery/ihiz_delivery_status.dart';
+import '../theme/ihiz_brand.dart';
 import 'models/ihiz_delivery_stage.dart';
 import 'models/ihiz_pricing_config.dart';
+import 'widgets/ihiz_courier_mobile_account.dart';
+import 'widgets/ihiz_courier_mobile_home.dart';
 
 part 'models/ihiz_courier_dashboard_models.dart';
 part 'dashboard/ihiz_courier_apply_buttons.dart';
@@ -73,6 +76,8 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
   bool _rainBonusEnabled = true;
   int _selectedOrderIndex = 0;
   int _selectedTabIndex = 0;
+  bool _homeShowsPool = false;
+  bool _mapTabMounted = false;
   int? _activeDeliveryOrderIndex;
   String? _activeDeliveryOrderItemId;
   int? _mapPopupOrderIndex;
@@ -102,6 +107,7 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
   List<_LiveStoreMarker> _liveStores = const [];
   List<_CourierPoolOrder> _courierPoolOrders = const [];
   bool _businessPoolOnly = false;
+  bool _independentPoolOnly = false;
   String _storeSearchQuery = '';
   String? _highlightedStoreId;
   bool _storesLoading = true;
@@ -345,7 +351,9 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
     await _restorePersistedActiveDeliveryState();
     if (!mounted) return;
     _subscribeToStores();
-    _checkLocationPermissionAndStart();
+    if (_hasActiveDelivery) {
+      _checkLocationPermissionAndStart();
+    }
   }
 
   /// ihiz_web entry `_fetchActivePricingConfigViaRpc` ile aynı RPC.
@@ -386,10 +394,25 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _stopIdleLocationTracking();
+    }
     if (state == AppLifecycleState.resumed) {
       _schedulePoolFetch(force: true);
       unawaited(_fetchStores());
     }
+  }
+
+  /// GPS stream stays on during an active delivery. Otherwise it stops
+  /// when the map is not on screen.
+  void _stopIdleLocationTracking() {
+    if (_hasActiveDelivery) return;
+    _positionStreamSubscription?.cancel();
+    _positionStreamSubscription = null;
+    _webLocationTimer?.cancel();
+    _webLocationTimer = null;
+    _locationTrackingStarted = false;
   }
 
   Future<void> _restorePersistedActiveDeliveryState() async {
@@ -577,6 +600,43 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
     }
   }
 
+  Widget _courierTabScroll({
+    required bool isMobile,
+    required Widget child,
+    Widget? header,
+    Widget? footer,
+  }) {
+    return RefreshIndicator(
+      color: const Color(0xFF163B73),
+      onRefresh: _refreshCourierDashboard,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(
+          isMobile ? 16 : 28,
+          18,
+          isMobile ? 16 : 28,
+          isMobile ? 16 : 28,
+        ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: isMobile ? 560 : 1280),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ?header,
+                child,
+                if (footer != null) ...[
+                  const SizedBox(height: 18),
+                  footer,
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -587,54 +647,74 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
             ? null
             : orders[_selectedOrderIndex.clamp(0, orders.length - 1)];
         final isMapTabMobile = isMobile && _selectedTabIndex == 1;
+        if (isMapTabMobile) {
+          _mapTabMounted = true;
+        }
 
-        return Scaffold(
-          bottomNavigationBar: isMobile ? _buildBottomBar() : null,
-          body: Stack(
-            children: [
-              isMapTabMobile
-                  ? SafeArea(
-                      bottom: false,
-                      child: _buildMapOnlyScreen(selectedOrder),
-                    )
-                  : SafeArea(
-                      child: RefreshIndicator(
-                        color: const Color(0xFF163B73),
-                        onRefresh: _refreshCourierDashboard,
-                        child: SingleChildScrollView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: EdgeInsets.fromLTRB(
-                            isMobile ? 16 : 28,
-                            18,
-                            isMobile ? 16 : 28,
-                            isMobile ? 110 : 28,
-                          ),
-                          child: Center(
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth: isMobile ? 560 : 1280,
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  ..._buildDashboardContent(
-                                    isMobile,
-                                    selectedOrder,
+        final page = isMobile
+            ? Column(
+                children: [
+                  Expanded(
+                    child: IndexedStack(
+                      index: _selectedTabIndex,
+                      sizing: StackFit.expand,
+                      children: [
+                        _courierTabScroll(
+                          isMobile: true,
+                          child: _homeShowsPool
+                              ? _buildOrderPool(true)
+                              : _buildCourierHome(selectedOrder),
+                          header: _homeShowsPool
+                              ? Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
+                                    onPressed: () =>
+                                        setState(() => _homeShowsPool = false),
+                                    icon: const Icon(Icons.arrow_back_rounded),
+                                    label: const Text('Ana Sayfa'),
                                   ),
-                                ],
-                              ),
-                            ),
-                          ),
+                                )
+                              : null,
+                          footer: _homeShowsPool && _hasActiveDelivery
+                              ? _buildDeliveryControlCard(true)
+                              : null,
                         ),
-                      ),
+                        _mapTabMounted
+                            ? _buildMapOnlyScreen(selectedOrder)
+                            : const ColoredBox(color: IhizBrand.surface),
+                        _courierTabScroll(
+                          isMobile: true,
+                          child: _buildAccountCard(true),
+                        ),
+                      ],
                     ),
-              if (_nightModeEnabled)
-                IgnorePointer(
-                  child: Container(
-                    color: const Color(0xFF020617).withValues(alpha: 0.24),
+                  ),
+                  _buildBottomBar(),
+                ],
+              )
+            : SafeArea(
+                child: _courierTabScroll(
+                  isMobile: false,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _buildDashboardContent(false, selectedOrder),
                   ),
                 ),
-            ],
+              );
+
+        return Scaffold(
+          backgroundColor: IhizBrand.surface,
+          body: SafeArea(
+            bottom: false,
+            child: Stack(
+              children: [
+                page,
+                if (_nightModeEnabled)
+                  const IgnorePointer(
+                    child: ColoredBox(color: Color(0x3D020617)),
+                  ),
+              ],
+            ),
           ),
         );
       },
@@ -914,9 +994,10 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
 
     _courierLocation = location;
     if (shouldUpdateUi) {
-      setState(() {
-        _locationStatus = statusMessage;
-      });
+      _locationStatus = statusMessage;
+      if (_selectedTabIndex == 1) {
+        setState(() {});
+      }
     }
 
     if (!_hasActiveDelivery) return;
@@ -2415,6 +2496,10 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
           pool = pool
               .where((task) => task.isBusinessTask)
               .toList(growable: false);
+        } else if (_independentPoolOnly) {
+          pool = pool
+              .where((task) => !task.isBusinessTask)
+              .toList(growable: false);
         }
         return pool;
       }();
@@ -2699,6 +2784,7 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
       _mapSearchController.text = displayName;
       _storeSearchQuery = displayName;
       _selectedTabIndex = 1;
+      _mapTabMounted = true;
       _previewRoutePoints = const [];
     });
     _checkLocationPermissionAndStart();
@@ -4756,13 +4842,24 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
 
     switch (_selectedTabIndex) {
       case 0:
-        return [
-          _buildOrderPool(true),
-          if (_hasActiveDelivery) ...[
-            const SizedBox(height: 18),
-            _buildDeliveryControlCard(true),
-          ],
-        ];
+        if (_homeShowsPool) {
+          return [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => setState(() => _homeShowsPool = false),
+                icon: const Icon(Icons.arrow_back_rounded),
+                label: const Text('Ana Sayfa'),
+              ),
+            ),
+            _buildOrderPool(true),
+            if (_hasActiveDelivery) ...[
+              const SizedBox(height: 18),
+              _buildDeliveryControlCard(true),
+            ],
+          ];
+        }
+        return [_buildCourierHome(selectedOrder)];
       case 1:
         return [_buildMapOnlyScreen(selectedOrder)];
       case 2:
@@ -4773,55 +4870,136 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
   }
 
   Widget _buildBottomBar() {
-    return SafeArea(
-      top: false,
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: const Color(0xFFDDE6F4)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 18,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: NavigationBar(
-          height: 74,
-          backgroundColor: Colors.transparent,
-          indicatorColor: const Color(0xFF163B73).withValues(alpha: 0.1),
-          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-          selectedIndex: _selectedTabIndex,
-          onDestinationSelected: (index) {
-            setState(() {
-              _selectedTabIndex = index;
-            });
-            if (index == 0) {
-              _schedulePoolFetch(force: true);
-            }
-          },
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.home_outlined),
-              selectedIcon: Icon(Icons.home),
-              label: 'Ana Sayfa',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.map_outlined),
-              selectedIcon: Icon(Icons.map),
-              label: 'Harita',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.person_outline),
-              selectedIcon: Icon(Icons.person),
-              label: 'Hesabım',
-            ),
-          ],
-        ),
+    return IhizCourierBottomNav(
+      selectedIndex: _selectedTabIndex,
+      onSelected: (index) {
+        setState(() {
+          if (index == 0 && _selectedTabIndex == 0) {
+            _homeShowsPool = false;
+          }
+          _selectedTabIndex = index;
+          if (index == 1) _mapTabMounted = true;
+        });
+        if (index != 1) _stopIdleLocationTracking();
+        if (index == 0 && _homeShowsPool) {
+          _schedulePoolFetch(force: true);
+        }
+      },
+    );
+  }
+
+  void _openMobileOrderPool() {
+    setState(() {
+      _selectedTabIndex = 0;
+      _homeShowsPool = true;
+    });
+    _schedulePoolFetch(force: true);
+  }
+
+  void _openMobileMap() {
+    setState(() {
+      _selectedTabIndex = 1;
+      _mapTabMounted = true;
+    });
+  }
+
+  List<IhizCourierDocStatus> _courierDocumentStatuses() {
+    final data = _applicationData;
+    if (data == null) return const [];
+    String uploaded(bool hasFile) => hasFile ? 'Yüklendi' : 'Yüklenmedi';
+    final license = data.driverLicenseFileName.trim().isNotEmpty ||
+        data.driverLicenseFrontFileName.trim().isNotEmpty ||
+        data.driverLicenseBackFileName.trim().isNotEmpty;
+    return [
+      IhizCourierDocStatus(
+        label: 'Kimlik',
+        status: data.tcNumber.trim().isEmpty ? 'Yüklenmedi' : 'Numara kayıtlı',
       ),
+      IhizCourierDocStatus(label: 'Ehliyet', status: uploaded(license)),
+      IhizCourierDocStatus(
+        label: 'Ruhsat',
+        status: uploaded(data.vehicleRegistrationFileName.trim().isNotEmpty),
+      ),
+    ];
+  }
+
+  IhizHomeTask _homeTaskFor(int index, {required bool active}) {
+    final order = _orders[index];
+    final isActiveOrder = _isCurrentActiveOrder(index);
+    final isAnotherOrderLocked = _hasActiveDelivery && !isActiveOrder;
+    final isDelivered =
+        isActiveOrder && _deliveryStage == IhizDeliveryStage.delivered;
+    final busy = _pickupInFlight && index == _selectedOrderIndex;
+    String type = order.isReturnPickup
+        ? 'İade'
+        : order.isBusinessTask
+        ? 'İşletme teslimatı'
+        : 'Bağımsız paket';
+    late final String cta;
+    VoidCallback? onPressed;
+    if (active) {
+      if (_deliveryStage == IhizDeliveryStage.headingToStore) {
+        cta = 'Yola çık';
+        onPressed = _startCustomerRoute;
+      } else if (_deliveryStage == IhizDeliveryStage.onTheWay) {
+        cta = 'Teslimatı tamamla';
+        onPressed = () {
+          unawaited(_completeDeliveryWithVerification());
+        };
+      } else {
+        cta = 'Haritada aç';
+        onPressed = _openMobileMap;
+      }
+    } else if (isAnotherOrderLocked) {
+      cta = 'Aktif teslimat var';
+    } else if (isDelivered) {
+      cta = 'Yeni göreve dön';
+      onPressed = _resetDeliveryFlow;
+    } else if (isActiveOrder) {
+      cta = 'Paket teslim alındı';
+    } else {
+      cta = 'Paketi teslim al';
+      onPressed = () => _pickupPackage(index);
+    }
+    return IhizHomeTask(
+      storeName: order.storeName,
+      destination: order.customerName,
+      typeLabel: type,
+      distance: order.route.trim().isEmpty ? null : order.route,
+      eta: order.eta.trim().isEmpty ? null : order.eta,
+      earning: order.earning.trim().isEmpty ? null : order.earning,
+      status: active ? _deliveryStageLabel(_deliveryStage) : null,
+      ctaLabel: cta,
+      onPressed: onPressed,
+      enabled: onPressed != null && !busy,
+      busy: busy && !active,
+      active: active,
+    );
+  }
+
+  Widget _buildCourierHome(_OrderCardData? selectedOrder) {
+    final name = _applicationData?.fullName.trim();
+    final loading = _storesLoading && _orders.isEmpty && _poolLoadError == null;
+    IhizHomeTask? activeTask;
+    final tasks = <IhizHomeTask>[];
+    for (var index = 0; index < _orders.length; index++) {
+      final isActive =
+          _hasActiveDelivery && _isCurrentActiveOrder(index);
+      if (isActive) {
+        activeTask = _homeTaskFor(index, active: true);
+      } else {
+        tasks.add(_homeTaskFor(index, active: false));
+      }
+    }
+    return IhizCourierMobileHome(
+      displayName: name == null || name.isEmpty ? null : name,
+      online: _courierOnline,
+      onToggleOnline: _toggleWorkStatus,
+      loading: loading,
+      error: _orders.isEmpty ? _poolLoadError : null,
+      onRetry: () => _schedulePoolFetch(force: true),
+      activeTask: activeTask,
+      tasks: tasks,
     );
   }
 
@@ -4888,27 +5066,12 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
       compactPrimaryActionLabel = 'Yola çık';
       compactPrimaryAction = _startCustomerRoute;
     } else if (_deliveryStage == IhizDeliveryStage.onTheWay) {
-      compactPrimaryActionLabel = 'Teslim et';
+      compactPrimaryActionLabel = 'Teslimatı tamamla';
       compactPrimaryAction = _completeDeliveryWithVerification;
     } else {
       compactPrimaryActionLabel = 'Bitir';
       compactPrimaryAction = _resetDeliveryFlow;
     }
-    final fallbackRoutePoints = hasTaskContext
-        ? ((isExternalTask || _deliveryStage == IhizDeliveryStage.headingToStore)
-              ? [courierPoint, storePoint]
-              : [storePoint, customerPoint])
-        : const <LatLng>[];
-    final visibleRoutePoints = _activeRoutePoints.isNotEmpty
-        ? _activeRoutePoints
-        : fallbackRoutePoints;
-    final previewRoutePoints = _previewRoutePoints.isNotEmpty
-        ? _previewRoutePoints
-        : (hasTaskContext
-              ? (isPopupExternalOrder
-                    ? [courierPoint, storePoint]
-                    : [storePoint, customerPoint])
-              : const <LatLng>[]);
     final showCustomerMarker =
         (showActiveRoute && !isExternalTask) ||
         (popupOrder != null && !isPopupExternalOrder);
@@ -4935,19 +5098,21 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
                 userAgentPackageName: 'com.example.ihiz_web',
               ),
               PolylineLayer(
-                polylines: !(showActiveRoute || showPreviewRoute)
-                    ? <Polyline<Object>>[]
-                    : <Polyline<Object>>[
-                        Polyline(
-                          points: showActiveRoute
-                              ? visibleRoutePoints
-                              : previewRoutePoints,
-                          strokeWidth: 5,
-                          color: activeAccent.withValues(
-                            alpha: showActiveRoute ? 0.88 : 0.62,
-                          ),
-                        ),
-                      ],
+                polylines: () {
+                  final routed = showActiveRoute
+                      ? _activeRoutePoints
+                      : (showPreviewRoute ? _previewRoutePoints : const <LatLng>[]);
+                  if (routed.length < 2) return <Polyline<Object>>[];
+                  return <Polyline<Object>>[
+                    Polyline(
+                      points: routed,
+                      strokeWidth: 5,
+                      color: activeAccent.withValues(
+                        alpha: showActiveRoute ? 0.88 : 0.62,
+                      ),
+                    ),
+                  ];
+                }(),
               ),
               MarkerLayer(
                 markers: [
@@ -5157,6 +5322,38 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
               ),
             ),
           ),
+        Positioned(
+          left: 12,
+          right: 12,
+          top: 8,
+          child: SafeArea(
+            bottom: false,
+            child: Row(
+              children: [
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: IhizBrand.line),
+                  ),
+                  child: Text(
+                    _courierOnline ? 'Aktif' : 'Çevrimdışı',
+                    style: TextStyle(
+                      color: _courierOnline ? IhizBrand.mint : IhizBrand.inkSoft,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
         if (showFloatingLocationButton)
           Positioned(
             right: 14,
@@ -5165,27 +5362,31 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
               top: false,
               child: Material(
                 color: Colors.transparent,
-                child: InkWell(
-                  onTap: _centerOnCourierLocation,
-                  borderRadius: BorderRadius.circular(16),
-                  child: Container(
-                    width: 46,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF163B73),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.14),
-                          blurRadius: 18,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.my_location,
-                      color: Colors.white,
-                      size: 20,
+                child: Semantics(
+                  button: true,
+                  label: 'Konumum',
+                  child: InkWell(
+                    onTap: _centerOnCourierLocation,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF163B73),
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.14),
+                            blurRadius: 18,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.my_location,
+                        color: Colors.white,
+                        size: 20,
+                      ),
                     ),
                   ),
                 ),
@@ -5226,13 +5427,26 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
                     Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            _deliveryStageLabel(_deliveryStage),
-                            style: const TextStyle(
-                              color: Color(0xFF163B73),
-                              fontWeight: FontWeight.w900,
-                              fontSize: 18,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Aktif Teslimat',
+                                style: TextStyle(
+                                  color: Color(0xFF163B73),
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              Text(
+                                _deliveryStageLabel(_deliveryStage),
+                                style: const TextStyle(
+                                  color: Color(0xFF5B6B86),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         IconButton(
@@ -5294,6 +5508,30 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            Text(
+                              _deliveryStage == IhizDeliveryStage.onTheWay
+                                  ? '1 Mağaza  ·  2 Müşteri'
+                                  : '1 Mağaza  ·  2 Müşteri',
+                              style: TextStyle(
+                                color: _deliveryStage ==
+                                        IhizDeliveryStage.headingToStore
+                                    ? const Color(0xFF1F64D6)
+                                    : const Color(0xFF51677F),
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              _deliveryStage == IhizDeliveryStage.headingToStore
+                                  ? 'Paket teslim alma adımı'
+                                  : 'Teslimatı tamamlama adımı',
+                              style: const TextStyle(
+                                color: Color(0xFF51677F),
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
                             const Text(
                               'Teslimat bilgisi',
                               style: TextStyle(
@@ -5407,7 +5645,7 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
                                   ),
                                 ),
                                 child: const Text(
-                                  'Teslim edildi',
+                                  'Teslimatı tamamla',
                                   style: TextStyle(fontWeight: FontWeight.w800),
                                 ),
                               ),
@@ -5459,9 +5697,7 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
                             ),
                             child: Text(
                               _deliveryStage == IhizDeliveryStage.headingToStore
-                                  ? (isExternalTask
-                                        ? 'Paketi teslim aldım'
-                                        : 'Paketi aldım, müşteriye gidiyorum')
+                                  ? 'Yola çık'
                                   : 'Yeni görev havuzuna dön',
                               style: const TextStyle(
                                 fontWeight: FontWeight.w800,
@@ -6558,14 +6794,18 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
         _orders.isEmpty;
     final emptyPoolTitle = _businessPoolOnly
         ? 'Seçili işletme teslimatı yok'
+        : _independentPoolOnly
+        ? 'Bağımsız paket yok'
         : _activeRegionKeys.isNotEmpty
         ? 'Seçili bölgede uygun görev yok'
         : 'Şu anda uygun teslimat görevi yok.';
     final emptyPoolCaption = _businessPoolOnly
         ? 'İşletme filtresini kapatarak tüm havuzu görebilirsiniz.'
+        : _independentPoolOnly
+        ? 'Tümü filtresiyle diğer görevleri görebilirsiniz.'
         : _activeRegionKeys.isNotEmpty
         ? 'Bölge filtresini değiştirerek tekrar deneyebilirsiniz.'
-        : 'Yeni bir paket satıcı tarafından hazırlandığında burada görünecek.';
+        : 'Yeni görevler geldiğinde burada görünecek.';
 
     return _section(
       child: Column(
@@ -6574,21 +6814,42 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
           Row(
             children: [
               const Expanded(
-                child: Text(
-                  'Sipariş havuzu',
-                  style: TextStyle(
-                    fontSize: 21,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF163B73),
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Sipariş Havuzu',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF102941),
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Yakınındaki uygun teslimatları incele.',
+                      style: TextStyle(
+                        color: Color(0xFF51677F),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              if (_poolRefreshing)
-                const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2.2),
-                ),
+              IconButton(
+                tooltip: 'Yenile',
+                onPressed: _poolRefreshing
+                    ? null
+                    : () => _schedulePoolFetch(force: true),
+                icon: _poolRefreshing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2.2),
+                      )
+                    : const Icon(Icons.refresh_rounded),
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -6598,16 +6859,32 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
             children: [
               FilterChip(
                 label: const Text('Tümü'),
-                selected: !_businessPoolOnly,
+                selected: !_businessPoolOnly && !_independentPoolOnly,
                 onSelected: (_) {
-                  setState(() => _businessPoolOnly = false);
+                  setState(() {
+                    _businessPoolOnly = false;
+                    _independentPoolOnly = false;
+                  });
                 },
               ),
               FilterChip(
                 label: const Text('İşletme Teslimatları'),
                 selected: _businessPoolOnly,
                 onSelected: (_) {
-                  setState(() => _businessPoolOnly = true);
+                  setState(() {
+                    _businessPoolOnly = true;
+                    _independentPoolOnly = false;
+                  });
+                },
+              ),
+              FilterChip(
+                label: const Text('Bağımsız Paketler'),
+                selected: _independentPoolOnly,
+                onSelected: (_) {
+                  setState(() {
+                    _independentPoolOnly = true;
+                    _businessPoolOnly = false;
+                  });
                 },
               ),
             ],
@@ -6640,12 +6917,12 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    _poolLoadError!,
-                    style: const TextStyle(
+                  const Text(
+                    'Teslimatlar yüklenemedi.',
+                    style: TextStyle(
                       color: Color(0xFF8A4B3C),
-                      fontWeight: FontWeight.w700,
-                      height: 1.45,
+                      fontWeight: FontWeight.w800,
+                      height: 1.35,
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -6726,70 +7003,103 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
+                      Row(
                         children: [
                           Container(
-                            width: 42,
-                            height: 42,
+                            width: 40,
+                            height: 40,
                             decoration: BoxDecoration(
-                              color: order.accent.withValues(alpha: 0.14),
-                              borderRadius: BorderRadius.circular(14),
+                              color: order.accent.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(12),
                             ),
                             child: Icon(
-                              Icons.inventory_2_outlined,
+                              order.isBusinessTask
+                                  ? Icons.storefront_outlined
+                                  : Icons.inventory_2_outlined,
                               color: order.accent,
+                              size: 20,
                             ),
                           ),
-                          ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxWidth: isMobile ? 260 : 220,
-                            ),
+                          const SizedBox(width: 10),
+                          Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  order.title,
+                                  order.isReturnPickup
+                                      ? 'İade'
+                                      : order.isBusinessTask
+                                      ? 'İşletme teslimatı'
+                                      : 'Bağımsız Paket',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
-                                    color: Color(0xFF163B73),
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 16,
+                                    color: Color(0xFF51677F),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
                                   ),
                                 ),
-                                const SizedBox(height: 4),
                                 Text(
-                                  order.storeName,
+                                  order.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
-                                    color: Color(0xFF5B6B86),
-                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF102941),
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 15,
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          _earningBadge(order, accent: const Color(0xFF163B73)),
+                          if (order.earning.trim().isNotEmpty)
+                            _earningBadge(
+                              order,
+                              accent: const Color(0xFF1F64D6),
+                            ),
                         ],
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 12),
+                      Text(
+                        order.storeName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF102941),
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if (order.customerName.trim().isNotEmpty)
+                        Text(
+                          order.customerName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF51677F),
+                            fontWeight: FontWeight.w600,
+                            height: 1.3,
+                          ),
+                        ),
+                      const SizedBox(height: 10),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          _poolPill(Icons.route_outlined, order.route),
-                          _poolPill(Icons.schedule_outlined, order.eta),
-                          ...order.tags.map(
-                            (tag) => _poolPill(Icons.circle, tag, dot: true),
-                          ),
+                          if (order.route.trim().isNotEmpty)
+                            _poolPill(Icons.route_outlined, order.route),
+                          if (order.eta.trim().isNotEmpty)
+                            _poolPill(Icons.schedule_outlined, order.eta),
+                          if (order.regionLabel.trim().isNotEmpty)
+                            _poolPill(Icons.place_outlined, order.regionLabel),
                         ],
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: isWebReadOnly
-                              ? null
-                              : isAnotherOrderLocked
+                          onPressed: isWebReadOnly ||
+                                  isAnotherOrderLocked ||
+                                  (_pickupInFlight && isSelected)
                               ? null
                               : () {
                                   if (isDelivered) {
@@ -6805,23 +7115,35 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
                                 ? order.accent
                                 : const Color(0xFF163B73),
                             foregroundColor: Colors.white,
+                            minimumSize: const Size.fromHeight(48),
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(16),
                             ),
                           ),
-                          child: Text(
-                            isWebReadOnly
-                                ? 'Sadece görüntüleme'
-                                : isAnotherOrderLocked
-                                ? 'Aktif teslimat var'
-                                : isDelivered
-                                ? 'Yeni göreve dön'
-                                : isActiveOrder
-                                ? 'Paket teslim alındı'
-                                : 'Paketi teslim al',
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
+                          child: _pickupInFlight && isSelected
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text(
+                                  isWebReadOnly
+                                      ? 'Sadece görüntüleme'
+                                      : isAnotherOrderLocked
+                                      ? 'Aktif teslimat var'
+                                      : isDelivered
+                                      ? 'Yeni göreve dön'
+                                      : isActiveOrder
+                                      ? 'Paket teslim alındı'
+                                      : 'Paketi teslim al',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
                         ),
                       ),
                     ],
@@ -7017,149 +7339,25 @@ class _IhizCourierDashboardPageState extends State<IhizCourierDashboardPage>
   }
 
   Widget _buildAccountCard(bool isMobile) {
-    const supportSetting = _AccountSetting(
-      'Destek merkezi',
-      'Canlı destek ekibine hızlı ulaş',
-      Icons.support_agent_outlined,
-    );
-    final metrics = [
-      _Metric(
-        'Bugünkü kazanç',
-        '—',
-        'Sunucu kazanç kaydı henüz yok',
-        icon: Icons.wallet_outlined,
-        accent: Color(0xFF1E88E5),
-        onTap: _openEarningsPage,
-      ),
-      const _Metric(
-        'Tamamlanan görev',
-        '—',
-        'Veri yok',
-        icon: Icons.inventory_2_outlined,
-        accent: Color(0xFF3563E9),
-      ),
-      const _Metric(
-        'Teslimat puanı',
-        '—',
-        'Puan sistemi bağlı değil',
-        icon: Icons.star_outline_rounded,
-        accent: Color(0xFFE17055),
-      ),
-      _Metric(
-        'Aktif bölge',
-        _activeRegionMetricValue(),
-        _activeRegionMetricCaption(),
-        icon: Icons.map_outlined,
-        accent: Color(0xFF7A4DFF),
-        onTap: _openActiveRegionsPage,
-      ),
-    ];
-
-    return _section(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Hesabım',
-            style: TextStyle(
-              fontSize: 19,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF163B73),
-            ),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Profil ve teslimat özeti',
-            style: TextStyle(
-              color: Color(0xFF5B6B86),
-              height: 1.4,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF7FAFF),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: const Color(0xFFDCE7F7)),
-            ),
-            child: isMobile
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildAccountProfileAvatar(),
-                      const SizedBox(height: 12),
-                      _buildAccountProfileDetails(),
-                    ],
-                  )
-                : Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildAccountProfileAvatar(),
-                      const SizedBox(width: 14),
-                      Expanded(child: _buildAccountProfileDetails()),
-                    ],
-                  ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _accountQuickPill(
-                Icons.flash_on_outlined,
-                _courierOnline ? 'Müsait' : 'Durduruldu',
-                _courierOnline
-                    ? const Color(0xFF1E88E5)
-                    : const Color(0xFF6B7280),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          const Text(
-            'Günlük özet',
-            style: TextStyle(
-              color: Color(0xFF163B73),
-              fontWeight: FontWeight.w800,
-              fontSize: 14,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Column(
-            children: List.generate(metrics.length, (index) {
-              final metric = metrics[index];
-              return Padding(
-                padding: EdgeInsets.only(
-                  bottom: index == metrics.length - 1 ? 0 : 10,
-                ),
-                child: _accountMetricCard(metric),
-              );
-            }),
-          ),
-          const SizedBox(height: 14),
-          _accountSettingTile(supportSetting, onTap: _openSupportCenterSheet),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: widget.onExit,
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
-              child: const Text(
-                'Çıkış Yap',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-              ),
-            ),
-          ),
-        ],
-      ),
+    final name = _applicationData?.fullName.trim();
+    final vehicle = _applicationData?.motorType.trim();
+    return IhizCourierMobileAccount(
+      displayName: name == null || name.isEmpty ? null : name,
+      vehicleLabel: vehicle == null || vehicle.isEmpty ? null : vehicle,
+      online: _courierOnline,
+      onToggleOnline: _toggleWorkStatus,
+      onEditProfile: _openAccountSettingsPage,
+      ratingLabel: '—',
+      completedLabel: '—',
+      monthEarningsLabel: '—',
+      earningsCaption: 'Sunucu kazanç kaydı henüz yok',
+      onOpenEarnings: _openEarningsPage,
+      // isMobile keeps the existing account entry signature.
+      documents: _courierDocumentStatuses(),
+      onSupport: _openSupportCenterSheet,
+      onSettings: _openAccountSettingsPage,
+      onLogout: widget.onExit,
+      loading: isMobile && _storesLoading && _applicationData == null,
     );
   }
 
@@ -8790,11 +8988,23 @@ class _AccountSettingsPageState extends State<_AccountSettingsPage> {
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: _isSaving ? null : _saveProfile,
-            child: Text(
-              _isSaving ? 'Kaydediliyor...' : 'Kaydet',
-              style: const TextStyle(fontWeight: FontWeight.w800),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilledButton(
+              onPressed: _isSaving ? null : _saveProfile,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF1F64D6),
+                foregroundColor: Colors.white,
+                minimumSize: const Size(44, 40),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Text(
+                _isSaving ? 'Kaydediliyor...' : 'Kaydet',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
             ),
           ),
           const SizedBox(width: 6),
@@ -8808,37 +9018,6 @@ class _AccountSettingsPageState extends State<_AccountSettingsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF163B73), Color(0xFF2559A6)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(28),
-                    ),
-                    child: const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Kurye hesabını buradan yönet',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        SizedBox(height: 8),
-                        Text(
-                          'Profil bilgileri, bildirimler, güvenlik ve ödeme ayarları tek ekranda tutulur.',
-                          style: TextStyle(color: Colors.white70, height: 1.5),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
                   _settingsSection(
                     title: 'Profil Düzenle',
                     child: LayoutBuilder(
@@ -9145,8 +9324,8 @@ class _AccountSettingsPageState extends State<_AccountSettingsPage> {
             title,
             style: const TextStyle(
               color: Color(0xFF163B73),
-              fontSize: 17,
-              fontWeight: FontWeight.w900,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 14),
@@ -9167,8 +9346,9 @@ class _FieldLabel extends StatelessWidget {
     return Text(
       text,
       style: const TextStyle(
-        color: Color(0xFF163B73),
-        fontWeight: FontWeight.w800,
+        color: Color(0xFF51677F),
+        fontWeight: FontWeight.w600,
+        fontSize: 13,
       ),
     );
   }

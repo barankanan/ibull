@@ -28,12 +28,14 @@ void main() {
     expect(MarketplacePaths.isAccountPath('/hesabim/siparisler'), isTrue);
     expect(MarketplacePaths.isAccountPath('/hesabim/kiralamalar'), isTrue);
     expect(MarketplacePaths.isAccountPath('/hesabim/favoriler'), isTrue);
+    expect(MarketplacePaths.isAccountPath('/favoriler'), isFalse);
     expect(MarketplacePaths.isAccountPath('/hesabim/ayarlar'), isTrue);
     expect(MarketplacePaths.isAccountPath('/urun/1'), isFalse);
   });
 
   test('account section paths stay canonical', () {
-    expect(MarketplacePaths.favorites, '/hesabim/favoriler');
+    expect(MarketplacePaths.favorites, '/favoriler');
+    expect(MarketplacePaths.legacyAccountFavorites, '/hesabim/favoriler');
     expect(MarketplacePaths.coupons, '/hesabim/kuponlar');
     expect(MarketplacePaths.following, '/hesabim/takip-ettiklerim');
     expect(MarketplacePaths.addresses, '/hesabim/adresler');

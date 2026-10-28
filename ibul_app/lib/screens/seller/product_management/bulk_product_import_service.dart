@@ -37,6 +37,7 @@ class BulkProductImportService {
         fileName: preview.fileName,
         headers: preview.headers,
         rows: preview.rows,
+        isFoodCategory: lockedMainCategory == 'Yemek',
         fileErrors: <String>[
           ...preview.fileErrors,
           'Mağaza kategorisi bulunamadı. Toplu yükleme için önce satıcı kategorisi gerekli.',
@@ -200,6 +201,7 @@ class BulkProductImportService {
       variants: candidate.variants.isEmpty ? null : candidate.variants,
       additionalInfoItems: highlightItems,
       additionalInfo: highlightItems.isEmpty ? null : highlightItems.join('\n'),
+      faq: candidate.faqs.isEmpty ? null : candidate.faqs,
     );
   }
 

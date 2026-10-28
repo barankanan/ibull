@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
-import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../core/app_state.dart';
 import '../core/constants.dart';
@@ -236,6 +236,13 @@ class _ListDetailPageState extends State<ListDetailPage> {
           icon: const Icon(Icons.arrow_back_ios, color: Colors.black87),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          if (_isOwnedList)
+            IconButton(
+              icon: const Icon(Icons.more_horiz, color: Colors.black87),
+              onPressed: _openOwnerMenu,
+            ),
+        ],
         title: Text(
           _selectedTabIndex == 0
               ? 'Listelerim'
@@ -257,6 +264,18 @@ class _ListDetailPageState extends State<ListDetailPage> {
         children: [
           _buildHeaderCard(isWeb: false),
           _buildTabRow(isWeb: false),
+          if (_isOwnedList && _selectedTabIndex == 0)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: OutlinedButton.icon(
+                  onPressed: _addProducts,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Ürün Ekle'),
+                ),
+              ),
+            ),
           Expanded(child: _buildTabContent(isWeb: false)),
         ],
       ),
@@ -1015,16 +1034,385 @@ class _ListDetailPageState extends State<ListDetailPage> {
   }
 
   Future<void> _shareList() async {
+    final isPublic = _resolvedListData['isPublic'] == true;
+    if (!isPublic) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Bu liste özel. Paylaşmak için herkese açık yapmalısın.',
+          ),
+        ),
+      );
+      return;
+    }
+    final name = _resolvedListData['name']?.toString() ?? 'Liste';
+    final count = _products.length;
     final shareCode = _resolvedListData['shareCode']?.toString().trim() ?? '';
     final message =
-        'İBUL listesi: ${_resolvedListData['name']}\nPaylaşım kodu: $shareCode';
-    await Clipboard.setData(ClipboardData(text: message));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Liste paylaşım bilgisi panoya kopyalandı.'),
+        'İBUL listeme göz at:\n$name\n$count ürün\nPaylaşım kodu: $shareCode';
+    await Share.share(message);
+  }
+
+  Future<void> _openOwnerMenu() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: const Text('Listeyi Düzenle'),
+              onTap: () {
+                Navigator.pop(context);
+                _editList();
+              },
+            ),
+            ListTile(
+              title: const Text('Ürünleri Yönet'),
+              onTap: () {
+                Navigator.pop(context);
+                _manageProducts();
+              },
+            ),
+            ListTile(
+              title: const Text('Paylaş'),
+              onTap: () {
+                Navigator.pop(context);
+                _shareList();
+              },
+            ),
+            ListTile(
+              title: const Text('Gizliliği Değiştir'),
+              onTap: () {
+                Navigator.pop(context);
+                _toggleVisibility();
+              },
+            ),
+            ListTile(
+              title: const Text('Listeyi Sil'),
+              onTap: () {
+                Navigator.pop(context);
+                _confirmDelete();
+              },
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  Future<void> _editList() async {
+    final nameController = TextEditingController(
+      text: _resolvedListData['name']?.toString() ?? '',
+    );
+    final descController = TextEditingController(text: _description);
+    var visibility = _resolvedListData['isPublic'] == true
+        ? ProductListVisibility.public
+        : ProductListVisibility.private;
+    String? error;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            16 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: InputDecoration(
+                  labelText: 'Liste adı',
+                  errorText: error,
+                ),
+              ),
+              TextField(
+                controller: descController,
+                decoration: const InputDecoration(labelText: 'Açıklama'),
+              ),
+              const SizedBox(height: 8),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Kapak, listedeki ilk ürün görselinden gelir.',
+                  style: TextStyle(fontSize: 12, color: AppColors.textGrey),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text('Özel'),
+                    selected: visibility == ProductListVisibility.private,
+                    onSelected: (_) => setSheetState(
+                      () => visibility = ProductListVisibility.private,
+                    ),
+                  ),
+                  ChoiceChip(
+                    label: const Text('Herkese Açık'),
+                    selected: visibility == ProductListVisibility.public,
+                    onSelected: (_) => setSheetState(
+                      () => visibility = ProductListVisibility.public,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: () async {
+                  if (nameController.text.trim().isEmpty) {
+                    setSheetState(() => error = 'Liste adı zorunlu');
+                    return;
+                  }
+                  await _appState.updateProductListDetails(
+                    _listId,
+                    name: nameController.text,
+                    description: descController.text,
+                  );
+                  _appState.updateProductListVisibility(_listId, visibility);
+                  if (context.mounted) Navigator.pop(context);
+                },
+                child: const Text('Değişiklikleri Kaydet'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    nameController.dispose();
+    descController.dispose();
+  }
+
+  Future<void> _manageProducts() async {
+    final selected = <int>{};
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final products = _products;
+          return SafeArea(
+            child: SizedBox(
+              height: MediaQuery.sizeOf(context).height * 0.7,
+              child: Column(
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text(
+                      'Ürünleri Yönet',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: products.length,
+                      itemBuilder: (context, index) {
+                        final product = products[index];
+                        return CheckboxListTile(
+                          value: selected.contains(index),
+                          onChanged: (value) {
+                            setSheetState(() {
+                              if (value == true) {
+                                selected.add(index);
+                              } else {
+                                selected.remove(index);
+                              }
+                            });
+                          },
+                          title: Text(
+                            product.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: FilledButton(
+                      onPressed: selected.isEmpty
+                          ? null
+                          : () {
+                              final keys = selected.map((index) {
+                                final product = products[index];
+                                final id = product.productId?.trim() ?? '';
+                                if (id.isNotEmpty) return 'id:$id';
+                                return '${product.brand.trim().toLowerCase()}|${product.name.trim().toLowerCase()}|${(product.store ?? '').trim().toLowerCase()}';
+                              }).toList();
+                              for (final key in keys) {
+                                _appState.removeFromProductList(_listId, key);
+                              }
+                              Navigator.pop(context);
+                            },
+                      child: const Text('Seçilenleri Listeden Çıkar'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _addProducts() async {
+    var fromCart = false;
+    final selected = <String>{};
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final pool = fromCart ? _appState.cart : _appState.favorites;
+          return SafeArea(
+            child: SizedBox(
+              height: MediaQuery.sizeOf(context).height * 0.7,
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    child: Row(
+                      children: [
+                        ChoiceChip(
+                          label: const Text('Beğenilerden ekle'),
+                          selected: !fromCart,
+                          onSelected: (_) => setSheetState(() {
+                            fromCart = false;
+                            selected.clear();
+                          }),
+                        ),
+                        const SizedBox(width: 8),
+                        ChoiceChip(
+                          label: const Text('Sepetten ekle'),
+                          selected: fromCart,
+                          onSelected: (_) => setSheetState(() {
+                            fromCart = true;
+                            selected.clear();
+                          }),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: pool.isEmpty
+                        ? const Center(child: Text('Eklenecek ürün yok'))
+                        : ListView.builder(
+                            itemCount: pool.length,
+                            itemBuilder: (context, index) {
+                              final product = pool[index];
+                              final key = product.productId?.trim().isNotEmpty == true
+                                  ? 'id:${product.productId}'
+                                  : '${product.brand}|${product.name}';
+                              return CheckboxListTile(
+                                value: selected.contains(key),
+                                onChanged: (value) {
+                                  setSheetState(() {
+                                    if (value == true) {
+                                      selected.add(key);
+                                    } else {
+                                      selected.remove(key);
+                                    }
+                                  });
+                                },
+                                title: Text(
+                                  product.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: FilledButton(
+                      onPressed: selected.isEmpty
+                          ? null
+                          : () {
+                              var added = 0;
+                              var skipped = 0;
+                              for (final product in pool) {
+                                final key = product.productId?.trim().isNotEmpty == true
+                                    ? 'id:${product.productId}'
+                                    : '${product.brand}|${product.name}';
+                                if (!selected.contains(key)) continue;
+                                final already = _products.any((existing) {
+                                  final existingId = existing.productId?.trim() ?? '';
+                                  final incomingId = product.productId?.trim() ?? '';
+                                  if (existingId.isNotEmpty && incomingId.isNotEmpty) {
+                                    return existingId == incomingId;
+                                  }
+                                  return existing.name == product.name &&
+                                      existing.brand == product.brand;
+                                });
+                                if (already ||
+                                    !_appState.addToProductList(_listId, product)) {
+                                  skipped++;
+                                } else {
+                                  added++;
+                                }
+                              }
+                              Navigator.pop(context);
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    skipped == 0
+                                        ? '$added ürün listeye eklendi'
+                                        : '$added eklendi, $skipped zaten listede veya eklenemedi',
+                                  ),
+                                ),
+                              );
+                            },
+                      child: const Text('Listeye Ekle'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Listeyi sil'),
+        content: const Text('Bu listeyi silmek istediğine emin misin?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Vazgeç'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Listeyi Sil'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _appState.deleteProductList(_listId);
+    if (mounted) Navigator.pop(context);
   }
 
   Future<void> _toggleVisibility() async {

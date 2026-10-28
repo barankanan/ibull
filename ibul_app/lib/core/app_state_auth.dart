@@ -86,15 +86,18 @@ extension _AppStateAuthDomain on AppState {
           _followedStores,
         );
         _handleCartStateChanged();
+        _favoriteState.markHydrated();
       } catch (e) {
         debugPrint('AppState local collections load warn: $e');
+        _favoriteState.markHydrated();
       }
     });
   }
 
   Future<void> _loadUserDataImpl({int? requestVersion}) async {
+    final cartRevisionAtStart = _cartRevision;
     await _runBatchedAsync(() async {
-      _clearUserData(requestVersion: requestVersion);
+      _clearUserData(requestVersion: requestVersion, clearCart: false);
 
       try {
         final favoritesData = await _authService.getUserDataField('favorites');
@@ -129,7 +132,14 @@ extension _AppStateAuthDomain on AppState {
         if (requestVersion != null && _isStaleAuthRequest(requestVersion)) {
           return;
         }
-        if (resolvedCart != null && resolvedCart is List) {
+        if (_cartRevision != cartRevisionAtStart) {
+          if (kDebugMode) {
+            debugPrint(
+              '[CART_TRACE] hydrate_skipped instance=${identityHashCode(this)} '
+              'count=${cart.length}',
+            );
+          }
+        } else if (resolvedCart != null && resolvedCart is List) {
           _cartState.replaceCart(
             resolvedCart.map(
               (e) => Product.fromJson(

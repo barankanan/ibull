@@ -79,7 +79,13 @@ void main() {
       );
 
       expect(find.text('Uygulama başlatılamadı'), findsOneWidget);
-      expect(find.text('Supabase failed'), findsOneWidget);
+      expect(
+        find.text(
+          'Bir yükleme hatası oluştu. Sayfayı yenileyin veya destek ile iletişime geçin.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('error: Supabase failed'), findsOneWidget);
     });
 
     testWidgets('boot stage shell renders diagnostic shell page', (
@@ -118,7 +124,7 @@ void main() {
 
       expect(find.text('Uygulama başlatılamadı'), findsOneWidget);
       expect(find.text('Boot failed'), findsOneWidget);
-      expect(find.text('timeout'), findsOneWidget);
+      expect(find.textContaining('error: timeout'), findsOneWidget);
     });
 
     test('parseIbulBootStage maps diagnostic stages', () {

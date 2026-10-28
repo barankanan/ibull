@@ -11,7 +11,7 @@ class CompareState extends ChangeNotifier {
   List<Product> get compareProducts => List.unmodifiable(_compareProducts);
 
   bool isCompared(Product product) =>
-      _compareProducts.any((p) => p.productId == product.productId && p.productId != null);
+      _compareProducts.any((candidate) => _sameProduct(candidate, product));
 
   String? addProduct(Product product) {
     if (_compareProducts.length >= 4) {
@@ -28,7 +28,7 @@ class CompareState extends ChangeNotifier {
       }
     }
 
-    if (!_compareProducts.any((p) => p.productId == product.productId && p.productId != null)) {
+    if (!_compareProducts.any((candidate) => _sameProduct(candidate, product))) {
       _compareProducts.add(product);
       notifyListeners();
     }
@@ -36,8 +36,20 @@ class CompareState extends ChangeNotifier {
   }
 
   void removeProduct(Product product) {
-    _compareProducts.removeWhere((p) => p.productId == product.productId);
+    _compareProducts.removeWhere((candidate) => _sameProduct(candidate, product));
     notifyListeners();
+  }
+
+  bool _sameProduct(Product candidate, Product product) {
+    final candidateId = candidate.productId?.trim();
+    final productId = product.productId?.trim();
+    if (candidateId != null &&
+        candidateId.isNotEmpty &&
+        productId != null &&
+        productId.isNotEmpty) {
+      return candidateId == productId;
+    }
+    return identical(candidate, product);
   }
 
   String? toggleCompare(Product product) {

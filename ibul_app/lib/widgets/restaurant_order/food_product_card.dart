@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/constants.dart';
 import '../../models/product_model.dart';
 import '../optimized_image.dart';
+import '../product_discount_price.dart';
 import 'product_quantity_stepper.dart';
 
 class FoodProductCard extends StatelessWidget {
@@ -50,11 +51,11 @@ class FoodProductCard extends StatelessWidget {
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 140),
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: quantity > 0 ? selectedSurface : Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: quantity > 0 ? selectedBorder : const Color(0xFFF0F1F5),
           width: quantity > 0 ? 1.4 : 1,
@@ -78,33 +79,45 @@ class FoodProductCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  product.name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF1F2937),
-                    height: 1.2,
-                  ),
-                ),
-                if (category != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    category,
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.grey.shade600,
+                SizedBox(
+                  height: 36,
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: Text(
+                      product.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1F2937),
+                        height: 1.2,
+                      ),
                     ),
                   ),
-                ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    ?((product.store ?? '').trim().isEmpty
+                        ? null
+                        : product.store!.trim()),
+                    ?category,
+                    product.rating.toStringAsFixed(1),
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
                 if (description != null) ...[
-                  const SizedBox(height: 7),
+                  const SizedBox(height: 4),
                   Text(
                     description,
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 12,
@@ -113,16 +126,18 @@ class FoodProductCard extends StatelessWidget {
                     ),
                   ),
                 ],
-                const SizedBox(height: 10),
-                Text(
-                  product.displayPricingText,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                    color: quantity > 0
-                        ? const Color(0xFF15803D)
-                        : AppColors.primary,
-                  ),
+                const SizedBox(height: 8),
+                ProductDiscountPrice(
+                  key: const ValueKey('food-product-price'),
+                  price: product.price,
+                  oldPrice: product.oldPrice,
+                  currentLabel: product.displayPricingText,
+                  currentFontSize: 16,
+                  oldFontSize: 12,
+                  currentColor: quantity > 0
+                      ? const Color(0xFF15803D)
+                      : AppColors.primary,
+                  compact: true,
                 ),
                 if (preparationTime != null) ...[
                   const SizedBox(height: 4),
@@ -241,8 +256,8 @@ class _ProductImage extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         child: Ink(
-          width: 72,
-          height: 72,
+          width: 88,
+          height: 88,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
             color: const Color(0xFFF7F7FB),
@@ -252,8 +267,8 @@ class _ProductImage extends StatelessWidget {
             child: product.images.isNotEmpty
                 ? OptimizedImage(
                     imageUrlOrPath: product.images.first,
-                    width: 72,
-                    height: 72,
+                    width: 88,
+                    height: 88,
                     fit: BoxFit.cover,
                     errorBuilder: (_, error, stackTrace) =>
                         const _ImageFallback(),

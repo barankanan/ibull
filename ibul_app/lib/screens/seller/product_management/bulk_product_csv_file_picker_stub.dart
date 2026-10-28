@@ -1,7 +1,7 @@
-import 'dart:io';
-import 'dart:typed_data';
+import 'dart:io' if (dart.library.html) 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 
 import 'bulk_product_import_models.dart';
 
@@ -16,12 +16,13 @@ Future<BulkProductSelectedFile?> pickBulkProductCsvFile() async {
     return null;
   }
 
-  final PlatformFile file = result.files.first;
+  // Web ortamında dosya içeriği result.files.single.bytes üzerinden okunur (asla .path üzerinden File açılmaz).
+  final PlatformFile file = result.files.single;
   Uint8List? bytes = file.bytes;
-  if ((bytes == null || bytes.isEmpty) &&
-      file.path != null &&
-      file.path!.trim().isNotEmpty) {
-    bytes = await File(file.path!).readAsBytes();
+  if (!kIsWeb && (bytes == null || bytes.isEmpty) && file.path != null && file.path!.trim().isNotEmpty) {
+    try {
+      bytes = await File(file.path!).readAsBytes();
+    } catch (_) {}
   }
   if (bytes == null || bytes.isEmpty) {
     throw Exception('CSV dosyası okunamadı.');

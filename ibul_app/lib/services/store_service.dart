@@ -575,7 +575,7 @@ class StoreService {
     final statuses = SupabaseService.publicCatalogProductStatuses;
     final productRows = await _supabase
         .from('products')
-        .select('seller_id, store_name')
+        .select('seller_id')
         .inFilter('status', statuses)
         .limit(500);
 
@@ -587,8 +587,7 @@ class StoreService {
       final row = Map<String, dynamic>.from(raw as Map);
       final sellerId = row['seller_id']?.toString().trim() ?? '';
       if (sellerId.isEmpty) continue;
-      final storeName = row['store_name']?.toString().trim() ?? '';
-      entries.add((sellerId: sellerId, storeName: storeName));
+      entries.add((sellerId: sellerId, storeName: ''));
       if (seen.add(sellerId)) {
         sellerIds.add(sellerId);
       }
@@ -1060,7 +1059,13 @@ class StoreService {
 
           if (imageUrl == null) {
             try {
-              final file = (v as dynamic).imageFile;
+              dynamic file = (v as dynamic).imageFile;
+              if (file == null) {
+                final bytes = (v as dynamic).imageBytes;
+                if (bytes is Uint8List && bytes.isNotEmpty) {
+                  file = XFile.fromData(bytes, name: 'variant_$i.jpg', mimeType: 'image/jpeg');
+                }
+              }
               if (file is XFile) {
                 if (onProgress != null) {
                   onProgress(
@@ -1072,14 +1077,22 @@ class StoreService {
             } catch (_) {}
           }
 
+          final dynamic dyn = v;
+          final colorHex = (dyn is Map) ? (dyn['colorHex'] ?? dyn['color_hex']) : dyn.colorHex;
+          final optionType = (dyn is Map) ? (dyn['optionType'] ?? dyn['option_type']) : dyn.optionType;
+          final options = (dyn is Map) ? dyn['options'] : dyn.options;
+
           updatedVariants.add({
-            'color': (v as dynamic).color,
-            'size': (v as dynamic).size,
-            'ram': (v as dynamic).ram,
-            'storage': (v as dynamic).storage,
-            'sku': (v as dynamic).sku,
-            'stock': (v as dynamic).stock,
-            'priceDifference': (v as dynamic).priceDifference,
+            'color': (dyn is Map) ? (dyn['color'] ?? dyn['Renk'] ?? dyn['renk']) : dyn.color,
+            if (colorHex != null && colorHex.toString().isNotEmpty) 'colorHex': colorHex,
+            'size': (dyn is Map) ? (dyn['size'] ?? dyn['beden']) : dyn.size,
+            if (optionType != null && optionType.toString().isNotEmpty) 'optionType': optionType,
+            if (options != null && (options is! Map || options.isNotEmpty)) 'options': options,
+            'ram': (dyn is Map) ? dyn['ram'] : dyn.ram,
+            'storage': (dyn is Map) ? (dyn['storage'] ?? dyn['hafıza'] ?? dyn['hafiza']) : dyn.storage,
+            'sku': (dyn is Map) ? dyn['sku'] : dyn.sku,
+            'stock': (dyn is Map) ? (dyn['stock'] ?? dyn['stok']) : dyn.stock,
+            'priceDifference': (dyn is Map) ? (dyn['priceDifference'] ?? dyn['price_difference']) : dyn.priceDifference,
             'imageUrl': imageUrl,
           });
         }
@@ -1220,7 +1233,13 @@ class StoreService {
 
           if (imageUrl == null) {
             try {
-              final file = (v as dynamic).imageFile;
+              dynamic file = (v as dynamic).imageFile;
+              if (file == null) {
+                final bytes = (v as dynamic).imageBytes;
+                if (bytes is Uint8List && bytes.isNotEmpty) {
+                  file = XFile.fromData(bytes, name: 'variant_$i.jpg', mimeType: 'image/jpeg');
+                }
+              }
               if (file is XFile) {
                 if (onProgress != null) {
                   onProgress(
@@ -1232,14 +1251,22 @@ class StoreService {
             } catch (_) {}
           }
 
+          final dynamic dyn = v;
+          final colorHex = (dyn is Map) ? (dyn['colorHex'] ?? dyn['color_hex']) : dyn.colorHex;
+          final optionType = (dyn is Map) ? (dyn['optionType'] ?? dyn['option_type']) : dyn.optionType;
+          final options = (dyn is Map) ? dyn['options'] : dyn.options;
+
           updatedVariants.add({
-            'color': (v as dynamic).color,
-            'size': (v as dynamic).size,
-            'ram': (v as dynamic).ram,
-            'storage': (v as dynamic).storage,
-            'sku': (v as dynamic).sku,
-            'stock': (v as dynamic).stock,
-            'priceDifference': (v as dynamic).priceDifference,
+            'color': (dyn is Map) ? (dyn['color'] ?? dyn['Renk'] ?? dyn['renk']) : dyn.color,
+            if (colorHex != null && colorHex.toString().isNotEmpty) 'colorHex': colorHex,
+            'size': (dyn is Map) ? (dyn['size'] ?? dyn['beden']) : dyn.size,
+            if (optionType != null && optionType.toString().isNotEmpty) 'optionType': optionType,
+            if (options != null && (options is! Map || options.isNotEmpty)) 'options': options,
+            'ram': (dyn is Map) ? dyn['ram'] : dyn.ram,
+            'storage': (dyn is Map) ? (dyn['storage'] ?? dyn['hafıza'] ?? dyn['hafiza']) : dyn.storage,
+            'sku': (dyn is Map) ? dyn['sku'] : dyn.sku,
+            'stock': (dyn is Map) ? (dyn['stock'] ?? dyn['stok']) : dyn.stock,
+            'priceDifference': (dyn is Map) ? (dyn['priceDifference'] ?? dyn['price_difference']) : dyn.priceDifference,
             'imageUrl': imageUrl,
           });
         }
@@ -1490,21 +1517,35 @@ class StoreService {
 
         if (imageUrl == null) {
           try {
-            final file = (v as dynamic).imageFile;
+            dynamic file = (v as dynamic).imageFile;
+            if (file == null) {
+              final bytes = (v as dynamic).imageBytes;
+              if (bytes is Uint8List && bytes.isNotEmpty) {
+                file = XFile.fromData(bytes, name: 'variant_$i.jpg', mimeType: 'image/jpeg');
+              }
+            }
             if (file is XFile) {
               imageUrl = await _uploadVariantImage(product.id, file, i);
             }
           } catch (_) {}
         }
 
+        final dynamic dyn = v;
+        final colorHex = (dyn is Map) ? (dyn['colorHex'] ?? dyn['color_hex']) : dyn.colorHex;
+        final optionType = (dyn is Map) ? (dyn['optionType'] ?? dyn['option_type']) : dyn.optionType;
+        final options = (dyn is Map) ? dyn['options'] : dyn.options;
+
         updatedVariants.add({
-          'color': (v as dynamic).color,
-          'size': (v as dynamic).size,
-          'ram': (v as dynamic).ram,
-          'storage': (v as dynamic).storage,
-          'sku': (v as dynamic).sku,
-          'stock': (v as dynamic).stock,
-          'priceDifference': (v as dynamic).priceDifference,
+          'color': (dyn is Map) ? (dyn['color'] ?? dyn['Renk'] ?? dyn['renk']) : dyn.color,
+          if (colorHex != null && colorHex.toString().isNotEmpty) 'colorHex': colorHex,
+          'size': (dyn is Map) ? (dyn['size'] ?? dyn['beden']) : dyn.size,
+          if (optionType != null && optionType.toString().isNotEmpty) 'optionType': optionType,
+          if (options != null && (options is! Map || options.isNotEmpty)) 'options': options,
+          'ram': (dyn is Map) ? dyn['ram'] : dyn.ram,
+          'storage': (dyn is Map) ? (dyn['storage'] ?? dyn['hafıza'] ?? dyn['hafiza']) : dyn.storage,
+          'sku': (dyn is Map) ? dyn['sku'] : dyn.sku,
+          'stock': (dyn is Map) ? (dyn['stock'] ?? dyn['stok']) : dyn.stock,
+          'priceDifference': (dyn is Map) ? (dyn['priceDifference'] ?? dyn['price_difference']) : dyn.priceDifference,
           'imageUrl': imageUrl,
         });
       }
@@ -2404,24 +2445,18 @@ class StoreService {
     String sellerId, {
     int limit = 300,
   }) async {
-    const richMenuSelect =
-        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, '
-        'price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, '
-        'attributes, description, specifications, additional_info, accessories, '
-        'short_description, ingredients, features, preparation_time, cooking_time, '
-        'station_id, printer_routing_enabled';
     const detailMenuSelect =
         'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, '
-        'price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, '
+        'price, discount_price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, '
         'attributes, description, specifications, additional_info, accessories, '
         'station_id, printer_routing_enabled';
     const noSpecificationsSelect =
         'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, '
-        'price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, '
+        'price, discount_price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, '
         'attributes, description, additional_info, accessories, '
         'station_id, printer_routing_enabled';
     const menuSelect =
-        'id, seller_id, name, image_url, image_urls, sub_category, price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, attributes, station_id, printer_routing_enabled';
+        'id, seller_id, name, image_url, image_urls, sub_category, price, discount_price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, attributes, station_id, printer_routing_enabled';
 
     Future<List<Map<String, dynamic>>> runSelect(String select) async {
       final list = await _supabase
@@ -2437,16 +2472,14 @@ class StoreService {
     }
 
     try {
-      return await runSelect(richMenuSelect);
+      return await runSelect(detailMenuSelect);
     } catch (e) {
       final message = e.toString();
-      if (message.contains('short_description') ||
-          message.contains('ingredients') ||
-          message.contains('features') ||
-          message.contains('preparation_time') ||
-          message.contains('cooking_time')) {
+      if (message.contains('specifications') ||
+          message.contains('additional_info') ||
+          message.contains('accessories')) {
         try {
-          return await runSelect(detailMenuSelect);
+          return await runSelect(noSpecificationsSelect);
         } catch (fallbackError) {
           final fallbackMessage = fallbackError.toString();
           if (fallbackMessage.contains('specifications')) {

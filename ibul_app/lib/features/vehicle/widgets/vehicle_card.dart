@@ -45,8 +45,12 @@ class _HubVehicleCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final listing = card.listing;
     final imageUrl = listing.primaryImageUrl;
-    return SizedBox(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bounded = constraints.maxHeight.isFinite;
+        return SizedBox(
       width: card.width ?? 180,
+      height: bounded ? constraints.maxHeight : null,
       child: Stack(
         children: [
           Material(
@@ -62,34 +66,20 @@ class _HubVehicleCard extends StatelessWidget {
                     slug: listing.title,
                   ),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
+                mainAxisSize: bounded ? MainAxisSize.max : MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ClipRRect(
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(AppRadii.md),
-                    ),
-                    child: AspectRatio(
-                      aspectRatio: 4 / 3,
-                      child: imageUrl == null || imageUrl.isEmpty
-                          ? ColoredBox(
-                              color: AppColors.surfaceMuted,
-                              child: Icon(
-                                Icons.directions_car_outlined,
-                                color: AppColors.iconMuted,
-                              ),
-                            )
-                          : OptimizedImage(
-                              imageUrlOrPath: AppImageCdn.buildUrl(
-                                imageUrl,
-                                AppImageVariant.card,
-                              ),
-                              fit: BoxFit.cover,
-                              cacheWidth: 600,
-                              cacheHeight: 600,
-                            ),
-                    ),
-                  ),
+                  if (bounded)
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(AppRadii.md),
+                        ),
+                        child: _hubImageFill(imageUrl),
+                      ),
+                    )
+                  else
+                    _hubImage(imageUrl),
                   Padding(
                     padding: const EdgeInsets.all(AppSpacing.sm),
                     child: Column(
@@ -136,6 +126,56 @@ class _HubVehicleCard extends StatelessWidget {
           if (card.showActions) VehicleCardActionOverlay(listing: listing),
         ],
       ),
+        );
+      },
+    );
+  }
+
+  Widget _hubImageFill(String? imageUrl) {
+    if (imageUrl == null || imageUrl.isEmpty) {
+      return ColoredBox(
+        color: AppColors.surfaceMuted,
+        child: Icon(
+          Icons.directions_car_outlined,
+          color: AppColors.iconMuted,
+        ),
+      );
+    }
+    return OptimizedImage(
+      imageUrlOrPath: AppImageCdn.buildUrl(imageUrl, AppImageVariant.card),
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      cacheWidth: 600,
+      cacheHeight: 600,
+    );
+  }
+
+  Widget _hubImage(String? imageUrl) {
+    final image = imageUrl == null || imageUrl.isEmpty
+        ? ColoredBox(
+            color: AppColors.surfaceMuted,
+            child: Icon(
+              Icons.directions_car_outlined,
+              color: AppColors.iconMuted,
+            ),
+          )
+        : OptimizedImage(
+            imageUrlOrPath: AppImageCdn.buildUrl(
+              imageUrl,
+              AppImageVariant.card,
+            ),
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+            cacheWidth: 600,
+            cacheHeight: 600,
+          );
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(
+        top: Radius.circular(AppRadii.md),
+      ),
+      child: AspectRatio(aspectRatio: 4 / 3, child: image),
     );
   }
 }

@@ -87,42 +87,77 @@ class IhizCourierLoginMarketingSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(28),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF163B73), Color(0xFF2C6BC0)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(30),
+        color: const Color(0xFFF3F8FF),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFDCE8F8)),
       ),
       child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          IhizCourierHeroChip('Sadece onaylı kuryeler'),
-          SizedBox(height: 18),
           Text(
-            'İhız kurye paneline giriş',
+            'İHIZ KURYE',
             style: TextStyle(
-              color: Colors.white,
-              fontSize: 34,
+              color: Color(0xFF1F64D6),
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1,
+              fontSize: 12,
+            ),
+          ),
+          SizedBox(height: 10),
+          Text(
+            'Teslimatı tek ekrandan yönet.',
+            style: TextStyle(
+              color: Color(0xFF102941),
+              fontSize: 32,
               fontWeight: FontWeight.w900,
-              letterSpacing: -1,
+              height: 1.15,
             ),
           ),
           SizedBox(height: 12),
           Text(
-            'Giriş sonrası sipariş havuzu, canlı rota, mağaza adresi ve müşteri teslim ekranları açılır.',
-            style: TextStyle(color: Colors.white70, height: 1.6, fontSize: 15),
+            'Onaylı kurye hesabınla sipariş havuzu, rota ve teslimat adımları açılır.',
+            style: TextStyle(
+              color: Color(0xFF51677F),
+              height: 1.5,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-          SizedBox(height: 20),
-          IhizCourierLoginPoint('Sipariş havuzundan görev seç'),
-          SizedBox(height: 10),
-          IhizCourierLoginPoint('Mağazadan teslim al'),
-          SizedBox(height: 10),
-          IhizCourierLoginPoint('Müşteriye bırak ve görevi kapat'),
+          SizedBox(height: 18),
+          _LightPoint('Yakındaki görevleri gör'),
+          SizedBox(height: 8),
+          _LightPoint('Mağazadan teslim al'),
+          SizedBox(height: 8),
+          _LightPoint('Müşteriye bırak ve görevi kapat'),
         ],
       ),
+    );
+  }
+}
+
+class _LightPoint extends StatelessWidget {
+  const _LightPoint(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Icon(Icons.check_circle, color: Color(0xFF1F64D6), size: 18),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(
+              color: Color(0xFF102941),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

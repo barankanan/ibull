@@ -6,22 +6,14 @@ DEVICE_ID="00008030-001610AC14BB802E"
 SUPABASE_URL="https://ihmixxzqnpamcwmrfibx.supabase.co"
 SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlobWl4eHpxbnBhbWN3bXJmaWJ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3MDE0NTEsImV4cCI6MjA4NzI3NzQ1MX0.EZkjZAq2mwg-gfBhwotAGp4stb1D-rmWHuzVsz2yzX0"
 
-PLIST="ios/Runner/GoogleService-Info.plist"
-
-FIREBASE_IOS_API_KEY=$(/usr/libexec/PlistBuddy -c "Print :API_KEY" "$PLIST")
-FIREBASE_IOS_APP_ID=$(/usr/libexec/PlistBuddy -c "Print :GOOGLE_APP_ID" "$PLIST")
-FIREBASE_PROJECT_ID=$(/usr/libexec/PlistBuddy -c "Print :PROJECT_ID" "$PLIST")
-FIREBASE_MESSAGING_SENDER_ID=$(/usr/libexec/PlistBuddy -c "Print :GCM_SENDER_ID" "$PLIST")
-FIREBASE_STORAGE_BUCKET=$(/usr/libexec/PlistBuddy -c "Print :STORAGE_BUCKET" "$PLIST")
-FIREBASE_IOS_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :BUNDLE_ID" "$PLIST")
-
-echo "Firebase kontrol:"
-echo "API_KEY=$FIREBASE_IO_API_KEY"
-echo "APP_ID=$FIREBASE_IOS_APP_ID"
-echo "PROJECT_ID=$FIREBASE_PROJECT_ID"
-echo "SENDER_ID=$FIREBASE_MESSAGING_SENDER_ID"
-echo "STORAGE_BUCKET=$FIREBASE_STORAGE_BUCKET"
-echo "BUNDLE_ID=$FIREBASE_IOS_BUNDLE_ID"
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ios_runtime_env.sh"
+ios_runtime_prepare
+ios_runtime_status
+if ! ios_runtime_ready; then
+  echo "iOS runtime config eksik. flutter run başlatılmadı."
+  exit 1
+fi
 
 flutter run -d "$DEVICE_ID" --release \
   --target lib/main.dart \

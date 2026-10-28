@@ -14,8 +14,10 @@ const List<String> bulkProductImportCanonicalHeaders = <String>[
   'description',
   'price',
   'stock_quantity',
+  'stock_alert_level',
   'status',
   'color',
+  'color_hex',
   'sku',
   'barcode',
   'sale_price',
@@ -37,13 +39,9 @@ const List<String> bulkProductImportCanonicalHeaders = <String>[
   'cargo_shipping_profile',
   'free_shipping',
   'highlights_json',
-  'key_features',
+  'faq_json',
   'delivery_time',
   'estimated_delivery_days',
-  'rich_description_json',
-  'description_image_urls',
-  'description_image_captions',
-  'long_description',
   'portion_price',
   'kilo_price',
   'min_gram',
@@ -69,7 +67,6 @@ const Set<String> bulkProductImportAllowedStatuses = <String>{
 };
 
 /// CSV status değerini kaydedilecek ürün durumuna çevirir.
-/// Toplu yüklemede `active` doğrudan vitrine çıkmaz; admin onayına gider.
 String normalizeBulkProductImportStatus(String raw) {
   final String normalized = raw.trim().toLowerCase().replaceAll(' ', '_');
   if (normalized.isEmpty) {
@@ -136,10 +133,15 @@ const Map<String, String> bulkProductImportHeaderAliases = <String, String>{
   'stock_quantity': 'stock_quantity',
   'stok': 'stock_quantity',
   'stock': 'stock_quantity',
+  'stock_alert_level': 'stock_alert_level',
+  'stok alarm seviyesi': 'stock_alert_level',
+  'stok uyarı': 'stock_alert_level',
   'status': 'status',
   'durum': 'status',
   'color': 'color',
+  'color_hex': 'color_hex',
   'renk': 'color',
+  'renk_kodu': 'color_hex',
   'sku': 'sku',
   'barcode': 'barcode',
   'barkod': 'barcode',
@@ -204,21 +206,24 @@ const Map<String, String> bulkProductImportHeaderAliases = <String, String>{
   'free_shipping': 'free_shipping',
   'ücretsiz kargo': 'free_shipping',
   'highlights_json': 'highlights_json',
-  'key_features': 'key_features',
+  'key_features': 'highlights_json',
+  'faq_json': 'faq_json',
   'delivery_time': 'delivery_time',
   'tahmini teslimat': 'delivery_time',
   'estimated_delivery_days': 'estimated_delivery_days',
   'tahmini teslimat günü': 'estimated_delivery_days',
-  'rich_description_json': 'rich_description_json',
-  'description_image_urls': 'description_image_urls',
-  'açıklama görselleri': 'description_image_urls',
-  'aciklama gorselleri': 'description_image_urls',
-  'description_image_captions': 'description_image_captions',
-  'açıklama görsel açıklamaları': 'description_image_captions',
-  'aciklama gorsel aciklamalari': 'description_image_captions',
-  'long_description': 'long_description',
-  'uzun açıklama': 'long_description',
-  'uzun aciklama': 'long_description',
+  
+  // Eskileri uyarı ve redirect için (description'a eklenmeli)
+  'rich_description_json': 'description',
+  'description_image_urls': 'description',
+  'açıklama görselleri': 'description',
+  'aciklama gorselleri': 'description',
+  'description_image_captions': 'description',
+  'açıklama görsel açıklamaları': 'description',
+  'aciklama gorsel aciklamalari': 'description',
+  'long_description': 'description',
+  'uzun açıklama': 'description',
+  'uzun aciklama': 'description',
   'package_weight_kg': 'cargo_weight_kg',
   'package_width_cm': 'cargo_width_cm',
   'package_height_cm': 'cargo_height_cm',
@@ -236,8 +241,8 @@ const Map<String, String> bulkProductImportHeaderAliases = <String, String>{
   'price_type': 'price_type',
   'hazırlama süresi': 'preparation_time_minutes',
   'hazirlama suresi': 'preparation_time_minutes',
-  'öne çıkan bilgiler': 'highlight_infos',
-  'one cikan bilgiler': 'highlight_infos',
+  'öne çıkan bilgiler': 'highlights_json',
+  'one cikan bilgiler': 'highlights_json',
 };
 
 /// CSV önizleme ve şablon için okunabilir kolon başlıkları.
@@ -251,6 +256,7 @@ const Map<String, String> bulkProductImportHeaderDisplayLabels =
   'description': 'Açıklama',
   'price': 'Fiyat',
   'stock_quantity': 'Stok',
+  'stock_alert_level': 'Stok Alarm Seviyesi',
   'status': 'Durum',
   'attributes_json': 'Ürün Özellikleri (JSON)',
   'variants_json': 'Varyantlar (JSON)',
@@ -265,13 +271,9 @@ const Map<String, String> bulkProductImportHeaderDisplayLabels =
   'cargo_shipping_profile': 'Kargo Profili',
   'free_shipping': 'Ücretsiz Kargo',
   'highlights_json': 'Öne Çıkan Bilgiler (JSON)',
-  'key_features': 'Öne Çıkan Bilgiler',
+  'faq_json': 'SSS (JSON)',
   'delivery_time': 'Tahmini Teslimat',
   'estimated_delivery_days': 'Tahmini Teslimat (Gün)',
-  'rich_description_json': 'Açıklama ve Hikaye (JSON)',
-  'description_image_urls': 'Açıklama Görselleri (| ile)',
-  'description_image_captions': 'Açıklama Görsel Metinleri (| ile)',
-  'long_description': 'Uzun Açıklama',
 };
 
 String bulkProductImportHeaderLabel(String header) {
@@ -309,158 +311,120 @@ const String bulkProductImportTemplateFileName =
     'ibul_toplu_urun_sablonu.csv';
 
 /// UTF-8 BOM ile CSV şablonu baytları.
-Uint8List buildBulkProductImportTemplateBytes() {
+Uint8List buildBulkProductImportTemplateBytes(bool isFoodCategory) {
   return Uint8List.fromList(<int>[
     0xEF,
     0xBB,
     0xBF,
-    ...utf8.encode(buildBulkProductImportTemplateCsv()),
+    ...utf8.encode(buildBulkProductImportTemplateCsv(isFoodCategory)),
   ]);
 }
 
-String buildBulkProductImportTemplateCsv() {
-  final String header = bulkProductImportCanonicalHeaders.join(',');
-  final List<String> rows = <String>[
-    header,
-    _csvRow(<String>[
-      'iPhone 15 Pro 256 GB',
-      'Apple',
-      'A3101',
-      'Elektronik',
-      'Telefon',
-      'Güçlü A17 Pro işlemcisi, gelişmiş kamera sistemi ve uzun pil ömrüyle günlük kullanım için üst seviye akıllı telefon.',
-      '64999',
-      '12',
-      'pending_approval',
-      'Titanyum Mavi',
-      'IPH15P-256',
-      '',
-      '61999',
-      '20',
-      'TRY',
-      '24',
-      'Çin',
-      'new',
-      'true',
-      'https://example.com/iphone-main.jpg',
-      'https://example.com/iphone-1.jpg|https://example.com/iphone-2.jpg',
-      '',
-      r'{"Dahili Hafıza":"256 GB","RAM Kapasitesi":"8 GB","Ekran Boyutu":"6.7 inç","Garanti Süresi":"24 Ay"}',
-      r'[{"Renk":"Siyah","Stok":10,"Fiyat":64999},{"Renk":"Beyaz","Stok":5,"Fiyat":65500}]',
-      '0.4',
-      '10',
-      '18',
-      '5',
-      'standart',
-      'false',
-      r'["256 GB depolama","6.7 inç ProMotion ekran","24 ay garanti"]',
-      '256 GB depolama | 6.7 inç ProMotion ekran | 24 ay garanti',
-      '2-3 iş günü',
-      '3',
-      r'[{"type":"paragraph","text":"Güçlü A17 Pro işlemcisi ve gelişmiş kamera sistemiyle üst seviye akıllı telefon deneyimi sunar."},{"type":"image","url":"https://example.com/iphone-detail.jpg","caption":"Günlük kullanımda şık ve güçlü deneyim"},{"type":"paragraph","text":"Uzun pil ömrü, hızlı bağlantı ve premium malzeme kalitesiyle güvenilir bir tercihtir."}]',
-      'https://example.com/iphone-detail.jpg|https://example.com/iphone-usage.jpg',
-      'Detay görseli|Kullanım görseli',
-      'Güçlü A17 Pro işlemcisi, gelişmiş kamera sistemi ve uzun pil ömrüyle günlük kullanım için üst seviye akıllı telefon.\n\nPremium titanyum tasarım ve ProMotion ekran deneyimi sunar.',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-    ]),
-    _csvRow(<String>[
-      'Philips Airfryer XXL',
-      'Philips',
-      'HD9650',
-      'Elektronik',
-      'Ev Aletleri',
-      'Geniş haznesi ve hızlı sıcak hava teknolojisiyle daha az yağ kullanarak pratik yemekler hazırlamaya yardımcı olur.',
-      '8999',
-      '25',
-      'pending_approval',
-      'Siyah',
-      'PH-AF-XXL',
-      '8690501234567',
-      '8499',
-      '20',
-      'TRY',
-      '24',
-      'Hollanda',
-      'new',
-      'false',
-      'https://example.com/airfryer.jpg',
-      '',
-      '',
-      r'{"Güç":"2225 W","Kapasite":"1.4 kg","Enerji Sınıfı":"A+","Garanti Süresi":"24 Ay"}',
-      '',
-      '7.3',
-      '32',
-      '32',
-      '43',
-      'standart',
-      'true',
-      '',
-      'Hızlı ısıtma | Geniş hazne | Kolay temizlik',
-      '24 saatte kargoda',
-      '1',
-      '',
-      '',
-      '',
-      'Geniş haznesi ve hızlı sıcak hava teknolojisiyle daha az yağ kullanarak pratik yemekler hazırlamaya yardımcı olur.\n\nKolay temizlenebilir parçalar ve hızlı ısıtma avantajı sunar.',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-    ]),
-    _csvRow(<String>[
-      'Dyson Supersonic Saç Kurutma Makinesi',
-      'Dyson',
-      'HD07',
-      'Kozmetik & Kişisel Bakım',
-      'Saç Bakımı',
-      'Güçlü dijital motoru ve ısı kontrol teknolojisiyle saçları hızlı ve yıpratmadan kurutmak için tasarlanmıştır.',
-      '14999',
-      '8',
-      'pending_approval',
-      'Pembe/Altın',
-      'DYS-HD07',
-      '',
-      '',
-      '20',
-      'TRY',
-      '24',
-      'Malezya',
-      'new',
-      'true',
-      'https://example.com/dyson.jpg',
-      '',
-      '',
-      r'{"Güç":"1600 W","Başlık Sayısı":"5","Kablosuz Kullanım":"Hayır","Garanti Süresi":"24 Ay"}',
-      '',
-      '0.6',
-      '9',
-      '30',
-      '8',
-      'standart',
-      'false',
-      '',
-      '',
-      '3-5 iş günü',
-      '4',
-      '',
-      '',
-      '',
-      'Güçlü dijital motoru ve ısı kontrol teknolojisiyle saçları hızlı ve yıpratmadan kurutmak için tasarlanmıştır.\n\nProfesyonel sonuçlar için farklı başlık seçenekleri sunar.',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-    ]),
-  ];
+String buildBulkProductImportTemplateCsv(bool isFoodCategory) {
+  final List<String> currentHeaders = bulkProductImportCanonicalHeaders.where((header) {
+    if (!isFoodCategory) {
+      if (['portion_price', 'kilo_price', 'min_gram', 'default_gram', 'gram_step', 'max_gram', 'preparation_time_minutes'].contains(header)) {
+        return false;
+      }
+    }
+    return true;
+  }).toList();
+  
+  final String header = currentHeaders.join(',');
+  
+  // Örnekleri Food olup olmamasına göre ayıralım
+  final List<String> rows = <String>[header];
+  
+  if (!isFoodCategory) {
+    rows.add(
+      _csvRow(<String>[
+        'iPhone 15 Pro 256 GB', // product_name
+        'Apple', // brand
+        'A3101', // model_code
+        'Elektronik', // main_category
+        'Telefon', // sub_category
+        'Güçlü A17 Pro işlemcisi, gelişmiş kamera sistemi ve uzun pil ömrüyle günlük kullanım için üst seviye akıllı telefon.', // description
+        '64999', // price
+        '15', // stock_quantity
+        '5', // stock_alert_level
+        'pending_approval', // status
+        'Titanyum Mavi', // color
+        '#004488', // color_hex
+        'IPH15P-256', // sku
+        '1234567890123', // barcode
+        '61999', // sale_price
+        '20', // tax_rate
+        'TRY', // currency
+        '24', // warranty_months
+        'Çin', // origin_country
+        'new', // condition
+        'false', // is_featured
+        '', // main_image_url
+        '', // image_urls
+        '', // video_url
+        r'{"Dahili Hafıza":"256 GB","RAM Kapasitesi":"8 GB","Ekran Boyutu":"6.7 inç","Garanti Süresi":"24 Ay"}', // attributes_json
+        r'[{"attributeValues":{"Renk":"Siyah"},"stock":10,"priceDifference":0,"sku":"IPH15P-256-BLK"},{"attributeValues":{"Renk":"Beyaz"},"stock":5,"priceDifference":501,"sku":"IPH15P-256-WHT"}]', // variants_json
+        '0.4', // kargo_agirlik_kg
+        '10', // en_cm
+        '18', // boy_cm
+        '5', // yukseklik_cm
+        'standart', // cargo_shipping_profile
+        'false', // free_shipping
+        r'["256 GB depolama","6.7 inç ProMotion ekran","24 ay garanti"]', // highlights_json
+        r'[{"Soru":"Şarj aleti çıkıyor mu?","Cevap":"Hayır, kutu içeriğinde sadece şarj kablosu mevcuttur."}]', // faq_json
+        '2-3 iş günü', // delivery_time
+        '3', // estimated_delivery_days
+      ])
+    );
+  } else {
+    rows.add(
+      _csvRow(<String>[
+        'Karışık Kebab', // product_name
+        'Şefin Mutfağı', // brand
+        '', // model_code
+        'Yemek', // main_category
+        'Ana Yemek', // sub_category
+        'Usta ellerden çıkma, lezzetli ve doyurucu karışık kebab tabağı. İçerisinde Adana, Urfa ve tavuk şiş bulunur.', // description
+        '450', // price
+        '50', // stock_quantity
+        '10', // stock_alert_level
+        'pending_approval', // status
+        '', // color
+        '', // color_hex
+        'KEBAP-KARISIK-01', // sku
+        '', // barcode
+        '', // sale_price
+        '10', // tax_rate
+        'TRY', // currency
+        '', // warranty_months
+        'Türkiye', // origin_country
+        'new', // condition
+        'false', // is_featured
+        '', // main_image_url
+        '', // image_urls
+        '', // video_url
+        r'{"Porsiyon":"1.5","Acı Durumu":"Acılı"}', // attributes_json
+        '', // variants_json
+        '', // kargo_agirlik_kg
+        '', // en_cm
+        '', // boy_cm
+        '', // yukseklik_cm
+        '', // cargo_shipping_profile
+        'false', // free_shipping
+        r'["Bol porsiyon","Özel soslu"]', // highlights_json
+        '', // faq_json
+        '30-45 dk', // delivery_time
+        '1', // estimated_delivery_days
+        '450', // portion_price
+        '1200', // kilo_price
+        '100', // min_gram
+        '150', // default_gram
+        '50', // gram_step
+        '500', // max_gram
+      ])
+    );
+  }
+
   return rows.join('\n');
 }
 
@@ -520,8 +484,10 @@ class BulkProductImportCandidate {
     this.description,
     this.price,
     this.stock,
+    this.stockAlertLevel,
     this.status = 'pending_approval',
     this.color,
+    this.colorHex,
     this.sku,
     this.barcode,
     this.salePrice,
@@ -551,6 +517,7 @@ class BulkProductImportCandidate {
     this.priceType,
     this.preparationTimeMinutes,
     this.highlightInfos = const <String>[],
+    this.faqs = const <Map<String, String>>[],
     this.deliveryTime,
     this.estimatedDeliveryDays,
     this.richDescriptionBlocks = const <ProductRichDescriptionBlock>[],
@@ -564,8 +531,10 @@ class BulkProductImportCandidate {
   final String? description;
   final double? price;
   final int? stock;
+  final int? stockAlertLevel;
   final String status;
   final String? color;
+  final String? colorHex;
   final String? sku;
   final String? barcode;
   final double? salePrice;
@@ -595,6 +564,7 @@ class BulkProductImportCandidate {
   final String? priceType;
   final int? preparationTimeMinutes;
   final List<String> highlightInfos;
+  final List<Map<String, String>> faqs;
   final String? deliveryTime;
   final int? estimatedDeliveryDays;
   final List<ProductRichDescriptionBlock> richDescriptionBlocks;
@@ -621,6 +591,7 @@ class BulkProductImportPreview {
     required this.fileName,
     required this.headers,
     required this.rows,
+    required this.isFoodCategory,
     this.fileErrors = const <String>[],
   });
 
@@ -628,6 +599,7 @@ class BulkProductImportPreview {
   final List<String> headers;
   final List<BulkProductImportPreviewRow> rows;
   final List<String> fileErrors;
+  final bool isFoodCategory;
 
   int get totalRows => rows.length;
 
@@ -667,4 +639,4 @@ class BulkProductImportExecutionSummary {
 }
 
 /// Geriye dönük uyumluluk — runtime şablonu kullanın.
-String get bulkProductImportTemplateCsv => buildBulkProductImportTemplateCsv();
+String get bulkProductImportTemplateCsv => buildBulkProductImportTemplateCsv(false);

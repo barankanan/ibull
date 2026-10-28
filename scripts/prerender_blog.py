@@ -213,15 +213,21 @@ def page(template: str, *, title: str, description: str, canonical: str,
     if image:
         meta("property", "og:image", image)
         meta("name", "twitter:image", image)
-    head = [f'<link rel="canonical" href="{esc(canonical)}">', STYLE, extra_head]
+    canonical_tag = f'<link rel="canonical" href="{esc(canonical)}">'
+    if 'rel="canonical"' in doc:
+        doc = re.sub(r'<link rel="canonical" href="[^"]*">', canonical_tag, doc, count=1)
+        head = [STYLE, extra_head]
+    else:
+        head = [canonical_tag, STYLE, extra_head]
     if jsonld:
         data = json.dumps(jsonld, ensure_ascii=False).replace("</", "<\\/")
         head.append(f'<script type="application/ld+json" id="{JSONLD_ID}">{data}</script>')
     doc = doc.replace("</head>", "\n".join(h for h in head if h) + "\n</head>", 1)
-    marker = '<div id="ibul-loader-text"></div>'
-    if marker not in doc:
+    match = re.search(r'<div id="ibul-loader-text">[\s\S]*?</div>', doc)
+    if match is None:
         raise SystemExit("index.html: #ibul-loader-text not found; template changed")
-    return doc.replace(marker, f'<main id="ibul-prerender" class="ibul-blog">{body}</main>\n    {marker}', 1)
+    injected = f'<main id="ibul-prerender" class="ibul-blog">{body}</main>\n    '
+    return doc[:match.start()] + injected + doc[match.start():]
 
 
 def article_body(post: dict) -> str:
@@ -335,7 +341,7 @@ def main() -> int:
         target.mkdir(parents=True, exist_ok=True)
         (target / "index.html").write_text(page(
             template,
-            title=f'{post.get("seo_title") or post["title"]} | İBUL Blog',
+            title=f'{post.get("seo_title") or post["title"]} | İBUL',
             description=post.get("meta_description") or post.get("excerpt") or post.get("subtitle") or "",
             canonical=url, body=article_body(post), image=post.get("cover_url"),
             og_type="article", jsonld=article_jsonld(post, url),

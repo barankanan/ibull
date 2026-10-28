@@ -15,21 +15,25 @@ import '../models/ad_campaign.dart';
 import '../models/campaign_asset.dart';
 import '../models/campaign_target.dart';
 import '../models/home_card_template.dart';
-import '../repositories/ads_repository.dart';
+import '../repositories/ads_repository.dart' deferred as ads_repository;
 import 'home_card_template_service.dart';
 
 class HomeFeatureAdService {
   HomeFeatureAdService({
-    AdsRepository? repository,
     HomeCardTemplateService? templateService,
     SupabaseClient? client,
-  })  : _repository = repository ?? AdsRepository(usePreviewOnFailure: false),
-        _templateService = templateService ?? HomeCardTemplateService(),
+  })  : _templateService = templateService ?? HomeCardTemplateService(),
         _client = client ?? Supabase.instance.client;
 
-  final AdsRepository _repository;
   final HomeCardTemplateService _templateService;
   final SupabaseClient _client;
+
+  /// Seller write path. The repository and its preview dataset stay out of
+  /// the customer home entry until a seller or admin action calls it.
+  Future<dynamic> _sellerAdsRepository() async {
+    await ads_repository.loadLibrary();
+    return ads_repository.AdsRepository(usePreviewOnFailure: false);
+  }
 
   static final SimpleMemoryTtlCache<List<HomeCategoryCardGroup>> _groupsCache =
       SimpleMemoryTtlCache(defaultTtl: const Duration(minutes: 3));
@@ -147,11 +151,14 @@ class HomeFeatureAdService {
       updatedAt: now,
     );
 
-    return _repository.upsertCampaign(campaign);
+    final repository = await _sellerAdsRepository();
+    return await repository.upsertCampaign(campaign) as AdCampaign;
   }
 
   Future<List<AdCampaign>> getHomeFeatureAdsForSeller(String sellerId) async {
-    final all = await _repository.getCampaigns(sellerId: sellerId, limit: 200);
+    final repository = await _sellerAdsRepository();
+    final all = await repository.getCampaigns(sellerId: sellerId, limit: 200)
+        as List<AdCampaign>;
     return all
         .where((c) => c.type == AdCampaignType.homeFeature)
         .toList(growable: false);
@@ -863,11 +870,13 @@ class HomeFeatureAdService {
       );
     } catch (e) {
       debugPrint('HomeFeatureAdService.updateSortOrder fallback: $e');
-      final campaign = await _repository.getCampaignById(campaignId);
+      final repository = await _sellerAdsRepository();
+      final campaign =
+          await repository.getCampaignById(campaignId) as AdCampaign?;
       if (campaign == null) return;
       final metadata = Map<String, dynamic>.from(campaign.metadata)
         ..['sort_order'] = sortOrder;
-      await _repository.upsertCampaign(
+      await repository.upsertCampaign(
         campaign.copyWith(metadata: metadata, updatedAt: DateTime.now()),
       );
     }

@@ -329,9 +329,7 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
   Widget _buildNarrowLayout(BuildContext context) {
     // Ürün verisini al
     final viewModel = Provider.of<ProductDetailViewModel>(context);
-    final product = viewModel.initialProduct;
-    final hasVariants =
-        product.variants != null && product.variants!.isNotEmpty;
+    final hasVariants = viewModel.hasVariants;
 
     return Center(
       child: ConstrainedBox(
@@ -351,22 +349,22 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
 
                     if (hasVariants) ...[
                       const SizedBox(height: 8),
-                      const Align(
+                      Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
                           'Ürün Seçenekleri',
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
-                            color: Colors.black87,
+                            color: Theme.of(context).brightness == Brightness.dark
+                                ? const Color(0xFFF1F5F9)
+                                : Colors.black87,
                           ),
                         ),
                       ),
                       const SizedBox(height: 12),
-                      if (hasVariants) ...[
-                        const ProductVariantSelectorMobile(),
-                        const SizedBox(height: 16),
-                      ],
+                      const ProductVariantSelectorMobile(),
+                      const SizedBox(height: 16),
                     ],
                     if (!hasVariants) ...[
                       const SizedBox(height: 8),
@@ -444,10 +442,7 @@ class _CenterColumn extends StatelessWidget {
   Widget build(BuildContext context) {
     // Ürünün seçenekleri olup olmadığını kontrol et
     final viewModel = Provider.of<ProductDetailViewModel>(context);
-    final product = viewModel.initialProduct;
-    // Varyant kontrolünü kaldırdık, varsa göstersin
-    final hasVariants =
-        product.variants != null && product.variants!.isNotEmpty;
+    final hasVariants = viewModel.hasVariants;
 
     return SingleChildScrollView(
       child: CatalogDetailCard(
@@ -461,19 +456,19 @@ class _CenterColumn extends StatelessWidget {
             // In Web Wide layout, Store Info is in the Right Sidebar.
             // So we keep Variants here in the center column, but above Additional Services.
             if (hasVariants) ...[
-              const Text(
+              Text(
                 'Ürün Seçenekleri',
                 style: TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.black87,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? const Color(0xFFF1F5F9)
+                      : Colors.black87,
                 ),
               ),
               const SizedBox(height: 12),
-              if (hasVariants) ...[
-                const ProductVariantSelectorMobile(),
-                const SizedBox(height: 16),
-              ],
+              const ProductVariantSelectorMobile(),
+              const SizedBox(height: 16),
             ],
             if (!hasVariants) ...[
               const Text(

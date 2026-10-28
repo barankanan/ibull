@@ -36,8 +36,9 @@ void main() {
     expect(html, contains('Yakın Lokasyon'));
     expect(html, contains('href="/"'));
     expect(html, contains('href="/map"'));
-    expect(html, contains('href="/login"'));
     expect(html, contains('href="/hesabim"'));
+    expect(html, contains('href="/favoriler"'));
+    expect(html, contains('href="/sepet"'));
     expect(html, contains('name="q"'));
     expect(html, contains("performance.mark('ibul_html_shell_visible')"));
     expect(html, isNot(contains("setLoaderMessage('Yükleniyor")));

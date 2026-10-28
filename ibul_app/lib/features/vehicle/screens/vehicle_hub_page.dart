@@ -21,6 +21,7 @@ class _VehicleHubPageState extends State<VehicleHubPage> {
   String? _error;
   List<VehicleListing> _sale = const [];
   List<VehicleListing> _rental = const [];
+  VehicleHubBrowse _browse = const VehicleHubBrowse();
 
   @override
   void initState() {
@@ -86,14 +87,69 @@ class _VehicleHubPageState extends State<VehicleHubPage> {
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
                 children: [
                   _entryRow(context),
+                  const SizedBox(height: 12),
+                  _browseBar(),
                   const SizedBox(height: 20),
-                  _rail('Satılık araçlar', _sale),
-                  const SizedBox(height: 20),
-                  _rail('Kiralık araçlar', _rental),
+                  if (!_browse.rentalOnly)
+                    _rail('Satılık araçlar', _browse.apply(_sale, rental: false)),
+                  if (!_browse.saleOnly) ...[
+                    const SizedBox(height: 20),
+                    _rail(
+                      'Kiralık araçlar',
+                      _browse.apply(_rental, rental: true),
+                    ),
+                  ],
                 ],
               ),
             ),
     );
+  }
+
+  Widget _browseBar() {
+    final pool = [..._sale, ..._rental];
+    return Row(
+      children: [
+        TextButton.icon(
+          key: const ValueKey('vehicle-hub-filter'),
+          onPressed: () => _openFilter(pool),
+          icon: const Icon(Icons.tune_rounded, size: 18),
+          label: const Text('Filtrele'),
+        ),
+        TextButton.icon(
+          key: const ValueKey('vehicle-hub-sort'),
+          onPressed: _openSort,
+          icon: const Icon(Icons.swap_vert_rounded, size: 18),
+          label: const Text('Sırala'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openFilter(List<VehicleListing> pool) async {
+    final next = await showModalBottomSheet<VehicleHubBrowse>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => _VehicleFilterSheet(initial: _browse, pool: pool),
+    );
+    if (next == null || !mounted) return;
+    setState(() => _browse = next);
+  }
+
+  Future<void> _openSort() async {
+    final next = await showModalBottomSheet<VehicleHubSort>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => _VehicleSortSheet(initial: _browse.sort),
+    );
+    if (next == null || !mounted) return;
+    setState(() => _browse = _browse.copyWith(sort: next));
   }
 
   Widget _entryRow(BuildContext context) {
@@ -182,6 +238,180 @@ class _VehicleHubPageState extends State<VehicleHubPage> {
           ),
         if (IbulChrome.isWebOf(context)) const SizedBox(height: 4),
       ],
+    );
+  }
+}
+
+enum VehicleHubSort { recommended, priceAsc, priceDesc, newest, yearDesc, kmAsc }
+
+class VehicleHubBrowse {
+  const VehicleHubBrowse({
+    this.saleOnly = false,
+    this.rentalOnly = false,
+    this.brand,
+    this.sort = VehicleHubSort.recommended,
+  });
+
+  final bool saleOnly;
+  final bool rentalOnly;
+  final String? brand;
+  final VehicleHubSort sort;
+
+  VehicleHubBrowse copyWith({
+    bool? saleOnly,
+    bool? rentalOnly,
+    String? brand,
+    bool clearBrand = false,
+    VehicleHubSort? sort,
+  }) {
+    return VehicleHubBrowse(
+      saleOnly: saleOnly ?? this.saleOnly,
+      rentalOnly: rentalOnly ?? this.rentalOnly,
+      brand: clearBrand ? null : (brand ?? this.brand),
+      sort: sort ?? this.sort,
+    );
+  }
+
+  List<VehicleListing> apply(List<VehicleListing> source, {required bool rental}) {
+    final filtered = source.where((listing) {
+      final wanted = brand?.trim();
+      if (wanted != null && wanted.isNotEmpty && listing.specs.brand != wanted) {
+        return false;
+      }
+      return true;
+    }).toList();
+    filtered.sort((a, b) => _compare(a, b, rental: rental));
+    return filtered;
+  }
+
+  int _compare(VehicleListing a, VehicleListing b, {required bool rental}) {
+    switch (sort) {
+      case VehicleHubSort.recommended:
+        return 0;
+      case VehicleHubSort.priceAsc:
+        return _price(a, rental).compareTo(_price(b, rental));
+      case VehicleHubSort.priceDesc:
+        return _price(b, rental).compareTo(_price(a, rental));
+      case VehicleHubSort.newest:
+        final ad = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bd = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bd.compareTo(ad);
+      case VehicleHubSort.yearDesc:
+        return b.specs.year.compareTo(a.specs.year);
+      case VehicleHubSort.kmAsc:
+        return (a.specs.mileageKm ?? 1 << 30).compareTo(b.specs.mileageKm ?? 1 << 30);
+    }
+  }
+
+  double _price(VehicleListing listing, bool rental) {
+    if (rental) return listing.rental?.dailyPrice ?? double.infinity;
+    return listing.salePrice ?? double.infinity;
+  }
+}
+
+class _VehicleSortSheet extends StatelessWidget {
+  const _VehicleSortSheet({required this.initial});
+
+  final VehicleHubSort initial;
+
+  @override
+  Widget build(BuildContext context) {
+    const options = <(VehicleHubSort, String)>[
+      (VehicleHubSort.recommended, 'Önerilen'),
+      (VehicleHubSort.priceAsc, 'Fiyat artan'),
+      (VehicleHubSort.priceDesc, 'Fiyat azalan'),
+      (VehicleHubSort.newest, 'En yeni ilan'),
+      (VehicleHubSort.yearDesc, 'Yıl yeni'),
+      (VehicleHubSort.kmAsc, 'KM düşük'),
+    ];
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final option in options)
+            ListTile(
+              title: Text(option.$2),
+              trailing: option.$1 == initial
+                  ? const Icon(Icons.check, color: AppColors.primary)
+                  : null,
+              onTap: () => Navigator.pop(context, option.$1),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VehicleFilterSheet extends StatefulWidget {
+  const _VehicleFilterSheet({required this.initial, required this.pool});
+
+  final VehicleHubBrowse initial;
+  final List<VehicleListing> pool;
+
+  @override
+  State<_VehicleFilterSheet> createState() => _VehicleFilterSheetState();
+}
+
+class _VehicleFilterSheetState extends State<_VehicleFilterSheet> {
+  late VehicleHubBrowse _draft = widget.initial;
+
+  @override
+  Widget build(BuildContext context) {
+    final brands = widget.pool
+        .map((listing) => listing.specs.brand.trim())
+        .where((brand) => brand.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Filtrele', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                FilterChip(
+                  label: const Text('Satılık'),
+                  selected: _draft.saleOnly,
+                  onSelected: (value) => setState(() {
+                    _draft = _draft.copyWith(saleOnly: value, rentalOnly: value ? false : _draft.rentalOnly);
+                  }),
+                ),
+                FilterChip(
+                  label: const Text('Kiralık'),
+                  selected: _draft.rentalOnly,
+                  onSelected: (value) => setState(() {
+                    _draft = _draft.copyWith(rentalOnly: value, saleOnly: value ? false : _draft.saleOnly);
+                  }),
+                ),
+                for (final brand in brands)
+                  FilterChip(
+                    label: Text(brand),
+                    selected: _draft.brand == brand,
+                    onSelected: (value) => setState(() {
+                      _draft = value
+                          ? _draft.copyWith(brand: brand)
+                          : _draft.copyWith(clearBrand: true);
+                    }),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context, _draft),
+                child: const Text('Uygula'),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

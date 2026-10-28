@@ -123,7 +123,7 @@ class LiveMobileHomeGateway implements MobileHomeGateway {
           .fetchInitialHomeProductsReport()
           .timeout(const Duration(seconds: 8));
       return [
-        for (final product in report.products.take(8))
+        for (final product in report.products.take(24))
           Product.fromDBProduct(product),
       ];
     } catch (error) {
@@ -224,6 +224,7 @@ class LiveMobileHomeGateway implements MobileHomeGateway {
 
   Future<List<Map<String, dynamic>>> _locatedStores() async {
     try {
+      MobileHomeQueryLog.nearbyStoreQueries++;
       final rows = await Supabase.instance.client
           .from('stores')
           .select('seller_id, business_name, category, logo_url, store_lat, store_lng')
@@ -273,6 +274,16 @@ double _rad(double deg) => deg * math.pi / 180;
 String? _text(Object? value) {
   final text = value?.toString().trim() ?? '';
   return text.isEmpty ? null : text;
+}
+
+abstract final class MobileHomeQueryLog {
+  static int nearbyStoreQueries = 0;
+  static int storePreviewQueries = 0;
+
+  static void reset() {
+    nearbyStoreQueries = 0;
+    storePreviewQueries = 0;
+  }
 }
 
 String mobileDistanceLabel(double km) {
