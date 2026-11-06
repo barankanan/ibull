@@ -1045,6 +1045,69 @@ class MonthlyTrendPoint {
       );
 }
 
+class TodayIncomeLine {
+  const TodayIncomeLine({
+    required this.label,
+    required this.amount,
+    required this.count,
+    required this.source,
+    this.subtitle,
+  });
+
+  final String label;
+  final double amount;
+  final int count;
+  final String source;
+  final String? subtitle;
+}
+
+class SoldProduct {
+  SoldProduct({
+    required this.name,
+    this.quantity = 0,
+    this.revenue = 0,
+    this.online = false,
+    this.garson = false,
+  });
+
+  final String name;
+  int quantity;
+  double revenue;
+  bool online;
+  bool garson;
+}
+
+class SalesBreakdown {
+  const SalesBreakdown({
+    required this.onlineRevenue,
+    required this.garsonRevenue,
+    required this.onlineOrderCount,
+    required this.garsonOrderCount,
+    required this.products,
+  });
+
+  final double onlineRevenue;
+  final double garsonRevenue;
+  final int onlineOrderCount;
+  final int garsonOrderCount;
+  final List<SoldProduct> products;
+
+  double get totalRevenue => onlineRevenue + garsonRevenue;
+  int get totalOrderCount => onlineOrderCount + garsonOrderCount;
+}
+
+class DailySalesPoint {
+  const DailySalesPoint({
+    required this.date,
+    required this.revenue,
+    required this.orderCount,
+  });
+
+  final DateTime date;
+  final double revenue;
+  final int orderCount;
+}
+
 // ─────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────

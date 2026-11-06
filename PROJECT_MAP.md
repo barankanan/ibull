@@ -603,6 +603,11 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 # Update Log
 
+## 2026-11-06
+
+- Satıcı paneli derlemesi, son commit’in referans verdiği ama repoda olmayan yardımcılara bağlandı: `order_status_constants`, `table_order_history_utils`, `table_close_history_fallback`, `today_income_builder`, `garson_table_metrics`.
+- Masa aktarımı artık seçili satır planıyla çalışır. Kısmi aktarım, RPC hata verince tüm masayı taşıyan yedek yola düşmez. `transfer_table_orders_v2` migration’ı üretimde ayrıca uygulanmalıdır.
+
 ## 2026-06-12
 
 - İlk `PROJECT_MAP.md` oluşturuldu.
