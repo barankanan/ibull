@@ -459,6 +459,8 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
                 .toList(growable: false),
             minItemWidth: 250,
           ),
+          const SizedBox(height: 12),
+          _buildEarningsCard(),
           const SizedBox(height: 20),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,

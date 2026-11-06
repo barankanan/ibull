@@ -9,7 +9,6 @@ import 'package:flutter/foundation.dart'
         kIsWeb,
         listEquals;
 import 'package:flutter/material.dart';
-import '../utils/order_status_constants.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -32,6 +31,7 @@ import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/web_seo.dart';
 import '../services/store_service.dart';
+import '../services/store/table_transfer_plan.dart';
 import '../services/store/table_order_history_utils.dart';
 import '../services/auth_service.dart';
 import '../services/support_service.dart';
@@ -35292,9 +35292,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         availableProducts: selectableProducts,
         preselectTemplateItems: false,
       ),
-      templateChildDefaults: MixedServiceOrder.templateChildDefaultsByProductId(
-        product,
-      ),
       availablePricingModes: _availablePricingModesForTemplate(product),
     );
     if (configured == null || !mounted) return;
@@ -38785,16 +38782,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                   );
                                   // Flatten all items across orders on this
                                   // table for the partial/customer-based modes.
-                                  final allItems = tableOrders
-                                      .expand<Map<String, dynamic>>((order) {
-                                        final items = order['items'];
-                                        if (items is List) {
-                                          return items
-                                              .cast<Map<String, dynamic>>();
-                                        }
-                                        return const [];
-                                      })
-                                      .toList();
+                                  // Stable line ids keep the selection aligned
+                                  // with the rows stored in table_orders.
+                                  final allItems = flattenOrdersForTransfer(
+                                    tableOrders,
+                                  );
                                   if (!mounted) return;
                                   final result = await TransferTableModal.show(
                                     context,
@@ -38808,7 +38800,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                     sellerId: widget.sellerId,
                                     fromTable: widget.tableNumber,
                                     toTable: result.toTable,
-                                    transferType: result.transferType.name,
+                                    transferType: result.transferType.value,
                                     itemIds: result.selectedItemIds,
                                     waiterId: _currentWaiterId(),
                                     note: result.note,
