@@ -624,3 +624,9 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `app_state.dart` seller-scoped cache yardımcıları ile seller panel için kalıcı dashboard/finance cache desteği aldı.
 - `seller_panel_page.dart` startup bootstrap sırası owner restore -> sellerId resolve -> cached closed-history hydrate -> store profile refresh olacak şekilde güçlendirildi; boş fetch artık mevcut cache’i ezmiyor.
 - `seller_panel_finance_modules.dart` owner bootstrap tamamlanmadan `FinanceShell` oluşturmuyor; hazır olunca sellerId içeren anahtarla provider yeniden kuruluyor.
+
+## 2026-11-07
+
+- Masa kapatma ve masa aktarımı artık sahip, `manageOrders` veya Tam Erişim ister. Görüntüleme yetkisi, boş izin, davetli personel ve başka işletme bu işlemi yapamaz.
+- Mevcut RPC gövdeleri korunur. `install_table_operation_staff_wrappers()` onları sarar. `transfer_table_orders_v2` bu migration'dan sonra oluşursa aynı fonksiyon yeniden çalıştırılmalıdır.
+- `20261107_table_operation_staff_guard.sql` production'a bu otomasyon tarafından uygulanmaz.
