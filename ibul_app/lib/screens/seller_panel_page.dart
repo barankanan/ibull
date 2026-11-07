@@ -3518,6 +3518,16 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     try {
       _pruneExpiredGarsonClosedTableMarkers(source: source);
       final fresh = await _storeService.getTableOrdersSnapshot(sellerId);
+      final visibleWithoutStaleBills = dropCachedBillsMissingFromOpenSnapshot(
+        visibleOrders: _garsonManualTableOrders,
+        serverOpenOrders: fresh,
+      );
+      if (visibleWithoutStaleBills.length != _garsonManualTableOrders.length) {
+        _garsonManualTableOrders = visibleWithoutStaleBills;
+        _garsonManualTableOrdersSignature = tableOrdersListSignature(
+          _garsonManualTableOrders,
+        );
+      }
       debugPrint(
         '[GARSON_LOAD_SNAPSHOT] '
         'source=$source '
@@ -14350,26 +14360,57 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     try {
       // ── 1. Fetch live orders from DB (prefer passed list to avoid a
       //       redundant round-trip, but always verify via DB IDs later).
-      final tableOrders = await _storeService.getTableOrdersByTable(
+      final tableRow = _storeTableRowByNumber(tableNumber);
+      final visibleOrderIds = (existingOrders ?? const <Map<String, dynamic>>[])
+          .map((order) => order['id']?.toString().trim() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false);
+      final sessionOrders = await _storeService.getTableCloseSession(
         sellerId: sellerId,
         tableNumber: tableNumber,
+        tableRow: tableRow,
+        visibleOrderIds: visibleOrderIds,
       );
-      final preCloseSnapshotOrders = await _storeService.getTableOrdersSnapshot(
-        sellerId,
-        tableNumber: tableNumber,
-      );
-      final sessionOrders = preCloseSnapshotOrders.isNotEmpty
-          ? preCloseSnapshotOrders
-          : tableOrders;
+      final tableOrders = sessionOrders;
 
       if (sessionOrders.isEmpty) {
         if (!mounted) return;
+        setState(() {
+          _garsonManualTableOrders = _garsonManualTableOrders
+              .where(
+                (order) => !garsonOrderBelongsToCloseTable(
+                  table: tableRow,
+                  canonicalTableNumber: tableNumber,
+                  order: order,
+                  sellerId: sellerId,
+                ),
+              )
+              .toList(growable: false);
+          _garsonManualTableOrdersSignature = tableOrdersListSignature(
+            _garsonManualTableOrders,
+          );
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(garsonCloseTableAlreadyEmptySnackbarText(tableLabel)),
           ),
         );
         return;
+      }
+
+      for (final order in sessionOrders) {
+        if (!garsonTableOrderNeedsRealign(
+          order: order,
+          canonicalTableNumber: tableNumber,
+        )) {
+          continue;
+        }
+        await _storeService.realignTableOrderNumber(
+          sellerId: sellerId,
+          orderId: order['id']?.toString() ?? '',
+          canonicalTableNumber: tableNumber,
+          storedTableNumber: garsonStoredTableNumber(order),
+        );
       }
 
       // ── 2. Record the exact IDs we intend to close. Verification will use
@@ -14403,19 +14444,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       // ciro stuck at 0 until this path runs.
       try {
         final currentUser = _authService.currentUser;
-        await _storeService.closeTableWithHistory(
+        final closeResult = await _storeService.closeTableWithHistory(
           sellerId: sellerId,
           tableNumber: tableNumber,
           paymentMethod: 'cash',
           waiterId: currentUser?.id,
           waiterName: _sellerPrintJobService.safeUserDisplayName(currentUser),
         );
-        // closeTableWithHistory mirrors `orders`; keep explicit count for
-        // diagnostics on the reopen-bug path.
-        ordersClosedTotal += await _storeService.closeRestaurantOrdersForTable(
-          sellerId: sellerId,
-          tableNumber: tableNumber,
-        );
+        final reportedClosed = closeResult['orders_updated'];
+        if (reportedClosed is num) {
+          ordersClosedTotal += reportedClosed.toInt();
+        }
         debugPrint(
           '[GARSON_CLOSE] archive_with_history=ok '
           'table=$tableNumber '
@@ -14499,23 +14538,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         }
       }
 
-      // BUG-FIX (Reopen Bug): per-order fallback path may have closed
-      // `table_orders` rows one-by-one without ever calling
-      // `closeRestaurantOrdersForTable`.  Make sure the customer-facing
-      // `orders` rows are also closed so the table doesn't re-appear after
-      // refresh.
-      final ordersClosedTail = await _storeService
-          .closeRestaurantOrdersForTable(
-            sellerId: sellerId,
-            tableNumber: tableNumber,
-          );
-      ordersClosedTotal += ordersClosedTail;
-      debugPrint(
-        '[GARSON_CLOSE_ORDERS_TAIL] '
-        'table=$tableNumber '
-        'orders_closed_tail=$ordersClosedTail '
-        'orders_closed_total=$ordersClosedTotal',
-      );
+      // Orders are closed inside close_table_with_history. A second update
+      // here can time out after the visit is already archived.
 
       // ── 6. ID-based verification — confirms every targeted row is gone or
       //       marked closed. A filter-based re-query (seller_id + table_number)
@@ -14645,7 +14669,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       final firstOrderId = sessionOrders.isNotEmpty
           ? sessionOrders.first['id']?.toString() ?? '-'
           : '-';
-      final tableRow = _storeTableRowByNumber(tableNumber);
       logGarsonCloseTableSuccess(
         resolvedLabel: tableLabel,
         tableId: tableRow?['id']?.toString() ?? '-',
@@ -38252,10 +38275,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         waiterId: _currentWaiterId(),
         waiterName: _currentWaiterName(),
         sessionKey: _getOrCreateSessionKey(),
-      );
-      await _storeService.closeRestaurantOrdersForTable(
-        sellerId: widget.sellerId,
-        tableNumber: widget.tableNumber,
       );
       final sessionOrders = preCloseSessionOrders.isNotEmpty
           ? preCloseSessionOrders

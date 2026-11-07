@@ -115,8 +115,25 @@ Map<String, dynamic> buildCreateTableOrderRpcParams({
     'p_notes': notes,
     'p_job_type': jobType,
     'p_order_type': 'table',
-    if (key.isNotEmpty) 'p_idempotency_key': key,
+    // Live create_table_order_with_print_jobs identifies a retry by
+    // p_local_order_id. p_idempotency_key is not part of that 9-argument
+    // function and makes PostgREST reject the whole send.
+    if (key.isNotEmpty) 'p_local_order_id': key,
   };
+}
+
+/// A replay may print only a job that is still pending.
+/// Completed, claimed, printing and unknown states stay off the printer.
+List<String> printJobIdsSafeForReplay({
+  required List<String> printJobIds,
+  required Map<String, String> statusById,
+  required bool replay,
+}) {
+  if (!replay) return printJobIds;
+  return <String>[
+    for (final id in printJobIds)
+      if (statusById[id] == 'pending') id,
+  ];
 }
 
 /// Garson-facing text for `create_table_order_with_print_jobs` failures.

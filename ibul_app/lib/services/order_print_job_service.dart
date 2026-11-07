@@ -1050,13 +1050,25 @@ class OrderPrintJobService {
       for (final job in jobsForEventLog)
         _textValue(job['id'], fallback: ''): Map<String, dynamic>.from(job),
     };
-    final filteredPrintJobIds = await _suppressDuplicateKitchenJobs(
+    final suppressedPrintJobIds = await _suppressDuplicateKitchenJobs(
       restaurantId: restaurantId,
       traceId: traceId,
       tableNumber: tableNumber,
       jobType: jobType,
       printJobIds: printJobIds,
       jobsById: jobsById,
+    );
+    final statusById = <String, String>{
+      for (final entry in jobsById.entries)
+        entry.key: entry.value['status']?.toString() ?? '',
+      if (data['print_job_statuses'] is Map)
+        for (final entry in (data['print_job_statuses'] as Map).entries)
+          entry.key.toString(): entry.value?.toString() ?? '',
+    };
+    final filteredPrintJobIds = printJobIdsSafeForReplay(
+      printJobIds: suppressedPrintJobIds,
+      statusById: statusById,
+      replay: data['idempotent_replay'] == true,
     );
     final orderSavedAt = _textValue(
       data['order_saved_at'],
@@ -1587,13 +1599,79 @@ class OrderPrintJobService {
       jobType: jobType,
       idempotencyKey: idempotencyKey,
     );
-    try {
-      return await _client.rpc(
-        'send_table_order_idempotent',
+    Future<dynamic> once() {
+      return _client.rpc(
+        'create_table_order_with_print_jobs',
         params: params,
       );
+    }
+
+    try {
+      return await once().timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      final recovered = await _lookupCommittedOrder(
+        restaurantId: restaurantId,
+        localOrderId: (idempotencyKey ?? '').trim(),
+      );
+      if (recovered != null) return recovered;
+      try {
+        return await once().timeout(const Duration(seconds: 20));
+      } on TimeoutException {
+        final again = await _lookupCommittedOrder(
+          restaurantId: restaurantId,
+          localOrderId: (idempotencyKey ?? '').trim(),
+        );
+        if (again != null) return again;
+        throw StateError(
+          'Sipariş sonucu doğrulanamadı. Aynı gönderim anahtarı duruyor.',
+        );
+      }
     } on PostgrestException catch (error) {
       throw Exception(_friendlyDispatchRpcError(error));
+    }
+  }
+
+  Future<Map<String, dynamic>?> _lookupCommittedOrder({
+    required String restaurantId,
+    required String localOrderId,
+  }) async {
+    if (restaurantId.trim().isEmpty || localOrderId.isEmpty) return null;
+    try {
+      final existing = await _client
+          .from('orders')
+          .select('id, order_number')
+          .eq('restaurant_id', restaurantId)
+          .eq('local_order_id', localOrderId)
+          .limit(1)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 5));
+      if (existing == null) return null;
+      final row = Map<String, dynamic>.from(existing);
+      final orderId = row['id']?.toString() ?? '';
+      if (orderId.isEmpty) return null;
+      final jobs = await _client
+          .from('print_jobs')
+          .select('id, status')
+          .eq('order_id', orderId)
+          .limit(40)
+          .timeout(const Duration(seconds: 5));
+      return <String, dynamic>{
+        'order_id': orderId,
+        'order_number': row['order_number'],
+        'print_job_ids': (jobs as List)
+            .map((job) => (job as Map)['id'])
+            .where((id) => id != null)
+            .toList(growable: false),
+        'print_job_statuses': <String, String>{
+          for (final job in jobs as List)
+            if ((job as Map)['id'] != null)
+              job['id'].toString(): job['status']?.toString() ?? '',
+        },
+        'idempotent_replay': true,
+      };
+    } catch (error) {
+      debugPrint('[OrderCommit] lookup failed: $error');
+      return null;
     }
   }
 

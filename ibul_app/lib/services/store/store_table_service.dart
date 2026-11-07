@@ -871,7 +871,7 @@ class StoreTableService {
         .or('order_type.eq.table,delivery_type.eq.table')
         .not('status', 'in', OrderStatusConstants.terminalStatuses.toList())
         .order('created_at', ascending: false)
-        .limit(50)
+        .limit(garsonOpenSnapshotTrustLimit)
         .timeout(tableOrderTimeout);
     final rawOrders = List<Map<String, dynamic>>.from(rows as List);
     if (rawOrders.isEmpty) return const <Map<String, dynamic>>[];
@@ -1054,6 +1054,155 @@ class StoreTableService {
     } catch (_) {
       return const <int, DateTime>{};
     }
+  }
+
+  Future<List<Map<String, dynamic>>> getTableCloseSession({
+    required String sellerId,
+    required int tableNumber,
+    Map<String, dynamic>? tableRow,
+    List<String> visibleOrderIds = const <String>[],
+  }) async {
+    final resolvedSellerId = sellerId.trim();
+    if (resolvedSellerId.isEmpty || tableNumber <= 0) {
+      return const <Map<String, dynamic>>[];
+    }
+    final anchor = tableRow ??
+        (await _loadStoreTablesByNumber(
+          sellerId: resolvedSellerId,
+          tableNumbers: <int>{tableNumber},
+        ))[tableNumber];
+    final byId = <String, Map<String, dynamic>>{};
+    void take(Map<String, dynamic>? order, {int? storedTableNumber}) {
+      if (order == null) return;
+      if (!garsonOrderBelongsToCloseTable(
+        table: anchor,
+        canonicalTableNumber: tableNumber,
+        order: order,
+        sellerId: resolvedSellerId,
+      )) {
+        return;
+      }
+      final id = order['id']?.toString().trim() ?? '';
+      if (id.isEmpty || byId.containsKey(id)) return;
+      final copy = Map<String, dynamic>.from(order);
+      if (storedTableNumber != null && storedTableNumber > 0) {
+        copy['_stored_table_number'] = storedTableNumber;
+      }
+      byId[id] = copy;
+    }
+
+    for (final order in await getTableOrdersSnapshot(
+      resolvedSellerId,
+      tableNumber: tableNumber,
+    )) {
+      take(
+        order,
+        storedTableNumber: _parseTableNumberValue(order['table_number']),
+      );
+    }
+
+    final areaName = anchor?['area_name']?.toString().trim() ?? '';
+    final areaNo = _parseTableNumberValue(anchor?['area_table_number']);
+    if (areaName.isNotEmpty && areaNo > 0) {
+      final rows = await _supabase
+          .from('table_orders')
+          .select()
+          .eq('seller_id', resolvedSellerId)
+          .eq('area_name', areaName)
+          .eq('area_table_number', areaNo)
+          .not('status', 'in', OrderStatusConstants.terminalStatuses.toList())
+          .limit(40)
+          .timeout(tableOrderTimeout);
+      for (final raw in rows as List) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        if ((row['seller_id']?.toString() ?? '') != resolvedSellerId) continue;
+        take(
+          normalizeTableOrderToGarsonBoardOrder(order: row, storeTable: anchor),
+          storedTableNumber: _parseTableNumberValue(row['table_number']),
+        );
+      }
+    }
+
+    final tableId = anchor?['id']?.toString().trim() ?? '';
+    if (tableId.isNotEmpty) {
+      final rows = await _supabase
+          .from('orders')
+          .select(
+            'id, restaurant_id, table_id, order_status, status, order_type, '
+            'delivery_type, total_amount, created_at, updated_at, '
+            'order_items(id, product_id, product_name, quantity, unit_price, '
+            'line_total, item_note, station_id, attributes)',
+          )
+          .eq('restaurant_id', resolvedSellerId)
+          .eq('table_id', tableId)
+          .or('order_type.eq.table,delivery_type.eq.table')
+          .not('status', 'in', OrderStatusConstants.terminalStatuses.toList())
+          .limit(40)
+          .timeout(tableOrderTimeout);
+      for (final raw in rows as List) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        if (!isGarsonRestaurantTableOrderRow(row)) continue;
+        final rawItems = row['order_items'] is List
+            ? List<dynamic>.from(row['order_items'] as List)
+            : const <dynamic>[];
+        take(
+          normalizeRestaurantOrderToGarsonTableOrder(
+            order: row,
+            items: normalizeRestaurantOrderItems(rawItems),
+            storeTable: anchor,
+          ),
+        );
+      }
+    }
+
+    final missingIds = visibleOrderIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty && !byId.containsKey(id))
+        .toList(growable: false);
+    if (missingIds.isNotEmpty) {
+      final rows = await _supabase
+          .from('table_orders')
+          .select()
+          .inFilter('id', missingIds)
+          .eq('seller_id', resolvedSellerId)
+          .timeout(tableOrderTimeout);
+      for (final raw in rows as List) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        if (OrderStatusConstants.isTerminalStatus(row['status']?.toString())) {
+          continue;
+        }
+        take(
+          normalizeTableOrderToGarsonBoardOrder(order: row, storeTable: anchor),
+          storedTableNumber: _parseTableNumberValue(row['table_number']),
+        );
+      }
+    }
+    return byId.values.toList(growable: false);
+  }
+
+  Future<void> realignTableOrderNumber({
+    required String sellerId,
+    required String orderId,
+    required int canonicalTableNumber,
+    required int storedTableNumber,
+  }) async {
+    if (orderId.trim().isEmpty ||
+        sellerId.trim().isEmpty ||
+        canonicalTableNumber <= 0 ||
+        storedTableNumber <= 0 ||
+        storedTableNumber == canonicalTableNumber) {
+      return;
+    }
+    await _supabase
+        .from('table_orders')
+        .update(<String, dynamic>{
+          'table_number': canonicalTableNumber,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', orderId)
+        .eq('seller_id', sellerId)
+        .eq('table_number', storedTableNumber)
+        .timeout(tableOrderTimeout);
   }
 
   Future<List<Map<String, dynamic>>> getTableOrdersByTable({
@@ -1732,7 +1881,7 @@ class StoreTableService {
           'p_session_key': resolvedSession,
           'p_amount': amountToStore,
           'p_method': resolvedMethod,
-          'p_idempotency_key': resolvedKey,
+          'p_client_request_id': resolvedKey,
           'p_is_closing': isClosing,
           if (paidBy != null && paidBy.trim().isNotEmpty)
             'p_paid_by': paidBy.trim(),
@@ -1945,7 +2094,7 @@ class StoreTableService {
   ///
   /// On [PostgrestException] (e.g. migration not yet applied), falls back
   /// to [_closeTableClientSide] which replays the same guarantee in Dart.
-  Future<void> closeTableWithHistory({
+  Future<Map<String, dynamic>> closeTableWithHistory({
     required String sellerId,
     required int tableNumber,
     required String paymentMethod,
@@ -1955,7 +2104,7 @@ class StoreTableService {
     String? sessionKey,
   }) async {
     try {
-      await _supabase
+      final raw = await _supabase
           .rpc(
             'close_table_with_history',
             params: {
@@ -1973,14 +2122,17 @@ class StoreTableService {
             },
           )
           .timeout(tableOrderTimeout);
-      // BUG-FIX (Reopen Bug): the RPC only clears `table_orders`; mirror the
-      // close into the customer-facing `orders` table here as well.  Without
-      // this, customer-placed orders survive and the table re-appears active
-      // on the next refresh.
-      await closeRestaurantOrdersForTable(
-        sellerId: sellerId,
-        tableNumber: tableNumber,
-      );
+      final result = raw is Map
+          ? Map<String, dynamic>.from(raw)
+          : <String, dynamic>{};
+      // The live function already closes orders in the same transaction.
+      if (!result.containsKey('orders_updated')) {
+        result['orders_updated'] = await closeRestaurantOrdersForTable(
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+        );
+      }
+      return result;
     } on PostgrestException catch (error) {
       if (!_shouldFallbackToDirectTableWrite(error)) {
         debugPrint(
@@ -2002,6 +2154,7 @@ class StoreTableService {
         waiterName: waiterName,
         sessionKey: sessionKey,
       );
+      return const <String, dynamic>{'client_side_archive': true};
     } on TimeoutException {
       throw Exception('Masa kapatma zaman aşımına uğradı. Tekrar deneyin.');
     }

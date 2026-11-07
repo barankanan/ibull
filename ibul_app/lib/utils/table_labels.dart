@@ -550,3 +550,132 @@ String garsonCloseTableSnackbarText(String label) => '$label kapatıldı.';
 
 String garsonCloseTableAlreadyEmptySnackbarText(String label) =>
     '$label zaten boş.';
+
+/// Restaurant order reads above this size are treated as truncated.
+const int garsonOpenSnapshotTrustLimit = 200;
+
+bool garsonCloseStatusIsTerminal(String? raw) {
+  final normalized = (raw ?? '').trim().toLowerCase();
+  return normalized == 'closed' ||
+      normalized == 'paid' ||
+      normalized == 'cancelled' ||
+      normalized == 'canceled' ||
+      normalized == 'completed' ||
+      normalized == 'complete' ||
+      normalized == 'completed_payment' ||
+      normalized == 'payment_completed' ||
+      normalized == 'archived' ||
+      normalized == 'print_anchor';
+}
+
+/// Bahçe 1 is store table 11 and area index 1. A row stored with
+/// table_number 1 still belongs to Bahçe when its area says so, and it does
+/// not belong to Salon 1 or to another seller.
+bool garsonOrderBelongsToCloseTable({
+  required Map<String, dynamic>? table,
+  required int canonicalTableNumber,
+  required Map<String, dynamic> order,
+  String? sellerId,
+}) {
+  if (garsonCloseStatusIsTerminal(order['status']?.toString())) return false;
+  final orderSeller = _t(order['seller_id'] ?? order['restaurant_id']);
+  final expectedSeller = _t(sellerId ?? table?['seller_id']);
+  if (orderSeller.isNotEmpty &&
+      expectedSeller.isNotEmpty &&
+      orderSeller != expectedSeller) {
+    return false;
+  }
+  final anchor =
+      table ?? <String, dynamic>{'table_number': canonicalTableNumber};
+  final kind = resolveOrderMatchKindForTable(table: anchor, order: order);
+  if (kind == 'table_id' || kind == 'store_table_id') return true;
+  if (kind == 'area_name+area_table_number' || kind == 'display_label') {
+    return true;
+  }
+  if (kind != 'table_number') return false;
+  final orderArea = _t(
+    order['area_name'] ?? order['table_area_name'] ?? order['table_area'],
+  ).toLowerCase();
+  final tableArea = _t(anchor['area_name']).toLowerCase();
+  if (orderArea.isNotEmpty && tableArea.isNotEmpty && orderArea != tableArea) {
+    return false;
+  }
+  final orderAreaNo = _firstPositiveInt(<dynamic>[
+    order['area_table_number'],
+    order['table_area_number'],
+    order['area_table_no'],
+  ]);
+  final tableAreaNo = _firstPositiveInt(<dynamic>[
+    anchor['area_table_number'],
+    anchor['table_area_number'],
+    anchor['area_table_no'],
+  ]);
+  if (orderAreaNo > 0 && tableAreaNo > 0 && orderAreaNo != tableAreaNo) {
+    return false;
+  }
+  return true;
+}
+
+int garsonStoredTableNumber(Map<String, dynamic> order) {
+  final stored = _pi(order['_stored_table_number']);
+  if (stored > 0) return stored;
+  return _pi(order['table_number']);
+}
+
+bool garsonTableOrderNeedsRealign({
+  required Map<String, dynamic> order,
+  required int canonicalTableNumber,
+}) {
+  if ((order['_garson_source_table'] ?? '').toString() != 'table_orders') {
+    return false;
+  }
+  final stored = garsonStoredTableNumber(order);
+  return stored > 0 &&
+      canonicalTableNumber > 0 &&
+      stored != canonicalTableNumber;
+}
+
+List<Map<String, dynamic>> garsonRowsForTableClose({
+  required Map<String, dynamic>? table,
+  required int canonicalTableNumber,
+  required String sellerId,
+  required List<Map<String, dynamic>> candidates,
+}) {
+  return <Map<String, dynamic>>[
+    for (final order in candidates)
+      if (garsonOrderBelongsToCloseTable(
+        table: table,
+        canonicalTableNumber: canonicalTableNumber,
+        order: order,
+        sellerId: sellerId,
+      ))
+        order,
+  ];
+}
+
+/// A successful open-order read drops a cached bill whose id is not open.
+/// Drafts stay. A truncated read does not wipe tables it may have omitted.
+List<Map<String, dynamic>> dropCachedBillsMissingFromOpenSnapshot({
+  required List<Map<String, dynamic>> visibleOrders,
+  required List<Map<String, dynamic>> serverOpenOrders,
+}) {
+  if (serverOpenOrders.length >= garsonOpenSnapshotTrustLimit) {
+    return visibleOrders;
+  }
+  final openIds = <String>{
+    for (final order in serverOpenOrders)
+      if (_t(order['id']).isNotEmpty) _t(order['id']),
+  };
+  return <Map<String, dynamic>>[
+    for (final order in visibleOrders)
+      if (_cachedBillStillOpen(order, openIds)) order,
+  ];
+}
+
+bool _cachedBillStillOpen(Map<String, dynamic> order, Set<String> openIds) {
+  final status = _t(order['status']).toLowerCase();
+  if (status == 'draft') return true;
+  final id = _t(order['id']);
+  if (id.isEmpty) return false;
+  return openIds.contains(id);
+}

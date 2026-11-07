@@ -1656,7 +1656,35 @@ class StoreService {
     );
   }
 
-  Future<void> closeTableWithHistory({
+  Future<List<Map<String, dynamic>>> getTableCloseSession({
+    required String sellerId,
+    required int tableNumber,
+    Map<String, dynamic>? tableRow,
+    List<String> visibleOrderIds = const <String>[],
+  }) {
+    return _tableService.getTableCloseSession(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      tableRow: tableRow,
+      visibleOrderIds: visibleOrderIds,
+    );
+  }
+
+  Future<void> realignTableOrderNumber({
+    required String sellerId,
+    required String orderId,
+    required int canonicalTableNumber,
+    required int storedTableNumber,
+  }) {
+    return _tableService.realignTableOrderNumber(
+      sellerId: sellerId,
+      orderId: orderId,
+      canonicalTableNumber: canonicalTableNumber,
+      storedTableNumber: storedTableNumber,
+    );
+  }
+
+  Future<Map<String, dynamic>> closeTableWithHistory({
     required String sellerId,
     required int tableNumber,
     required String paymentMethod,

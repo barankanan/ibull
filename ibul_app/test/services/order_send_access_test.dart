@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/services/order_send_access.dart';
 import 'package:ibul_app/utils/garson_active_orders_fetch.dart';
+import 'package:ibul_app/utils/table_labels.dart';
 import 'package:ibul_app/utils/order_status_constants.dart';
 
 void main() {
@@ -99,8 +100,10 @@ void main() {
       notes: 'trace note',
       idempotencyKey: 'send-1',
     );
-    expect(withKey['p_idempotency_key'], 'send-1');
+    expect(withKey['p_local_order_id'], 'send-1');
+    expect(withKey.containsKey('p_idempotency_key'), isFalse);
     expect(withKey['p_order_type'], 'table');
+    expect(withKey.keys, hasLength(9));
 
     final withoutKey = buildCreateTableOrderRpcParams(
       restaurantId: 'rest',
@@ -110,7 +113,120 @@ void main() {
       ],
       idempotencyKey: '   ',
     );
+    expect(withoutKey.containsKey('p_local_order_id'), isFalse);
     expect(withoutKey.containsKey('p_idempotency_key'), isFalse);
+  });
+
+  test('replay prints only a pending ticket', () {
+    const ids = <String>['pending-job', 'done-job', 'unknown-job'];
+    expect(
+      printJobIdsSafeForReplay(
+        printJobIds: ids,
+        statusById: const <String, String>{
+          'pending-job': 'pending',
+          'done-job': 'completed',
+          'unknown-job': 'printing',
+        },
+        replay: true,
+      ),
+      <String>['pending-job'],
+    );
+    expect(
+      printJobIdsSafeForReplay(
+        printJobIds: ids,
+        statusById: const <String, String>{'done-job': 'completed'},
+        replay: false,
+      ),
+      ids,
+    );
+  });
+
+  test('Bahçe 1 does not take Salon 1, another seller, or history', () {
+    final bahce = <String, dynamic>{
+      'id': 'bahce',
+      'seller_id': 'seller-a',
+      'table_number': 11,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_label': 'Bahçe 1',
+    };
+    final salon = <String, dynamic>{
+      'id': 'salon',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'area_name': 'Salon',
+      'area_table_number': 1,
+      'display_label': 'Salon 1',
+    };
+    final bahceBill = <String, dynamic>{
+      'id': 'open-bahce',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_table_label': 'Bahçe 1',
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+      '_stored_table_number': 1,
+      'total': 2490,
+    };
+    final salonBill = <String, dynamic>{
+      'id': 'open-salon',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'area_name': 'Salon',
+      'area_table_number': 1,
+      'status': 'sent',
+    };
+    final otherSeller = <String, dynamic>{
+      ...bahceBill,
+      'id': 'other',
+      'seller_id': 'seller-b',
+    };
+    final history = <String, dynamic>{
+      ...bahceBill,
+      'id': 'history',
+      'status': 'closed',
+    };
+
+    final rows = garsonRowsForTableClose(
+      table: bahce,
+      canonicalTableNumber: 11,
+      sellerId: 'seller-a',
+      candidates: <Map<String, dynamic>>[
+        bahceBill,
+        salonBill,
+        otherSeller,
+        history,
+      ],
+    );
+    expect(rows.map((row) => row['id']), ['open-bahce']);
+    expect(
+      garsonOrderBelongsToCloseTable(
+        table: salon,
+        canonicalTableNumber: 1,
+        order: bahceBill,
+        sellerId: 'seller-a',
+      ),
+      isFalse,
+    );
+    expect(
+      garsonTableOrderNeedsRealign(order: bahceBill, canonicalTableNumber: 11),
+      isTrue,
+    );
+    expect(
+      garsonTableOrderNeedsRealign(order: salonBill, canonicalTableNumber: 1),
+      isFalse,
+    );
+
+    final visible = dropCachedBillsMissingFromOpenSnapshot(
+      visibleOrders: <Map<String, dynamic>>[
+        bahceBill,
+        <String, dynamic>{'id': 'draft', 'status': 'draft', 'total': 2490},
+      ],
+      serverOpenOrders: const <Map<String, dynamic>>[],
+    );
+    expect(visible.map((row) => row['id']), ['draft']);
   });
 
   test('print anchor is terminal and is not a cancellation', () {
