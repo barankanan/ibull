@@ -61,7 +61,9 @@ import '../models/restaurant_ops_models.dart';
 import '../models/desktop_printer_setup_models.dart';
 import '../models/garson_operation_rules.dart';
 import '../models/print_job_model.dart';
+import '../services/store/split_bill_plan.dart';
 import '../widgets/garson/merge_table_sheet.dart';
+import '../widgets/garson/split_bill_sheet.dart';
 import '../widgets/garson/transfer_table_modal.dart';
 import '../widgets/garson/payment_bottom_sheet.dart';
 import '../widgets/garson/undo_action_controller.dart';
@@ -38376,100 +38378,56 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     List<Map<String, dynamic>> tableOrders,
   ) async {
     if (!mounted) return;
-    final grandTotal = _tableOrdersTotal(tableOrders);
-    final controller = TextEditingController(text: '2');
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            final n = int.tryParse(controller.text.trim()) ?? 0;
-            final perPerson = (n > 0) ? grandTotal / n : 0.0;
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              title: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(
-                      Icons.call_split_rounded,
-                      color: AppColors.primary,
-                      size: 22,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  const Text(
-                    'Hesabı Böl',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                  ),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                    ),
-                    child: Column(
-                      children: [
-                        Text(
-                          'Toplam: ${_formatMoney(grandTotal)}',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        if (n > 0) ...[
-                          const SizedBox(height: 6),
-                          Text(
-                            'Kişi başı: ${_formatMoney(perPerson)}',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w900,
-                              color: AppColors.primary,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: controller,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Kişi Sayısı',
-                      prefixIcon: Icon(Icons.people_outline),
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    onChanged: (_) => setDialogState(() {}),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Kapat'),
-                ),
-              ],
-            );
-          },
+    final openOrders = openTableBills(tableOrders);
+    if (openOrders.isEmpty) {
+      await _showOperationInfo(message: TableLevelPolicy.splitBlocked);
+      return;
+    }
+    final List<RecordedTablePayment> recorded;
+    try {
+      final rows = await _storeService.getTablePayments(
+        sellerId: widget.sellerId,
+        tableNumber: widget.tableNumber,
+      );
+      recorded = rows
+          .map(RecordedTablePayment.fromMap)
+          .toList(growable: false);
+    } catch (error) {
+      if (!mounted) return;
+      await _showOperationInfo(
+        message: 'Ödemeler okunamadı. Hesap bölünmedi.',
+      );
+      debugPrint('[GARSON_SPLIT_PAYMENTS_UNREAD] $error');
+      return;
+    }
+    if (!mounted) return;
+    final billKurus = billKurusForOrders(openOrders);
+    final paidKurus = billKurus -
+        openTableRemainingKurus(orders: openOrders, payments: recorded);
+    final tableLabel = (widget.tableTitleOverride ?? '').trim().isNotEmpty
+        ? widget.tableTitleOverride!.trim()
+        : 'Masa ${widget.tableNumber}';
+    final sessionKey = _getOrCreateSessionKey();
+    await SplitBillSheet.show(
+      context,
+      tableLabel: tableLabel,
+      billKurus: billKurus,
+      paidKurus: paidKurus < 0 ? 0 : paidKurus,
+      idempotencyPrefix: newSplitIdempotencyPrefix(sessionKey),
+      onCollect: (share, method) {
+        return _storeService.recordTablePayment(
+          sellerId: widget.sellerId,
+          tableNumber: widget.tableNumber,
+          sessionKey: sessionKey,
+          amount: kurusToMoney(share.amountKurus),
+          method: method,
+          waiterId: _currentWaiterId(),
+          waiterName: _currentWaiterName(),
+          note: share.note,
+          idempotencyKey: share.idempotencyKey,
         );
       },
     );
-    controller.dispose();
   }
 
   Future<void> _showOperationInfo({required String message}) async {

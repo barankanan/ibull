@@ -322,7 +322,7 @@ abstract final class TableLevelPolicy {
       'Aktif sipariş olmadan ödeme alınamaz.';
 
   static const String splitEnabled =
-      'Kişi sayısına göre hesap özetini göster.';
+      'Kalan hesabı kişi başı tahsil et. Masa kapanmaz.';
   static const String splitBlocked =
       'Aktif sipariş olmadan hesap bölünemez.';
 

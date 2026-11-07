@@ -1702,17 +1702,19 @@ class StoreTableService {
           resolvedSellerId,
           tableNumber: tableNumber,
         );
-        if (orders.isNotEmpty) {
-          final openedAt = earliestOrderOpenedAt(orders);
+        final openOrders = openTableBills(orders);
+        if (openOrders.isNotEmpty) {
+          final openedAt = earliestOrderOpenedAt(openOrders);
           final openPayments = paymentsInOpenBill(
             payments: recorded,
             openedAt: openedAt,
             now: DateTime.now().toUtc(),
             hasOpenOrders: true,
+            openVisitIds: openTableVisitIds(openOrders),
           );
           final plan = planTablePayment(
             tableNumber: tableNumber,
-            billKurus: billKurusForOrders(orders),
+            billKurus: billKurusForOrders(openOrders),
             amount: amount,
             idempotencyKey: resolvedKey,
             openBillPayments: openPayments,
@@ -1765,7 +1767,7 @@ class StoreTableService {
           );
         }
 
-        if (orders.isEmpty) {
+        if (openOrders.isEmpty) {
           throw Exception('Açık hesap doğrulanamadı. Ödeme kaydedilmedi.');
         }
         return _insertGuardedTablePayment(

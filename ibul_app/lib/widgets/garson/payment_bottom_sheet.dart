@@ -381,7 +381,7 @@ class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Hesabı Böl',
+                'Kişi başı önizleme',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
