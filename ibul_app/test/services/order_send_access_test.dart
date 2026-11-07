@@ -24,6 +24,37 @@ void main() {
     expect(nextOrder, isNot(first));
   });
 
+  test('a restarted ledger keeps the original key', () async {
+    final saved = <String, String>{};
+    final first = OrderSendKeyLedger();
+    first.sink = (keys) async {
+      saved
+        ..clear()
+        ..addAll(keys);
+    };
+    final key = resolveOrderSendKey(
+      ledger: first,
+      fingerprint: 'action',
+      requestedKey: 'send-stable',
+    );
+    await first.flush();
+
+    final restarted = OrderSendKeyLedger(restored: saved);
+    expect(
+      resolveOrderSendKey(
+        ledger: restarted,
+        fingerprint: 'action',
+        requestedKey: 'send-after-restart',
+      ),
+      key,
+    );
+    restarted.complete('action');
+    expect(
+      resolveOrderSendKey(ledger: restarted, fingerprint: 'action'),
+      isNot(key),
+    );
+  });
+
   test('a requested key is reused for the same action', () {
     final ledger = OrderSendKeyLedger();
     final key = resolveOrderSendKey(

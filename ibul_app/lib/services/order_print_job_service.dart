@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart'
         defaultTargetPlatform,
         kIsWeb,
         TargetPlatform;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/desktop_printer_setup_models.dart';
@@ -910,7 +911,38 @@ class OrderPrintJobService {
     }
   }
 
+  static const String _orderSendLedgerKey = 'ibul.order_send_ledger.v1';
   final OrderSendKeyLedger _sendKeys = OrderSendKeyLedger();
+  bool _sendKeysLoaded = false;
+
+  Future<void> _ensureSendKeysLoaded() async {
+    if (_sendKeysLoaded) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_orderSendLedgerKey);
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          _sendKeys.restore(
+            decoded.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            ),
+          );
+        }
+      }
+      _sendKeys.sink = (keys) async {
+        final store = await SharedPreferences.getInstance();
+        if (keys.isEmpty) {
+          await store.remove(_orderSendLedgerKey);
+          return;
+        }
+        await store.setString(_orderSendLedgerKey, jsonEncode(keys));
+      };
+      _sendKeysLoaded = true;
+    } catch (error) {
+      debugPrint('[OrderSend] ledger persist unavailable: $error');
+    }
+  }
 
   Future<OrderPrintJobDispatchResult> dispatchNewOrder({
     required String restaurantId,
@@ -955,11 +987,13 @@ class OrderPrintJobService {
       jobType: jobType,
       items: normalized,
     );
+    await _ensureSendKeysLoaded();
     final sendKey = resolveOrderSendKey(
       ledger: _sendKeys,
       fingerprint: sendFingerprint,
       requestedKey: idempotencyKey,
     );
+    await _sendKeys.flush();
 
     debugPrint('[GarsonPrint][send_order_start]');
     debugPrint('table=$tableNumber');
@@ -1272,6 +1306,7 @@ class OrderPrintJobService {
     };
 
     _sendKeys.complete(sendFingerprint);
+    await _sendKeys.flush();
     return OrderPrintJobDispatchResult(
       orderId: data['order_id']?.toString(),
       orderNumber: data['order_number']?.toString(),

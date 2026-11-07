@@ -30,8 +30,33 @@ String orderSendActionFingerprint({
 }
 
 /// Remembers the key for an in-flight action until that action succeeds.
+///
+/// [restored] reloads keys that survived an app restart. A new requested key
+/// does not replace a restored one: the original key must hit the server
+/// again so the send is replayed instead of creating a second order.
 class OrderSendKeyLedger {
-  final Map<String, String> _keys = <String, String>{};
+  OrderSendKeyLedger({Map<String, String>? restored})
+    : _keys = Map<String, String>.from(restored ?? const <String, String>{});
+
+  final Map<String, String> _keys;
+  Future<void> Function(Map<String, String> keys)? sink;
+
+  void restore(Map<String, String> saved) {
+    for (final entry in saved.entries) {
+      final fingerprint = entry.key.trim();
+      final key = entry.value.trim();
+      if (fingerprint.isEmpty || key.isEmpty) continue;
+      _keys.putIfAbsent(fingerprint, () => key);
+    }
+  }
+
+  Map<String, String> get snapshot => Map<String, String>.unmodifiable(_keys);
+
+  Future<void> flush() async {
+    final sink = this.sink;
+    if (sink == null) return;
+    await sink(Map<String, String>.from(_keys));
+  }
 
   String keyFor(String fingerprint, {String Function()? mint}) {
     final existing = _keys[fingerprint];
@@ -44,6 +69,8 @@ class OrderSendKeyLedger {
   void remember(String fingerprint, String key) {
     final normalized = key.trim();
     if (fingerprint.isEmpty || normalized.isEmpty) return;
+    final existing = _keys[fingerprint];
+    if (existing != null && existing.isNotEmpty) return;
     _keys[fingerprint] = normalized;
   }
 
@@ -60,7 +87,6 @@ String resolveOrderSendKey({
   final requested = (requestedKey ?? '').trim();
   if (requested.isNotEmpty) {
     ledger.remember(fingerprint, requested);
-    return requested;
   }
   return ledger.keyFor(fingerprint);
 }
