@@ -41,6 +41,7 @@ import '../services/order_service.dart';
 import '../services/kitchen_print_trace_log.dart';
 import '../services/order_print_job_service.dart';
 import '../services/order_send_access.dart';
+import '../features/seller/staff/staff_directory_view.dart';
 import '../services/desktop_print_orchestrator.dart';
 import '../services/desktop_print_hub.dart';
 import '../services/printer_encoding_profile_store.dart';
@@ -15553,120 +15554,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildMobileTeamModule() {
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 8),
-      physics: const BouncingScrollPhysics(),
-      children: [
-        _buildMobileModuleHero(
-          title: 'Ekip Yönetimi',
-          subtitle: 'Alt yönetici davet et ve yetkileri yönet',
-          icon: Icons.groups_rounded,
-          primary: const Color(0xFF4C1D95),
-          secondary: const Color(0xFF7C3AED),
-        ),
-        const SizedBox(height: 10),
-        _mobileSurfaceCard(
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _showInviteSubAdminDialog,
-              icon: const Icon(Icons.person_add_alt),
-              label: const Text('Alt Yönetici Davet Et'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF6C63FF),
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        if (_subAdmins.isEmpty)
-          _mobileSurfaceCard(
-            child: Center(
-              child: Text(
-                'Henüz alt yönetici eklenmedi.',
-                style: TextStyle(color: Colors.grey.shade600),
-              ),
-            ),
-          )
-        else
-          ..._subAdmins.map(_buildMobileSubAdminCard),
-      ],
-    );
-  }
-
-  Widget _buildMobileSubAdminCard(SubAdmin subAdmin) {
-    final contact = subAdmin.email ?? subAdmin.phone ?? '-';
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: _mobileSurfaceCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    subAdmin.email?.split('@').first ?? subAdmin.phone ?? '-',
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                _mobileBadge('Durum', subAdmin.status),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              contact,
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: subAdmin.permissions
-                  .map(
-                    (permission) => _mobileBadge(
-                      'Yetki',
-                      _mobilePermissionLabel(permission),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showEditPermissionsDialog(subAdmin),
-                    icon: const Icon(Icons.edit_outlined, size: 16),
-                    label: const Text('Yetkiler'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _removeSubAdmin(subAdmin.id),
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      size: 16,
-                      color: Colors.red,
-                    ),
-                    label: const Text('Kaldır'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
+      padding: const EdgeInsets.all(12),
+      child: _staffDirectory(),
     );
-  }
-
-  String _mobilePermissionLabel(SellerPermission permission) {
-    return sellerPermissionShortLabel(permission);
   }
 
   Widget _staffPermissionTile({
@@ -33057,141 +32948,41 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildTeamModule() {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              ElevatedButton.icon(
-                onPressed: _showInviteSubAdminDialog,
-                icon: const Icon(Icons.person_add_alt, size: 18),
-                label: const Text('Alt Yönetici Davet Et'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6C63FF),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  decoration: InputDecoration(
-                    hintText: 'Alt yönetici ara...',
-                    prefixIcon: const Icon(Icons.search, size: 18),
-                    isDense: true,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                  ),
-                  onChanged: (v) {
-                    setState(() {});
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: _subAdmins.isEmpty
-                ? Center(
-                    child: Text(
-                      'Henüz alt yönetici eklemediniz',
-                      style: TextStyle(color: Colors.grey.shade600),
-                    ),
-                  )
-                : SingleChildScrollView(
-                    child: DataTable(
-                      columns: const [
-                        DataColumn(label: Text('Kullanıcı')),
-                        DataColumn(label: Text('İletişim')),
-                        DataColumn(label: Text('Yetkiler')),
-                        DataColumn(label: Text('Durum')),
-                        DataColumn(label: Text('İşlemler')),
-                      ],
-                      rows: _subAdmins.map((u) {
-                        final contact = u.email ?? u.phone ?? '-';
-                        final perms = u.permissions
-                            .map(sellerPermissionShortLabel)
-                            .join(', ');
-                        return DataRow(
-                          cells: [
-                            DataCell(
-                              Text(u.email?.split('@').first ?? u.phone ?? '-'),
-                            ),
-                            DataCell(Text(contact)),
-                            DataCell(Text(perms)),
-                            DataCell(Text(u.status)),
-                            DataCell(
-                              Row(
-                                children: [
-                                  IconButton(
-                                    tooltip: 'Yetkileri Düzenle',
-                                    icon: const Icon(Icons.edit_outlined),
-                                    onPressed: () =>
-                                        _showEditPermissionsDialog(u),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Kaldır',
-                                    icon: const Icon(Icons.delete_outline),
-                                    onPressed: () async {
-                                      final ok = await showDialog<bool>(
-                                        context: context,
-                                        builder: (ctx) => AlertDialog(
-                                          title: const Text('Kaldırılsın mı?'),
-                                          content: const Text(
-                                            'Alt yönetici listeden kaldırılacak.',
-                                          ),
-                                          actions: [
-                                            TextButton(
-                                              onPressed: () =>
-                                                  Navigator.pop(ctx, false),
-                                              child: const Text('İptal'),
-                                            ),
-                                            ElevatedButton(
-                                              onPressed: () =>
-                                                  Navigator.pop(ctx, true),
-                                              child: const Text('Kaldır'),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                      if (ok == true) {
-                                        await _removeSubAdmin(u.id);
-                                      }
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        );
-                      }).toList(),
-                    ),
-                  ),
-          ),
-        ),
-      ],
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: _staffDirectory(),
     );
+  }
+
+  Widget _staffDirectory() {
+    return StaffDirectoryView(
+      staff: _subAdmins,
+      onInvite: _showInviteSubAdminDialog,
+      onEditPermissions: _showEditPermissionsDialog,
+      onSetStatus: (person, status) => _setSubAdminStatus(person.id, status),
+      onDelete: (person) => _removeSubAdmin(person.id),
+    );
+  }
+
+  Future<void> _setSubAdminStatus(String id, String status) async {
+    try {
+      await _storeService.setSubAdminStatus(id, status);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            status == 'inactive'
+                ? 'Personel pasifleştirildi.'
+                : 'Personel durumu güncellendi.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Hata: $error')));
+    }
   }
 
   Future<void> _inviteSubAdmin({

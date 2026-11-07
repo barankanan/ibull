@@ -1924,6 +1924,28 @@ class StoreService {
     }
   }
 
+  Future<void> setSubAdminStatus(String subAdminId, String status) async {
+    final storeId = currentUserId;
+    final normalized = status.trim().toLowerCase();
+    if (storeId == null || storeId.isEmpty) {
+      throw Exception('Kullanıcı girişi yapılmamış');
+    }
+    if (normalized != 'active' &&
+        normalized != 'inactive' &&
+        normalized != 'invited') {
+      throw Exception('Personel durumu geçersiz.');
+    }
+    final updated = await _supabase
+        .from('store_sub_admins')
+        .update({'status': normalized})
+        .eq('id', subAdminId)
+        .eq('store_id', storeId)
+        .select('id');
+    if (List<dynamic>.from(updated as List).isEmpty) {
+      throw Exception('Personel durumu güncellenemedi.');
+    }
+  }
+
   Future<void> removeSubAdmin(String subAdminId) async {
     final storeId = currentUserId;
     if (storeId == null || storeId.isEmpty) {
