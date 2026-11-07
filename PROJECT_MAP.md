@@ -624,3 +624,9 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `app_state.dart` seller-scoped cache yardımcıları ile seller panel için kalıcı dashboard/finance cache desteği aldı.
 - `seller_panel_page.dart` startup bootstrap sırası owner restore -> sellerId resolve -> cached closed-history hydrate -> store profile refresh olacak şekilde güçlendirildi; boş fetch artık mevcut cache’i ezmiyor.
 - `seller_panel_finance_modules.dart` owner bootstrap tamamlanmadan `FinanceShell` oluşturmuyor; hazır olunca sellerId içeren anahtarla provider yeniden kuruluyor.
+
+## 2026-11-07
+
+- `approve_waiter_order_request` adisyonu `table_orders` içine yazar ve mutfak kalemi varsa `create_table_order_with_print_jobs` çağırır. Bu RPC ayrıca `orders` tablosuna `confirmed` / `sent` satırı açar. Garson tahtası iki tabloyu birden okur; masa doluyken birleştirme ikinci satırı gizler, adisyon kapanınca aktif `orders` satırı masayı yeniden açabilir.
+- Onay gövdesi yeniden yazılmadı. `install_waiter_request_single_order_guard()` mevcut yazdırma fonksiyonunu çağırır. Notu `waiter_request:` ile başlayan `new_order` kaydı, fiş satırı dururken `cancelled` yapılır. Satır silinmez; `print_jobs.order_id` silmede fişi de siler. Doğrudan garson gönderimi aynı notu kullanmadığı için değişmez.
+- Geçmiş satırlar bu migration ile düzeltilmez. Public yazdırma fonksiyonu sonradan değişirse `select public.install_waiter_request_single_order_guard();` yeniden çalıştırılmalı.
