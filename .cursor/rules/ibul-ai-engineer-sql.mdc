@@ -1,0 +1,70 @@
+---
+description: İBUL production SQL yetkisi. Güvenli migration uygulanabilir; başarısız kontrol atlanamaz.
+alwaysApply: true
+---
+
+# İBUL AI Engineer — Supabase SQL
+
+SQL işi dosya hazırlamakla bitmez. Aşağıdaki kontrollerin hepsi geçtiyse yeni migration ve güvenli düzeltme production Supabase projesine uygulanır. Her güvenli migration için yeniden izin istenmez.
+
+Bu yetki kontrolsüz SQL, veri silme veya finansal kayıt değiştirme izni değildir.
+
+Main’e otomatik merge, Firebase veya Edge deploy, gerçek sipariş, tahsilat ve fiziksel baskı bu kuralın dışındadır.
+
+## Uygulamadan önce
+
+Sıra zorunludur. Biri başarısızsa SQL çalışmaz.
+
+1. `PROJECT_MAP.md` ve migration geçmişini oku.
+2. Bağlı projenin İBUL production projesi olduğunu doğrula. Proje kimliği belirsizse dur.
+3. Canlı tablo, kolon, CHECK, ENUM, trigger, RLS ve fonksiyon tanımlarını yalnız `SELECT` ile oku. Yazma veya tahmin etme.
+4. Aynı migration’ın daha önce uygulanmadığını doğrula.
+5. Bağımlılıkları ve sırayı belirle.
+6. Gerçek şemaya uygun izole PostgreSQL kopyasında migration ve regresyon testlerini çalıştır.
+7. Yayımlanmış uygulama sürümünün bu SQL ile geriye dönük uyumunu kontrol et.
+8. Doğrulanmış, geri yüklenebilir yedek veya geri dönüş noktası bulunduğunu kontrol et.
+9. Kilit, kesinti ve açık sipariş ile tahsilat üzerindeki etkiyi değerlendir.
+
+Hepsi geçtiyse uygula. Sonra doğrulama sorgularını çalıştır.
+
+## Otomatik uygulanabilecek iş
+
+Yalnızca güvenlik kontrolleri geçmiş, geriye dönük uyumlu ve veri kaybı oluşturmayan değişiklikler:
+
+- Yeni tablo ve indeks
+- Yeni RPC
+- Güvenli RLS ve yetki düzeltmesi
+- Test edilmiş fonksiyon düzeltmesi
+- İdempotency ve tekrar işlem koruması
+- Uyumlu şema genişletmesi
+- Test edilmiş restoran, satıcı ve e-ticaret migration’ı
+
+İlgili uygulama sürümü uyumlu değilse uygulama.
+
+## Dur
+
+Şunların birinde SQL çalıştırma ve sonucu BLOCKED yaz:
+
+- Yedek veya geri yükleme doğrulanamıyor
+- Production şeması uyumsuz
+- Açık sipariş veya tahsilat bozulabilir
+- Mevcut kayıt silinecek veya finansal tutar değişecek
+- Veri kaybı, stok bozulması veya çift tahsilat riski açık
+- Migration testi başarısız
+- Uygulama kodu bu migration ile uyumlu değil
+- Yayımlanmamış uygulama koduna bağlı SQL erken uygulanmak üzere
+- Canlı veritabanına güvenli bağlantı yok
+
+Kontrolü atlama. Güvenlik mekanizmasını kapatma. Production verisini tahminle düzeltme.
+
+PR #9 ve PR #11 main’e alınmadan, onların yayınlanmamış koduna bağlı SQL uygulanmaz. Bağımlılık sırası korunur. `orders.status` ve `print_anchor` canlı CHECK, ENUM ve trigger ile okunmadan PR #9 SQL’i uygulanmaz. `merge_table_bills` canlıda ara ödeme ziyareti, masa durumu ve eşzamanlı kilit doğrulanmadan uygulanmaz.
+
+## Uygulamadan sonra
+
+- Migration kaydını doğrula.
+- Fonksiyon ve izinleri kontrol et.
+- Sipariş, ödeme ve stok bütünlüğünü kontrol et.
+- Hata varsa yeni işlemi durdur ve doğrulanmış geri alma planını uygula.
+- `PROJECT_MAP.md` ve migration kaydını güncelle.
+
+Rapor yalnız şunları içerir: SQL dosyası, ortam, APPLIED / FAILED / BLOCKED, öncesi ve sonrası doğrulama, yedek ve geri alma, etkilenen özellikler, kalan riskler.
