@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../models/restaurant_ops_models.dart';
@@ -19,12 +21,14 @@ class PaymentSheetResult {
     required this.amount,
     required this.isClosing,
     this.note,
+    this.idempotencyKey = '',
   });
 
   final TablePaymentMethod method;
   final double amount;
   final bool isClosing;
   final String? note;
+  final String idempotencyKey;
 }
 
 class TablePaymentBottomSheet extends StatefulWidget {
@@ -66,6 +70,8 @@ class TablePaymentBottomSheet extends StatefulWidget {
 class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
   TablePaymentMethod? _selectedMethod;
   bool _isPartialMode = false;
+  bool _submitted = false;
+  late final String _idempotencyKey = _newPaymentIdempotencyKey();
   final TextEditingController _partialAmountController =
       TextEditingController();
   final TextEditingController _noteController = TextEditingController();
@@ -93,13 +99,31 @@ class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
       '${v.toStringAsFixed(2).replaceAll('.', ',')} ₺';
 
   bool get _canConfirmPartial {
-    if (_selectedMethod == null) return false;
+    if (_submitted || _selectedMethod == null) return false;
     final v = double.tryParse(
         _partialAmountController.text.trim().replaceAll(',', '.'));
     return v != null && v > 0 && v <= _remainingTotal;
   }
 
-  bool get _canConfirmFull => _selectedMethod != null;
+  bool get _canConfirmFull => _selectedMethod != null && !_submitted;
+
+  void _emit(PaymentSheetResult result) {
+    if (_submitted) return;
+    setState(() => _submitted = true);
+    Navigator.of(context).pop(result);
+  }
+
+  String _newPaymentIdempotencyKey() {
+    final random = math.Random.secure();
+    final time = DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(
+      16,
+    );
+    final noise = List<int>.generate(
+      8,
+      (_) => random.nextInt(256),
+    ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+    return 'pay_$time$noise';
+  }
 
   String _paymentMethodLabel(TablePaymentMethod m) => m.label;
 
@@ -536,13 +560,14 @@ class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
                           .trim()
                           .replaceAll(',', '.'),
                     );
-                    Navigator.of(context).pop(PaymentSheetResult(
+                    _emit(PaymentSheetResult(
                       method: _selectedMethod!,
                       amount: amount,
                       isClosing: false,
                       note: _noteController.text.trim().isNotEmpty
                           ? _noteController.text.trim()
                           : null,
+                      idempotencyKey: _idempotencyKey,
                     ));
                   }
                 : null,
@@ -558,13 +583,14 @@ class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
         FilledButton.icon(
           onPressed: _canConfirmFull
               ? () {
-                  Navigator.of(context).pop(PaymentSheetResult(
+                  _emit(PaymentSheetResult(
                     method: _selectedMethod!,
                     amount: _remainingTotal,
                     isClosing: true,
                     note: _noteController.text.trim().isNotEmpty
                         ? _noteController.text.trim()
                         : null,
+                    idempotencyKey: _idempotencyKey,
                   ));
                 }
               : null,
