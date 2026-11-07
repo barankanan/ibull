@@ -127,7 +127,7 @@ begin
     '33333333-3333-4333-8333-333333333333',
     'Garson',
     'ilk',
-    'reprint',
+    'new_order',
     'table',
     'same-send'
   );
@@ -146,6 +146,46 @@ begin
       v_first, v_second, v_jobs;
   end if;
   raise notice 'PASS same idempotency key does not create a second order or ticket';
+
+  begin
+    perform public.send_table_order_idempotent(
+      '11111111-1111-4111-8111-111111111111',
+      42,
+      '[{"name":"baska","price":15,"quantity":2}]'::jsonb,
+      '33333333-3333-4333-8333-333333333333',
+      'Garson',
+      'ilk',
+      'new_order',
+      'table',
+      'same-send'
+    );
+    raise exception 'different payload reused the same key';
+  exception
+    when sqlstate 'P0001' then
+      if sqlerrm not like '%farklı bir sipariş%' then
+        raise;
+      end if;
+  end;
+  raise notice 'PASS same key with a different payload is rejected';
+
+  begin
+    perform public.send_table_order_idempotent(
+      '11111111-1111-4111-8111-111111111111',
+      42,
+      '[{"name":"salata","price":15,"quantity":1}]'::jsonb,
+      '33333333-3333-4333-8333-333333333333',
+      'Garson',
+      'ilk',
+      'new_order',
+      'table',
+      '   '
+    );
+    raise exception 'blank idempotency key was accepted';
+  exception
+    when invalid_parameter_value then
+      null;
+  end;
+  raise notice 'PASS blank idempotency key is rejected';
 end
 $$;
 

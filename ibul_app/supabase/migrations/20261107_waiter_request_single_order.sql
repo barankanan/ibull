@@ -186,6 +186,8 @@ begin
       v_job text := btrim(coalesce(p_job_type, ''));
       v_updated integer := 0;
       v_auto_key text;
+      v_fingerprint text;
+      v_stored_fingerprint text;
     begin
       v_auto_key := (regexp_match(
         v_notes,
@@ -193,17 +195,30 @@ begin
       ))[1];
       if v_auto_key is not null
          and to_regclass('public.order_send_idempotency') is not null
+         and to_regprocedure(
+           'public.order_send_request_fingerprint(integer,jsonb,text,text)'
+         ) is not null
       then
+        v_fingerprint := public.order_send_request_fingerprint(
+          p_table_number, p_items, p_job_type, p_order_type
+        );
         perform pg_advisory_xact_lock(
           hashtext(p_restaurant_id::text),
           hashtext(v_auto_key)
         );
-        select result
-          into v_result
+        select result, request_fingerprint
+          into v_result, v_stored_fingerprint
         from public.order_send_idempotency
         where restaurant_id = p_restaurant_id
           and idempotency_key = v_auto_key;
         if found then
+          if v_stored_fingerprint is not null
+             and v_stored_fingerprint is distinct from v_fingerprint
+          then
+            raise exception
+              'Bu işlem kimliği farklı bir siparişle kullanılmış.'
+              using errcode = 'P0001';
+          end if;
           return v_result || jsonb_build_object('idempotent_replay', true);
         end if;
       end if;
@@ -246,12 +261,13 @@ begin
       end if;
 
       if v_auto_key is not null
+         and v_fingerprint is not null
          and to_regclass('public.order_send_idempotency') is not null
       then
         insert into public.order_send_idempotency (
-          restaurant_id, idempotency_key, result
+          restaurant_id, idempotency_key, request_fingerprint, result
         ) values (
-          p_restaurant_id, v_auto_key, v_result
+          p_restaurant_id, v_auto_key, v_fingerprint, v_result
         )
         on conflict (restaurant_id, idempotency_key) do nothing;
       end if;

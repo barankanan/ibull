@@ -910,6 +910,8 @@ class OrderPrintJobService {
     }
   }
 
+  final OrderSendKeyLedger _sendKeys = OrderSendKeyLedger();
+
   Future<OrderPrintJobDispatchResult> dispatchNewOrder({
     required String restaurantId,
     required int tableNumber,
@@ -922,9 +924,6 @@ class OrderPrintJobService {
     String? idempotencyKey,
   }) async {
     final traceId = _generateTraceId();
-    final sendKey = (idempotencyKey ?? '').trim().isEmpty
-        ? traceId
-        : idempotencyKey!.trim();
     final pipelineStartedAt = DateTime.now().toIso8601String();
     final pipelineWatch = Stopwatch()..start();
     final productMappings = mergedKitchenProductMappingsForRestaurant(
@@ -950,6 +949,17 @@ class OrderPrintJobService {
     if (normalized.isEmpty) {
       throw Exception('Print job oluşturmak için sipariş kalemi bulunamadı.');
     }
+    final sendFingerprint = orderSendActionFingerprint(
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+      jobType: jobType,
+      items: normalized,
+    );
+    final sendKey = resolveOrderSendKey(
+      ledger: _sendKeys,
+      fingerprint: sendFingerprint,
+      requestedKey: idempotencyKey,
+    );
 
     debugPrint('[GarsonPrint][send_order_start]');
     debugPrint('table=$tableNumber');
@@ -974,7 +984,9 @@ class OrderPrintJobService {
     );
 
     final rpcWatch = Stopwatch()..start();
-    final response = await _runCreateTableOrderWithPrintJobsRpc(
+    late final dynamic response;
+    try {
+      response = await _runCreateTableOrderWithPrintJobsRpc(
       restaurantId: restaurantId,
       tableNumber: tableNumber,
       normalized: normalized,
@@ -985,6 +997,10 @@ class OrderPrintJobService {
       jobType: jobType,
       idempotencyKey: sendKey,
     );
+    } catch (error) {
+      // Keep [sendKey] so the same action retries with the same record.
+      rethrow;
+    }
     final rpcMs = rpcWatch.elapsedMilliseconds;
 
     final data = response is Map<String, dynamic>
@@ -1255,6 +1271,7 @@ class OrderPrintJobService {
       },
     };
 
+    _sendKeys.complete(sendFingerprint);
     return OrderPrintJobDispatchResult(
       orderId: data['order_id']?.toString(),
       orderNumber: data['order_number']?.toString(),
@@ -1541,30 +1558,8 @@ class OrderPrintJobService {
         params: params,
       );
     } on PostgrestException catch (error) {
-      if (params.containsKey('p_idempotency_key') &&
-          _isCreateTableOrderOverloadMissing(error)) {
-        params.remove('p_idempotency_key');
-        try {
-          return await _client.rpc(
-            'create_table_order_with_print_jobs',
-            params: params,
-          );
-        } on PostgrestException catch (retryError) {
-          throw Exception(_friendlyDispatchRpcError(retryError));
-        }
-      }
       throw Exception(_friendlyDispatchRpcError(error));
     }
-  }
-
-  bool _isCreateTableOrderOverloadMissing(PostgrestException error) {
-    final message = '${error.message} ${error.details ?? ''}'.toLowerCase();
-    return error.code == 'PGRST202' ||
-        error.code == '42883' ||
-        (message.contains('send_table_order_idempotent') &&
-            (message.contains('could not find') ||
-                message.contains('does not exist') ||
-                message.contains('schema cache')));
   }
 
   String _friendlyDispatchRpcError(PostgrestException error) {

@@ -4,6 +4,60 @@ import 'package:ibul_app/utils/garson_active_orders_fetch.dart';
 import 'package:ibul_app/utils/order_status_constants.dart';
 
 void main() {
+  test('the same action keeps one key until it succeeds', () {
+    final ledger = OrderSendKeyLedger();
+    const fingerprint = 'rest|4|new_order|soup';
+    final first = resolveOrderSendKey(
+      ledger: ledger,
+      fingerprint: fingerprint,
+    );
+    final retry = resolveOrderSendKey(
+      ledger: ledger,
+      fingerprint: fingerprint,
+    );
+    expect(retry, first);
+    ledger.complete(fingerprint);
+    final nextOrder = resolveOrderSendKey(
+      ledger: ledger,
+      fingerprint: fingerprint,
+    );
+    expect(nextOrder, isNot(first));
+  });
+
+  test('a requested key is reused for the same action', () {
+    final ledger = OrderSendKeyLedger();
+    final key = resolveOrderSendKey(
+      ledger: ledger,
+      fingerprint: 'action',
+      requestedKey: 'send-stable',
+    );
+    expect(
+      resolveOrderSendKey(ledger: ledger, fingerprint: 'action'),
+      key,
+    );
+  });
+
+  test('missing idempotent RPC is a hard stop', () {
+    expect(
+      friendlyOrderSendRpcMessage(
+        code: 'PGRST202',
+        message:
+            'Could not find the function public.send_table_order_idempotent in the schema cache',
+      ),
+      contains('Gönderim durduruldu'),
+    );
+  });
+
+  test('same key with a different order is reported', () {
+    expect(
+      friendlyOrderSendRpcMessage(
+        code: 'P0001',
+        message: 'Bu işlem kimliği farklı bir siparişle kullanılmış.',
+      ),
+      contains('başka bir siparişle kullanılmış'),
+    );
+  });
+
   test('idempotency key is sent only when present', () {
     final withKey = buildCreateTableOrderRpcParams(
       restaurantId: 'rest',

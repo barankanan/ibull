@@ -24,6 +24,7 @@ begin;
 create table if not exists public.order_send_idempotency (
   restaurant_id uuid not null,
   idempotency_key text not null,
+  request_fingerprint text,
   result jsonb not null,
   created_at timestamptz not null default timezone('utc', now()),
   primary key (restaurant_id, idempotency_key),
@@ -31,6 +32,35 @@ create table if not exists public.order_send_idempotency (
     char_length(btrim(idempotency_key)) between 1 and 120
   )
 );
+
+alter table public.order_send_idempotency
+  add column if not exists request_fingerprint text;
+
+create or replace function public.order_send_request_fingerprint(
+  p_table_number integer,
+  p_items jsonb,
+  p_job_type text,
+  p_order_type text
+)
+returns text
+language sql
+immutable
+as $$
+  select md5(
+    coalesce(p_table_number::text, '') || '|' ||
+    lower(btrim(coalesce(p_job_type, ''))) || '|' ||
+    lower(btrim(coalesce(p_order_type, ''))) || '|' ||
+    coalesce((
+      select jsonb_agg(elem order by elem::text)::text
+      from jsonb_array_elements(
+        case
+          when jsonb_typeof(p_items) = 'array' then p_items
+          else '[]'::jsonb
+        end
+      ) elem
+    ), '[]')
+  );
+$$;
 
 revoke all on table public.order_send_idempotency from public;
 
@@ -78,8 +108,10 @@ set search_path = public
 as $$
 declare
   v_key text := nullif(btrim(coalesce(p_idempotency_key, '')), '');
+  v_fingerprint text;
   v_result jsonb;
   v_stored jsonb;
+  v_stored_fingerprint text;
 begin
   if coalesce(current_setting('request.jwt.claim.role', true), '') <> 'service_role'
      and auth.uid() is null
@@ -94,23 +126,37 @@ begin
       using errcode = '42501';
   end if;
 
-  if v_key is not null and char_length(v_key) > 120 then
+  if v_key is null then
+    raise exception
+      'Sipariş işlem kimliği gerekli. Gönderim durduruldu.'
+      using errcode = '22023';
+  end if;
+  if char_length(v_key) > 120 then
     raise exception 'Sipariş işlem kimliği geçersiz.';
   end if;
 
-  if v_key is not null then
-    perform pg_advisory_xact_lock(
-      hashtext(p_restaurant_id::text),
-      hashtext(v_key)
-    );
-    select result
-      into v_stored
-    from public.order_send_idempotency
-    where restaurant_id = p_restaurant_id
-      and idempotency_key = v_key;
-    if found then
-      return v_stored || jsonb_build_object('idempotent_replay', true);
+  v_fingerprint := public.order_send_request_fingerprint(
+    p_table_number, p_items, p_job_type, p_order_type
+  );
+
+  perform pg_advisory_xact_lock(
+    hashtext(p_restaurant_id::text),
+    hashtext(v_key)
+  );
+  select result, request_fingerprint
+    into v_stored, v_stored_fingerprint
+  from public.order_send_idempotency
+  where restaurant_id = p_restaurant_id
+    and idempotency_key = v_key;
+  if found then
+    if v_stored_fingerprint is not null
+       and v_stored_fingerprint is distinct from v_fingerprint
+    then
+      raise exception
+        'Bu işlem kimliği farklı bir siparişle kullanılmış.'
+        using errcode = 'P0001';
     end if;
+    return v_stored || jsonb_build_object('idempotent_replay', true);
   end if;
 
   v_result := public.create_table_order_with_print_jobs(
@@ -124,22 +170,27 @@ begin
     p_order_type
   );
 
-  if v_key is not null then
-    insert into public.order_send_idempotency (
-      restaurant_id, idempotency_key, result
-    ) values (
-      p_restaurant_id, v_key, v_result
-    )
-    on conflict (restaurant_id, idempotency_key) do nothing;
+  insert into public.order_send_idempotency (
+    restaurant_id, idempotency_key, request_fingerprint, result
+  ) values (
+    p_restaurant_id, v_key, v_fingerprint, v_result
+  )
+  on conflict (restaurant_id, idempotency_key) do nothing;
 
-    if not found then
-      select result
-        into v_stored
-      from public.order_send_idempotency
-      where restaurant_id = p_restaurant_id
-        and idempotency_key = v_key;
-      return v_stored || jsonb_build_object('idempotent_replay', true);
+  if not found then
+    select result, request_fingerprint
+      into v_stored, v_stored_fingerprint
+    from public.order_send_idempotency
+    where restaurant_id = p_restaurant_id
+      and idempotency_key = v_key;
+    if v_stored_fingerprint is not null
+       and v_stored_fingerprint is distinct from v_fingerprint
+    then
+      raise exception
+        'Bu işlem kimliği farklı bir siparişle kullanılmış.'
+        using errcode = 'P0001';
     end if;
+    return v_stored || jsonb_build_object('idempotent_replay', true);
   end if;
 
   return v_result;
@@ -173,7 +224,9 @@ $$;
 comment on function public.send_table_order_idempotent(
   uuid, integer, jsonb, uuid, text, text, text, text, text
 ) is
-  'Sends a table order for the real caller. The same idempotency key returns the first orders and print_jobs result.';
+  'Sends a table order for the real caller. The same key and payload returns the first result. A different payload with that key is rejected.';
+
+select public.install_waiter_request_single_order_guard();
 
 notify pgrst, 'reload schema';
 

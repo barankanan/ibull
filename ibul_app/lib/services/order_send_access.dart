@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 /// Stable key for one garson send. A retry of that send reuses the key so
@@ -6,6 +7,62 @@ String newOrderSendIdempotencyKey() {
   final now = DateTime.now().toUtc().microsecondsSinceEpoch;
   final salt = Random().nextInt(0x7fffffff);
   return 'send-$now-$salt';
+}
+
+/// Stable identity of one garson send. Trace ids and free-text notes are
+/// excluded so a network retry of the same action keeps the same key.
+String orderSendActionFingerprint({
+  required String restaurantId,
+  required int tableNumber,
+  required String jobType,
+  required List<Map<String, dynamic>> items,
+}) {
+  final canonical = items.map((item) {
+    final keys = item.keys.map((key) => key.toString()).toList()..sort();
+    return <String, dynamic>{for (final key in keys) key: item[key]};
+  }).toList(growable: false);
+  return jsonEncode(<String, dynamic>{
+    'restaurantId': restaurantId.trim(),
+    'tableNumber': tableNumber,
+    'jobType': jobType.trim(),
+    'items': canonical,
+  });
+}
+
+/// Remembers the key for an in-flight action until that action succeeds.
+class OrderSendKeyLedger {
+  final Map<String, String> _keys = <String, String>{};
+
+  String keyFor(String fingerprint, {String Function()? mint}) {
+    final existing = _keys[fingerprint];
+    if (existing != null && existing.isNotEmpty) return existing;
+    final minted = (mint ?? newOrderSendIdempotencyKey)();
+    _keys[fingerprint] = minted;
+    return minted;
+  }
+
+  void remember(String fingerprint, String key) {
+    final normalized = key.trim();
+    if (fingerprint.isEmpty || normalized.isEmpty) return;
+    _keys[fingerprint] = normalized;
+  }
+
+  void complete(String fingerprint) {
+    _keys.remove(fingerprint);
+  }
+}
+
+String resolveOrderSendKey({
+  required OrderSendKeyLedger ledger,
+  required String fingerprint,
+  String? requestedKey,
+}) {
+  final requested = (requestedKey ?? '').trim();
+  if (requested.isNotEmpty) {
+    ledger.remember(fingerprint, requested);
+    return requested;
+  }
+  return ledger.keyFor(fingerprint);
 }
 
 /// RPC arguments for `create_table_order_with_print_jobs`.
@@ -47,6 +104,21 @@ String friendlyOrderSendRpcMessage({
 
   if (combined.contains('sipariş gönderme yetkiniz yok')) {
     return 'Sipariş gönderilemedi. Bu işlem için Siparişleri Yönet veya Tam Erişim yetkisi gerekir.';
+  }
+
+  if (combined.contains('send_table_order_idempotent') &&
+      (combined.contains('could not find') ||
+          combined.contains('does not exist') ||
+          combined.contains('schema cache') ||
+          code == 'PGRST202' ||
+          code == '42883')) {
+    return 'Sipariş gönderilemedi. Sunucu güncellemesi eksik. '
+        'Gönderim durduruldu; ikinci kayıt açılmadı.';
+  }
+
+  if (combined.contains('farklı bir siparişle kullanılmış')) {
+    return 'Bu gönderim anahtarı başka bir siparişle kullanılmış. '
+        'Siparişi yeniden oluşturun.';
   }
 
   if (combined.contains(
