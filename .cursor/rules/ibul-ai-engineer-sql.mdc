@@ -59,6 +59,21 @@ Kontrolü atlama. Güvenlik mekanizmasını kapatma. Production verisini tahminl
 
 PR #9 ve PR #11 main’e alınmadan, onların yayınlanmamış koduna bağlı SQL uygulanmaz. Bağımlılık sırası korunur. `orders.status` ve `print_anchor` canlı CHECK, ENUM ve trigger ile okunmadan PR #9 SQL’i uygulanmaz. `merge_table_bills` canlıda ara ödeme ziyareti, masa durumu ve eşzamanlı kilit doğrulanmadan uygulanmaz.
 
+## Bağlantı yoksa
+
+Kimlik, proje ref’i veya parola uydurma. Secret’ı loga, PR açıklamasına veya kaynağa yazma. `supabase db push` migration geçmişi uyuşmadan çalışmaz.
+
+Cloud Agent’ta Supabase CLI, bağlı proje ve secret yoksa yerel Cursor’da şu sıra kullanılır:
+
+1. Supabase panosunda projenin İBUL production projesi olduğunu adından ve ref’inden doğrula.
+2. Supabase CLI kur. `supabase login` token’ı yalnız yerel kimlik deposunda kalsın.
+3. `ibul_app` içinden `supabase link --project-ref <panodan kopyalanan ref>` çalıştır.
+4. Pano yedeğini veya `supabase db dump --linked` çıktısını yerel PostgreSQL’e geri yükle. Geri yükleme bitmeden migration uygulanmaz. Dump repoya girmez.
+5. `ibul_app/supabase/checks/orders_status_readonly.sql` dosyasını SQL editöründe yalnız SELECT olarak çalıştır.
+6. Dashboard’daki migration listesini depo dosyalarıyla karşılaştır.
+
+Cloud Agent daha sonra bağlanacaksa kimlik Cursor Secrets’a eklenir, sohbete yapıştırılmaz. Uygulama `DATABASE_URL` okumaz; bu ad rezerve olduğu için app secret olarak bağlanmaz.
+
 ## Uygulamadan sonra
 
 - Migration kaydını doğrula.

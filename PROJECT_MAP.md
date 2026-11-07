@@ -629,4 +629,5 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 - Production SQL yetkisi `.cursor/rules/ibul-ai-engineer-sql.mdc` içindedir. Güvenli ve doğrulanmış migration ayrıca izin beklemadan uygulanır. Yedek, canlı şema, yayımlanmış uygulama uyumu veya bağlantı doğrulanamazsa SQL çalışmaz.
 - PR #9 (`cursor/integrate-restaurant-guards-b3a9`) ve PR #11 (`20261107_merge_table_bills.sql`) 7 Kasım 2026 20:34 TR saatinde production’a uygulanmadı. Durum BLOCKED. Canlı projeye güvenli bağlantı yok, geri yüklenebilir yedek doğrulanamadı, iki PR de main’de değil.
+- 7 Kasım 2026 akşamı, Europe/Istanbul: Supabase CLI, proje bağlantısı ve secret hâlâ yok. Toplu `supabase db push` çalıştırılmadı. Yerel bağlantı adımları `.cursor/rules/ibul-ai-engineer-sql.mdc` içindedir. Production SQL durumu BLOCKED kalır.
 
