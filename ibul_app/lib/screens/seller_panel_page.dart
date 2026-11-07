@@ -38599,8 +38599,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         sellerId: widget.sellerId,
         sourceTable: widget.tableNumber,
         targetTable: result.targetTable,
-        waiterId: _currentWaiterId(),
-        waiterName: _currentWaiterName(),
       );
     } catch (error) {
       if (!mounted) return;

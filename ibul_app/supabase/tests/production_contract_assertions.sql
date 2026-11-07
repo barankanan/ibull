@@ -133,7 +133,9 @@ begin
     ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa21', v_owner::text, 21, '[{"price":40}]'::jsonb, 'sent', '2026-11-07 12:00:00+00', '12121212-1212-4121-8121-121212121212'),
     ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa22', v_owner::text, 22, '[{"price":30}]'::jsonb, 'sent', '2026-11-07 12:05:00+00', '13131313-1313-4131-8131-131313131313');
   insert into public.table_payments (seller_id, table_number, session_key, amount, client_request_id, created_at, visit_id)
-  values (v_owner, 21, 'v21', 10, 'pay-21', '2026-11-07 12:10:00+00', '12121212-1212-4121-8121-121212121212');
+  values
+    (v_owner, 21, 'v21', 10, 'pay-21', '2026-11-07 12:10:00+00', '12121212-1212-4121-8121-121212121212'),
+    (v_owner, 21, 'v21-other', 3, 'pay-21-other', '2026-11-07 12:11:00+00', '99999999-9999-4999-8999-999999999999');
   v_merge := public.merge_table_bills(
     v_owner::text, 21, 22,
     '["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa21"]'::jsonb,
@@ -141,6 +143,12 @@ begin
   );
   if (v_merge ->> 'moved_payments')::int <> 1 then
     raise exception 'matching visit payment did not move';
+  end if;
+  if (select table_number from public.table_payments where client_request_id = 'pay-21') <> 22
+     or (select amount from public.table_payments where client_request_id = 'pay-21') <> 10
+     or (select table_number from public.table_payments where client_request_id = 'pay-21-other') <> 21
+     or (select amount from public.table_payments where client_request_id = 'pay-21-other') <> 3 then
+    raise exception 'merge moved a payment from another visit';
   end if;
   if (select visit_id from public.table_orders where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa21')
      is distinct from '12121212-1212-4121-8121-121212121212'::uuid

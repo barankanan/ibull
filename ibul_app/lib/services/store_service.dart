@@ -1716,15 +1716,11 @@ class StoreService {
     required String sellerId,
     required int sourceTable,
     required int targetTable,
-    String? waiterId,
-    String? waiterName,
   }) {
     return _tableService.mergeTableBills(
       sellerId: sellerId,
       sourceTable: sourceTable,
       targetTable: targetTable,
-      waiterId: waiterId,
-      waiterName: waiterName,
     );
   }
 

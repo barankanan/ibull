@@ -97,7 +97,9 @@ begin
   where seller_id::text = new.seller_id::text
     and table_number = new.table_number
     and public.table_order_is_open(status);
-  if v_distinct = 1 and coalesce(v_nulls, 0) = 0 then
+  if new.visit_id is not null then
+    null;
+  elsif v_distinct = 1 and coalesce(v_nulls, 0) = 0 then
     select visit_id into v_visit
     from public.table_orders
     where seller_id::text = new.seller_id::text

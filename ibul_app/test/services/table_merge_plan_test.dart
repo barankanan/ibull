@@ -134,4 +134,21 @@ void main() {
 
     expect(remaining, 4000);
   });
+
+  test('birleştirme hatası ödemenin taşınmadığını söyler', () {
+    expect(
+      friendlyMergeTableBillMessage(
+        code: 'P0001',
+        message: 'Bu masadaki ara ödemenin ziyareti belirsiz. Birleştirme yapılmadı.',
+      ),
+      contains('Ödemeler taşınmadı'),
+    );
+    expect(
+      friendlyMergeTableBillMessage(
+        code: '42501',
+        message: 'Masa aktarma yetkisi yok.',
+      ),
+      contains('yetkiniz yok'),
+    );
+  });
 }

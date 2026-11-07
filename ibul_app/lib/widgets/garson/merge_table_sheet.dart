@@ -89,8 +89,9 @@ class _MergeTableSheetState extends State<MergeTableSheet> {
             const SizedBox(height: 6),
             Text(
               '${widget.sourceLabel} açık adisyonu seçilen masaya taşınır. '
-              'Ürün, adet, not ve fiyat aynı kalır. Alınmış ara ödemeler '
-              'hedef hesaba geçer. Mutfak fişi yeniden basılmaz.',
+              'Ürün, adet, not ve fiyat aynı kalır. Yalnız bu ziyarete bağlı '
+              'ara ödemeler hedef hesaba geçer. Ziyareti belirsiz ödeme varsa '
+              'birleştirme durur. Mutfak fişi yeniden basılmaz.',
             ),
             const SizedBox(height: 12),
             Text(
