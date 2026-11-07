@@ -1,6 +1,32 @@
 -- Production-shaped fixture. Not a connection to the live project.
+--
+-- Differences from production ihmixxzqnpamcwmrfibx, kept on purpose:
+-- - No RLS policies. Production has orders, table_orders, table_payments and
+--   print_jobs policies. These tests check EXECUTE grants and SECURITY DEFINER
+--   permission raises instead.
+-- - restaurant_has_permission treats auth.uid() = seller as the owner.
+--   Production proves the owner through stores.seller_id and matches staff
+--   through auth.users plus branch_id. staff_must_change_password is absent.
+-- - guard_table_payment checks the same permission, client_request_id replay,
+--   session lock and session-scoped remaining. It does not write
+--   restaurant_staff_operation_log and does not check waiter_id = auth.uid().
+-- - restaurant_staff_write_guard covers table_orders table_number changes only.
+--   Production also covers orders, order_items and print_jobs.
+-- - orders money-authority, is_test rejection and print-job duplicate triggers
+--   are not reproduced.
 
 begin;
+
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    create role authenticated;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    create role anon;
+  end if;
+end
+$$;
 
 create schema if not exists auth;
 create or replace function auth.uid() returns uuid language sql stable as $$
@@ -178,6 +204,102 @@ begin
 end;
 $$;
 
+create or replace function public.is_managed_restaurant_staff()
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.store_sub_admins sa
+    join public.users u on u.id = auth.uid()
+    where sa.status = 'active'
+      and lower(btrim(sa.email)) = lower(btrim(u.email))
+  );
+$$;
+
+create or replace function public.guard_table_payment()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_bill numeric := 0;
+  v_paid numeric := 0;
+begin
+  if auth.uid() is null then
+    raise exception 'Yetkisiz istek.' using errcode = '42501';
+  end if;
+  if not public.restaurant_has_permission(new.seller_id, 'takePartialPayment') then
+    raise exception 'Ara ödeme yetkisi yok.' using errcode = '42501';
+  end if;
+  if new.client_request_id is null or btrim(new.client_request_id) = '' then
+    raise exception 'Ödeme isteği kimliği zorunlu.' using errcode = '22023';
+  end if;
+  if exists (
+    select 1 from public.table_payments
+    where seller_id = new.seller_id and client_request_id = new.client_request_id
+  ) then
+    raise exception 'IBUL_PAYMENT_REPLAY' using errcode = 'P0002';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended(
+    new.seller_id::text || ':' || new.table_number::text || ':' || coalesce(new.session_key, ''),
+    0
+  ));
+  select coalesce(sum(
+    coalesce(nullif(item ->> 'line_total', '')::numeric,
+      coalesce(nullif(item ->> 'price', '')::numeric, 0)
+      * coalesce(nullif(item ->> 'quantity', '')::numeric, 1))
+  ), 0)
+    into v_bill
+  from public.table_orders o
+  cross join lateral jsonb_array_elements(coalesce(o.items, '[]'::jsonb)) item
+  where o.seller_id = new.seller_id::text
+    and o.table_number = new.table_number;
+  select coalesce(sum(amount), 0) into v_paid
+  from public.table_payments
+  where seller_id = new.seller_id
+    and table_number = new.table_number
+    and session_key = new.session_key;
+  if round(v_bill - v_paid, 2) <= 0 or new.amount > round(v_bill - v_paid, 2) + 0.009 then
+    raise exception 'Ödeme kalan bakiyeyi aşıyor.' using errcode = '22023';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists guard_table_payment on public.table_payments;
+create trigger guard_table_payment
+  before insert on public.table_payments
+  for each row
+  execute function public.guard_table_payment();
+
+create or replace function public.restaurant_staff_write_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_table_name <> 'table_orders' or not public.is_managed_restaurant_staff() then
+    if tg_op = 'DELETE' then return old; else return new; end if;
+  end if;
+  if tg_op = 'UPDATE'
+     and new.table_number is distinct from old.table_number
+     and not public.restaurant_has_permission(new.seller_id::uuid, 'transferTable') then
+    raise exception 'Masa aktarma yetkisi yok.' using errcode = '42501';
+  end if;
+  if tg_op = 'DELETE' then return old; else return new; end if;
+end;
+$$;
+
+drop trigger if exists restaurant_staff_write_guard on public.table_orders;
+create trigger restaurant_staff_write_guard
+  before update or delete on public.table_orders
+  for each row
+  execute function public.restaurant_staff_write_guard();
+
 create or replace function public.transfer_table_orders(
   p_seller_id text, p_from integer, p_to integer
 ) returns void language plpgsql as $$
@@ -189,6 +311,14 @@ begin
   set table_number = p_to
   where seller_id = p_seller_id and table_number = p_from
     and public.table_order_is_open(status);
+  update public.table_payments
+  set table_number = p_to
+  where seller_id::text = p_seller_id
+    and table_number = p_from
+    and visit_id in (
+      select visit_id from public.table_orders
+      where seller_id = p_seller_id and table_number = p_to and visit_id is not null
+    );
 end;
 $$;
 

@@ -128,6 +128,7 @@ declare
   v_visit uuid;
   v_distinct integer;
   v_nulls integer;
+  v_open_count integer;
 begin
   if tg_op = 'DELETE' then
     perform public.lock_restaurant_table(old.seller_id::text, old.table_number);
@@ -147,18 +148,21 @@ begin
     perform public.lock_restaurant_table(v_seller, new.table_number);
   end if;
   if tg_op = 'INSERT' and public.table_order_is_open(new.status) then
-    select count(distinct visit_id), count(*) filter (where visit_id is null)
-      into v_distinct, v_nulls
+    select count(*),
+           count(*) filter (where visit_id is null),
+           count(distinct visit_id)
+      into v_open_count, v_nulls, v_distinct
     from public.table_orders
     where seller_id::text = v_seller
       and table_number = new.table_number
       and public.table_order_is_open(status);
-    if coalesce(v_distinct, 0) > 1
-       or (coalesce(v_distinct, 0) = 1 and coalesce(v_nulls, 0) > 0) then
-      new.visit_id := null;
-    elsif new.visit_id is not null then
-      null;
-    elsif coalesce(v_distinct, 0) = 1 then
+    if coalesce(v_open_count, 0) = 0 then
+      new.visit_id := coalesce(new.visit_id, gen_random_uuid());
+    elsif coalesce(v_nulls, 0) > 0 or coalesce(v_distinct, 0) > 1 then
+      if coalesce(v_distinct, 0) > 0 then
+        new.visit_id := null;
+      end if;
+    elsif coalesce(v_distinct, 0) = 1 and new.visit_id is null then
       select visit_id into v_visit
       from public.table_orders
       where seller_id::text = v_seller
@@ -166,15 +170,6 @@ begin
         and public.table_order_is_open(status)
         and visit_id is not null
       limit 1;
-      new.visit_id := v_visit;
-    else
-      v_visit := gen_random_uuid();
-      update public.table_orders
-      set visit_id = v_visit
-      where seller_id::text = v_seller
-        and table_number = new.table_number
-        and public.table_order_is_open(status)
-        and visit_id is null;
       new.visit_id := v_visit;
     end if;
   end if;
@@ -208,7 +203,21 @@ declare
   v_local text := nullif(btrim(coalesce(p_local_order_id, '')), '');
   v_existing uuid;
   v_jobs jsonb;
+  v_allowed boolean;
 begin
+  if auth.uid() is null then
+    raise exception 'Yetkisiz istek.' using errcode = '42501';
+  end if;
+  begin
+    v_allowed := public.restaurant_has_permission(p_restaurant_id, 'manageOrders');
+  exception
+    when others then
+      raise exception 'Sipariş yetkisi doğrulanamadı.' using errcode = '42501';
+  end;
+  if v_allowed is not true then
+    raise exception 'Sipariş gönderme yetkisi yok.' using errcode = '42501';
+  end if;
+
   if v_local is not null then
     select id into v_existing
     from public.orders
@@ -278,17 +287,24 @@ declare
   v_moved_payments integer := 0;
   v_low integer;
   v_high integer;
+  v_allowed boolean;
 begin
+  if auth.uid() is null then
+    raise exception 'Yetkisiz istek.' using errcode = '42501';
+  end if;
   if v_seller = '' or p_source_table is null or p_target_table is null
      or p_source_table <= 0 or p_target_table <= 0
      or p_source_table = p_target_table then
     raise exception 'Kaynak ve hedef masa geçersiz.';
   end if;
-  if to_regprocedure('public.restaurant_has_permission(uuid,text)') is not null then
-    if auth.uid() is distinct from v_seller::uuid
-       and not public.restaurant_has_permission(v_seller::uuid, 'transferTable') then
-      raise exception 'Masa aktarma yetkisi yok.' using errcode = '42501';
-    end if;
+  begin
+    v_allowed := public.restaurant_has_permission(v_seller::uuid, 'transferTable');
+  exception
+    when others then
+      raise exception 'Masa birleştirme yetkisi doğrulanamadı.' using errcode = '42501';
+  end;
+  if v_allowed is not true then
+    raise exception 'Masa aktarma yetkisi yok.' using errcode = '42501';
   end if;
 
   if p_source_table < p_target_table then
@@ -396,6 +412,28 @@ $$;
 
 comment on function public.merge_table_bills(text, integer, integer, jsonb, jsonb) is
   'Moves one proven visit onto another table. Does not invent visit_id and does not collapse multiple visits.';
+
+revoke all on function public.create_table_order_with_print_jobs(
+  uuid, integer, jsonb, uuid, text, text, text, text, text
+) from public;
+revoke all on function public.merge_table_bills(text, integer, integer, jsonb, jsonb) from public;
+
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke all on function public.create_table_order_with_print_jobs(
+      uuid, integer, jsonb, uuid, text, text, text, text, text
+    ) from anon;
+    revoke all on function public.merge_table_bills(text, integer, integer, jsonb, jsonb) from anon;
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    grant execute on function public.create_table_order_with_print_jobs(
+      uuid, integer, jsonb, uuid, text, text, text, text, text
+    ) to authenticated;
+    grant execute on function public.merge_table_bills(text, integer, integer, jsonb, jsonb) to authenticated;
+  end if;
+end
+$$;
 
 notify pgrst, 'reload schema';
 

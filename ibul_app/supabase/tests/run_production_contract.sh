@@ -52,10 +52,35 @@ if [[ "$code_m" -ne 0 ]]; then
   cat /tmp/contract_merge.out /tmp/contract_pay.out >&2
   exit 1
 fi
-left="$($PSQL -d "$DB" -tAc "select (select count(*) from public.table_orders where table_number=51 and public.table_order_is_open(status))::text || ' ' || (select count(*) from public.table_payments where table_number=51 and visit_id='51515151-5151-4151-8151-515151515151')::text")"
-if [[ "$left" != "0 0" ]]; then
-  echo "payment/merge left source rows: $left" >&2
-  cat /tmp/contract_pay.out >&2
+pay_table="$($PSQL -d "$DB" -tAc "select coalesce((select table_number::text from public.table_payments where client_request_id='pay-race-51'), 'none')")"
+source_open="$($PSQL -d "$DB" -tAc "select count(*) from public.table_orders where table_number=51 and public.table_order_is_open(status)")"
+if [[ "$source_open" != "0" ]]; then
+  echo "source table stayed open: $source_open" >&2
   exit 1
 fi
+if [[ "$code_p" -eq 0 && "$pay_table" != "52" ]]; then
+  echo "payment succeeded but landed on table $pay_table" >&2
+  exit 1
+fi
+if [[ "$code_p" -ne 0 && "$pay_table" != "none" ]]; then
+  echo "payment failed but left a row on table $pay_table" >&2
+  exit 1
+fi
+
+$PSQL -d "$DB" -v ON_ERROR_STOP=1 <<'SQL'
+do $$
+begin
+  begin
+    execute 'set local role anon';
+    perform public.create_table_order_with_print_jobs(
+      '11111111-1111-4111-8111-111111111111'::uuid, 1, '[]'::jsonb,
+      null, null, 'anon', 'new_order', 'table', 'anon-local'
+    );
+    raise exception 'anon executed the print rpc';
+  exception when insufficient_privilege then
+    null;
+  end;
+end
+$$;
+SQL
 echo PRODUCTION_CONTRACT_OK

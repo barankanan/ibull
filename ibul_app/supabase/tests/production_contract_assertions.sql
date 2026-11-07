@@ -45,6 +45,17 @@ begin
   end if;
 
   perform set_config('request.jwt.claim.sub', '44444444-4444-4444-8444-444444444444', true);
+  begin
+    perform public.create_table_order_with_print_jobs(
+      v_owner, 4, '[]'::jsonb, null, null, 'ilk', 'new_order', 'table', 'local-1'
+    );
+    raise exception 'view-only replay should have failed';
+  exception when insufficient_privilege then
+    null;
+  end;
+  if (select count(*) from public.orders where local_order_id = 'local-1') <> 1 then
+    raise exception 'unauthorized replay changed orders';
+  end if;
   insert into public.table_orders (id, seller_id, table_number, items, status, created_at, visit_id)
   values (
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', v_owner::text, 4,
@@ -80,16 +91,40 @@ begin
     raise exception 'payment request was stored twice';
   end if;
 
-  perform set_config('request.jwt.claim.sub', '66666666-6666-4666-8666-666666666666', true);
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
   insert into public.table_orders (id, seller_id, table_number, items, status, created_at, visit_id)
   values (
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8', v_owner::text, 8,
-    '[]'::jsonb, 'sent', now(), 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb8'
+    '[{"price":20}]'::jsonb, 'sent', now(), 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb8'
   );
+  insert into public.table_payments (
+    seller_id, table_number, session_key, amount, client_request_id, visit_id
+  ) values
+    (v_owner, 8, 'move-visit', 4, 'pay-move-visit', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb8'),
+    (v_owner, 8, 'move-old', 4, 'pay-move-old', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb8');
+  update public.table_payments
+  set visit_id = null
+  where client_request_id = 'pay-move-old';
+  perform set_config('request.jwt.claim.sub', '66666666-6666-4666-8666-666666666666', true);
   perform public.transfer_table_orders(v_owner::text, 8, 9);
   if (select table_number from public.table_orders
+      where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8') <> 9
+     or (select table_number from public.table_payments where client_request_id = 'pay-move-visit') <> 9
+     or (select table_number from public.table_payments where client_request_id = 'pay-move-old') <> 8 then
+    raise exception 'transfer moved the wrong payment';
+  end if;
+  perform set_config('request.jwt.claim.sub', '44444444-4444-4444-8444-444444444444', true);
+  begin
+    perform public.merge_table_bills(
+      v_owner::text, 9, 10, '["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8"]'::jsonb, '[]'::jsonb
+    );
+    raise exception 'view-only merge should have failed';
+  exception when insufficient_privilege then
+    null;
+  end;
+  if (select table_number from public.table_orders
       where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8') <> 9 then
-    raise exception 'transfer did not move the order';
+    raise exception 'unauthorized merge moved the order';
   end if;
 
   perform set_config('request.jwt.claim.sub', v_owner::text, true);
@@ -149,6 +184,46 @@ begin
     if sqlerrm not like '%belirsiz ziyaret%' and sqlerrm not like '%birden fazla%' then
       raise;
     end if;
+  end;
+
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
+  insert into public.table_orders (id, seller_id, table_number, items, status, created_at, visit_id)
+  values (
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa70', v_owner::text, 70,
+    '[]'::jsonb, 'sent', now(), null
+  );
+  update public.table_orders
+  set visit_id = null
+  where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa70';
+  insert into public.table_orders (id, seller_id, table_number, items, status, created_at)
+  values (
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa71', v_owner::text, 70,
+    '[]'::jsonb, 'sent', now()
+  );
+  if (select visit_id from public.table_orders
+      where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa70') is not null then
+    raise exception 'new order stamped a visit onto the old open bill';
+  end if;
+
+  alter function public.restaurant_has_permission(uuid, text)
+    rename to restaurant_has_permission_hidden;
+  begin
+    begin
+      perform public.merge_table_bills(
+        v_owner::text, 9, 10,
+        '["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8"]'::jsonb,
+        '[]'::jsonb
+      );
+      raise exception 'missing permission function allowed merge';
+    exception when insufficient_privilege then
+      null;
+    end;
+    alter function public.restaurant_has_permission_hidden(uuid, text)
+      rename to restaurant_has_permission;
+  exception when others then
+    alter function public.restaurant_has_permission_hidden(uuid, text)
+      rename to restaurant_has_permission;
+    raise;
   end;
 end
 $$;
