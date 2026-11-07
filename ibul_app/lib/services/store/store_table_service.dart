@@ -124,15 +124,6 @@ class StoreTableService {
             details.contains('check'));
   }
 
-  bool _isTableOrderPermissionError(PostgrestException error) {
-    return isTableOperationPermissionDenied(
-      code: error.code,
-      message: error.message,
-      details: error.details?.toString(),
-      hint: error.hint,
-    );
-  }
-
   bool _shouldFallbackToDirectTableWrite(PostgrestException error) {
     return shouldFallbackToDirectTableWrite(
       code: error.code,

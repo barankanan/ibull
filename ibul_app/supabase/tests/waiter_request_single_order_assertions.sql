@@ -77,13 +77,13 @@ begin
   select count(*) into v_open
   from public.orders
   where notes like 'waiter_request:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2%'
-    and status is distinct from 'cancelled';
+    and status is distinct from 'print_anchor';
 
   select count(*) into v_cancelled
   from public.orders
   where notes like 'waiter_request:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2%'
-    and status = 'cancelled'
-    and order_status = 'cancelled';
+    and status = 'print_anchor'
+    and order_status = 'print_anchor';
 
   select count(*) into v_jobs
   from public.print_jobs pj
@@ -352,7 +352,7 @@ begin
   where order_id = (v_result ->> 'order_id')::uuid
     and status = 'pending';
 
-  if v_number <> 'TBL-REPLACED' or v_status <> 'cancelled' or v_jobs <> 1 then
+  if v_number <> 'TBL-REPLACED' or v_status <> 'print_anchor' or v_jobs <> 1 then
     raise exception
       'yeni gövde sarmalanmadı number=% status=% jobs=% result=%',
       v_number, v_status, v_jobs, v_result;
@@ -443,7 +443,7 @@ begin
     and status = 'pending';
 
   if v_number <> 'TBL-REPLACED'
-     or v_status <> 'cancelled'
+     or v_status <> 'print_anchor'
      or v_jobs <> 1
      or coalesce((v_result ->> 'waiter_request_order_suppressed')::boolean, false) is not true then
     raise exception

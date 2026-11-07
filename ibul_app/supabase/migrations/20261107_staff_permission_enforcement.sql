@@ -11,6 +11,10 @@
 -- the insert trigger allows that grant. Direct inserts stay owner-only via
 -- the existing table_payments policy.
 --
+-- This migration does not drop or replace guard_table_payment or
+-- trg_guard_table_payment. That existing BEFORE INSERT trigger remains the
+-- overpayment cap. The trigger added here only checks who may collect.
+--
 -- Do not apply this file to production from automation.
 -- =============================================================================
 

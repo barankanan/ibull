@@ -184,7 +184,7 @@ begin
       and o.table_number = p_table_number
       and lower(coalesce(o.status, '')) not in (
         'closed', 'paid', 'cancelled', 'canceled', 'completed', 'complete',
-        'completed_payment', 'payment_completed', 'archived'
+        'completed_payment', 'payment_completed', 'archived', 'print_anchor'
       )
   )
   into v_has_table_orders;
@@ -205,7 +205,7 @@ begin
       and o.table_number = p_table_number
       and lower(coalesce(o.status, '')) not in (
         'closed', 'paid', 'cancelled', 'canceled', 'completed', 'complete',
-        'completed_payment', 'payment_completed', 'archived'
+        'completed_payment', 'payment_completed', 'archived', 'print_anchor'
       );
 
     if v_opened is null then
@@ -216,7 +216,7 @@ begin
         and o.table_number = p_table_number
         and lower(coalesce(o.status, '')) not in (
           'closed', 'paid', 'cancelled', 'canceled', 'completed', 'complete',
-          'completed_payment', 'payment_completed', 'archived'
+          'completed_payment', 'payment_completed', 'archived', 'print_anchor'
         );
     end if;
   elsif to_regclass('public.orders') is not null
@@ -286,7 +286,8 @@ begin
          and %s
          and lower(coalesce(ord.status, '''')) not in (
            ''closed'', ''paid'', ''cancelled'', ''canceled'', ''completed'',
-           ''complete'', ''completed_payment'', ''payment_completed'', ''archived''
+           ''complete'', ''completed_payment'', ''payment_completed'', ''archived'',
+           ''print_anchor''
          )',
       v_money_expr,
       v_type_clause

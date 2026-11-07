@@ -12,6 +12,14 @@
 -- write on table_orders. Run install_table_operation_staff_wrappers() again
 -- after transfer_table_orders_v2 is created so that function is wrapped too.
 --
+-- The wrapper does not copy the seller id into request.jwt.claim.sub. That
+-- setting is auth.uid() for the rest of the transaction, so impersonation
+-- would let later triggers and writes treat the staff member as the owner.
+-- After the real grant check, the wrapper sets ibul.verified_order_seller.
+-- Legacy owner-only predicates accept that verified seller while auth.uid()
+-- stays the caller. Direct execution of the inner body is revoked, so a
+-- caller cannot set the grant and skip the wrapper.
+--
 -- Do not apply this file to production from automation.
 -- =============================================================================
 
@@ -152,6 +160,54 @@ begin
 end;
 $$;
 
+create or replace function public.rewrite_legacy_owner_order_guard(
+  p_impl regprocedure
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_def text := pg_get_functiondef(p_impl);
+  v_next text;
+begin
+  if v_def is null or position('ibul.verified_order_seller' in v_def) > 0 then
+    return;
+  end if;
+
+  v_next := v_def;
+  v_next := regexp_replace(
+    v_next,
+    'if\s+p_seller_id\s+is\s+distinct\s+from\s+auth\.uid\(\)\s+then',
+    'if p_seller_id is distinct from auth.uid() and coalesce(current_setting(''ibul.verified_order_seller'', true), '''') is distinct from p_seller_id::text then',
+    'gi'
+  );
+  v_next := regexp_replace(
+    v_next,
+    'if\s+p_seller_id\s*<>\s*auth\.uid\(\)\s+then',
+    'if p_seller_id <> auth.uid() and coalesce(current_setting(''ibul.verified_order_seller'', true), '''') is distinct from p_seller_id::text then',
+    'gi'
+  );
+  v_next := regexp_replace(
+    v_next,
+    'if\s+auth\.uid\(\)\s*<>\s*p_seller_id\s+then',
+    'if auth.uid() <> p_seller_id and coalesce(current_setting(''ibul.verified_order_seller'', true), '''') is distinct from p_seller_id::text then',
+    'gi'
+  );
+  v_next := regexp_replace(
+    v_next,
+    'if\s+auth\.uid\(\)\s+is\s+distinct\s+from\s+p_seller_id(\s+and\s+)',
+    'if auth.uid() is distinct from p_seller_id and coalesce(current_setting(''ibul.verified_order_seller'', true), '''') is distinct from p_seller_id::text\1',
+    'gi'
+  );
+
+  if v_next is distinct from v_def then
+    execute v_next;
+  end if;
+end;
+$$;
+
 create or replace function public.install_table_operation_staff_wrappers()
 returns void
 language plpgsql
@@ -224,12 +280,17 @@ begin
       raise exception 'Masa işlem sarmalayıcısı kurulamadı: %', v_spec.fn_name;
     end if;
 
+    perform public.rewrite_legacy_owner_order_guard(v_impl);
+    v_impl := to_regprocedure(
+      format('public.%I(%s)', v_impl_name, v_spec.fn_types)
+    );
+
     select pg_get_function_result(v_impl)
     into v_result;
 
     if lower(v_result) = 'void' then
       v_statement := format(
-        'create or replace function public.%I(%s) returns void language plpgsql security definer set search_path = public as $body$ begin if coalesce(current_setting(''request.jwt.claim.role'', true), '''') <> ''service_role'' and not public.user_can_manage_restaurant_orders(p_seller_id) then raise exception ''Bu restoran için masa işlemi yetkiniz yok.'' using errcode = ''42501''; end if; perform set_config(''request.jwt.claim.sub'', p_seller_id::text, true); perform public.%I(%s); end $body$;',
+        'create or replace function public.%I(%s) returns void language plpgsql security definer set search_path = public as $body$ begin if coalesce(current_setting(''request.jwt.claim.role'', true), '''') <> ''service_role'' and not public.user_can_manage_restaurant_orders(p_seller_id) then raise exception ''Bu restoran için masa işlemi yetkiniz yok.'' using errcode = ''42501''; end if; perform set_config(''ibul.verified_order_seller'', p_seller_id::text, true); perform public.%I(%s); end $body$;',
         v_spec.fn_name,
         v_spec.fn_args,
         v_impl_name,
@@ -237,7 +298,7 @@ begin
       );
     else
       v_statement := format(
-        'create or replace function public.%I(%s) returns %s language plpgsql security definer set search_path = public as $body$ begin if coalesce(current_setting(''request.jwt.claim.role'', true), '''') <> ''service_role'' and not public.user_can_manage_restaurant_orders(p_seller_id) then raise exception ''Bu restoran için masa işlemi yetkiniz yok.'' using errcode = ''42501''; end if; perform set_config(''request.jwt.claim.sub'', p_seller_id::text, true); return public.%I(%s); end $body$;',
+        'create or replace function public.%I(%s) returns %s language plpgsql security definer set search_path = public as $body$ begin if coalesce(current_setting(''request.jwt.claim.role'', true), '''') <> ''service_role'' and not public.user_can_manage_restaurant_orders(p_seller_id) then raise exception ''Bu restoran için masa işlemi yetkiniz yok.'' using errcode = ''42501''; end if; perform set_config(''ibul.verified_order_seller'', p_seller_id::text, true); return public.%I(%s); end $body$;',
         v_spec.fn_name,
         v_spec.fn_args,
         v_result,
@@ -311,6 +372,7 @@ $$;
 revoke all on function public.normalize_staff_permission(text) from public;
 revoke all on function public.user_can_manage_restaurant_orders(uuid) from public;
 revoke all on function public.guard_table_order_close_or_transfer() from public;
+revoke all on function public.rewrite_legacy_owner_order_guard(regprocedure) from public;
 revoke all on function public.install_table_operation_staff_wrappers() from public;
 
 do $$

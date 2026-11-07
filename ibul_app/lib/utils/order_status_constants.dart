@@ -23,6 +23,7 @@ class OrderStatusConstants {
     'completed_payment',
     'payment_completed',
     'archived',
+    'print_anchor',
   };
 
   static const Set<String> _cancelledStatuses = <String>{

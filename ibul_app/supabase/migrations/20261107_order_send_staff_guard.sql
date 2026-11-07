@@ -131,39 +131,61 @@ begin
     v_public_def := '';
   end if;
 
+  if v_public is not null
+     and position(
+       'create_table_order_with_print_jobs_request_body(' in v_public_def
+     ) > 0
+     and v_body is not null
+  then
+    raise exception
+      'Sipariş gönderme sarmalayıcısı yazdırma gövdesini silmeden kurulamadı.';
+  end if;
+
   if v_public is null
      or position('create_table_order_with_print_jobs_staff_body' in v_public_def) = 0
   then
-    if v_body is not null then
-      execute format(
-        'alter function public.create_table_order_with_print_jobs_staff_body(%s) rename to create_table_order_with_print_jobs_staff_body_prev',
-        v_signature
-      );
-    end if;
-
-    if v_public is not null then
+    if v_public is not null
+       and position(
+         'create_table_order_with_print_jobs_request_body(' in v_public_def
+       ) > 0
+       and v_body is null
+    then
       execute format(
         'alter function public.create_table_order_with_print_jobs(%s) rename to create_table_order_with_print_jobs_staff_body',
         v_signature
       );
-    elsif v_body is not null then
-      execute format(
-        'alter function public.create_table_order_with_print_jobs_staff_body_prev(%s) rename to create_table_order_with_print_jobs_staff_body',
-        v_signature
-      );
-    end if;
+    else
+      if v_body is not null then
+        execute format(
+          'alter function public.create_table_order_with_print_jobs_staff_body(%s) rename to create_table_order_with_print_jobs_staff_body_prev',
+          v_signature
+        );
+      end if;
 
-    v_prev := to_regprocedure(
-      format(
-        'public.create_table_order_with_print_jobs_staff_body_prev(%s)',
-        v_signature
-      )
-    );
-    if v_prev is not null then
-      execute format(
-        'drop function public.create_table_order_with_print_jobs_staff_body_prev(%s)',
-        v_signature
+      if v_public is not null then
+        execute format(
+          'alter function public.create_table_order_with_print_jobs(%s) rename to create_table_order_with_print_jobs_staff_body',
+          v_signature
+        );
+      elsif v_body is not null then
+        execute format(
+          'alter function public.create_table_order_with_print_jobs_staff_body_prev(%s) rename to create_table_order_with_print_jobs_staff_body',
+          v_signature
+        );
+      end if;
+
+      v_prev := to_regprocedure(
+        format(
+          'public.create_table_order_with_print_jobs_staff_body_prev(%s)',
+          v_signature
+        )
       );
+      if v_prev is not null then
+        execute format(
+          'drop function public.create_table_order_with_print_jobs_staff_body_prev(%s)',
+          v_signature
+        );
+      end if;
     end if;
   end if;
 

@@ -103,7 +103,9 @@ bool _garsonIsTerminalVisibilityStatus(String? status) {
       normalized == 'completed' ||
       normalized == 'complete' ||
       normalized == 'completed_payment' ||
-      normalized == 'payment_completed';
+      normalized == 'payment_completed' ||
+      normalized == 'archived' ||
+      normalized == 'print_anchor';
 }
 
 Map<String, dynamic> _hydrateIncomingOrderWithVisibleBinding({

@@ -66,13 +66,36 @@ $$;
 select pg_temp.assert_status('owner closes with history', 1, 'archived');
 
 do $$
+declare
+  v_actor text;
 begin
   perform set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
   perform set_config('request.jwt.claim.role', 'authenticated', true);
   perform public.close_table_with_history('11111111-1111-1111-1111-111111111111', 2);
+  v_actor := current_setting('request.jwt.claim.sub', true);
+  if v_actor is distinct from '22222222-2222-2222-2222-222222222222' then
+    raise exception 'ASSERT FAIL staff identity became %', v_actor;
+  end if;
 end
 $$;
 select pg_temp.assert_status('manageOrders closes owner-only history rpc', 2, 'archived');
+
+do $$
+declare
+  v_wrapper text;
+begin
+  v_wrapper := pg_get_functiondef(
+    'public.close_table_with_history(uuid,integer,text,text,uuid,text,text)'::regprocedure
+  );
+  if position('request.jwt.claim.sub' in v_wrapper) > 0 then
+    raise exception 'ASSERT FAIL close wrapper still impersonates the owner';
+  end if;
+  if position('ibul.verified_order_seller' in v_wrapper) = 0 then
+    raise exception 'ASSERT FAIL close wrapper lost the verified-seller grant';
+  end if;
+  raise notice 'PASS staff identity stays the caller';
+end
+$$;
 
 do $$
 begin

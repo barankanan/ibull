@@ -13,9 +13,16 @@
 -- RPC body. It renames the current public print function to
 -- create_table_order_with_print_jobs_request_body and calls it unchanged.
 -- Only a new_order whose notes start with waiter_request: (the marker the
--- approval body already writes) is then marked cancelled. The orders row is
--- kept: print_jobs.order_id references it and deleting the row would cascade
--- the kitchen ticket. Direct garson sends do not use that note prefix.
+-- approval body already writes) is then marked print_anchor. That is not a
+-- customer cancellation: stock return, cancellation reports, payment
+-- reversal, and kitchen void triggers key off status cancelled and do not
+-- run. The orders row is kept: print_jobs.order_id references it and
+-- deleting the row would cascade the kitchen ticket. The print job id is
+-- unchanged. Direct garson sends do not use that note prefix.
+--
+-- If the staff-permission wrapper is already the public function, this guard
+-- is installed under create_table_order_with_print_jobs_staff_body. Reinstall
+-- does not rename that wrapper onto the print body.
 --
 -- Existing rows are not updated. If a later migration replaces the public
 -- function, run:
@@ -40,7 +47,12 @@ declare
   v_public_def text;
   v_role text;
   v_guard_call constant text := ':= public.create_table_order_with_print_jobs_request_body(';
+  v_staff_call constant text := 'create_table_order_with_print_jobs_staff_body(';
   v_guard_in_use boolean := false;
+  v_staff regprocedure;
+  v_staff_def text := '';
+  v_target text := 'create_table_order_with_print_jobs';
+  v_wrapper text;
 begin
   v_public := to_regprocedure(
     format('public.create_table_order_with_print_jobs(%s)', v_signature)
@@ -74,15 +86,38 @@ begin
   )
   into v_guard_in_use;
 
-  -- A later permission wrapper may sit outside this guard. Re-running must
-  -- not rename that wrapper onto the print body and drop the body.
+  v_staff := to_regprocedure(
+    format(
+      'public.create_table_order_with_print_jobs_staff_body(%s)',
+      v_signature
+    )
+  );
+  if v_staff is not null then
+    v_staff_def := pg_get_functiondef(v_staff);
+  end if;
+
+  -- A permission or outer wrapper calls staff_body. Put this guard on that
+  -- name so the public function is not renamed onto the print leaf.
   if v_public is not null
+     and position(v_staff_call in v_public_def) > 0
+     and position(v_guard_call in v_public_def) = 0
+  then
+    v_target := 'create_table_order_with_print_jobs_staff_body';
+    if v_staff is not null and position(v_guard_call in v_staff_def) = 0 then
+      if v_body is not null then
+        raise exception
+          'Garson isteği tek kayıt sarmalayıcısı yazdırma gövdesini silmeden kurulamadı.';
+      end if;
+      execute format(
+        'alter function public.create_table_order_with_print_jobs_staff_body(%s) rename to create_table_order_with_print_jobs_request_body',
+        v_signature
+      );
+    end if;
+  elsif v_public is not null
      and position(v_guard_call in v_public_def) = 0
      and v_guard_in_use then
     return;
-  end if;
-
-  if v_public is null
+  elsif v_public is null
      or position(v_guard_call in v_public_def) = 0
   then
     if v_body is not null then
@@ -128,8 +163,8 @@ begin
     raise exception 'Garson isteği tek kayıt sarmalayıcısı kurulamadı.';
   end if;
 
-  execute $waiter_request_wrapper$
-    create or replace function public.create_table_order_with_print_jobs(
+  v_wrapper := $waiter_request_wrapper$
+    create or replace function public.waiter_request_guard_target(
       p_restaurant_id uuid,
       p_table_number integer,
       p_items jsonb,
@@ -173,10 +208,12 @@ begin
         if v_order_id is not null then
           update public.orders
           set
-            status = 'cancelled',
-            order_status = 'cancelled'
+            status = 'print_anchor',
+            order_status = 'print_anchor'
           where id = v_order_id
-            and coalesce(notes, '') like 'waiter_request:%';
+            and coalesce(notes, '') like 'waiter_request:%'
+            and status is distinct from 'cancelled'
+            and status is distinct from 'canceled';
           get diagnostics v_updated = row_count;
           if v_updated > 0 then
             v_result := v_result || jsonb_build_object(
@@ -190,6 +227,11 @@ begin
     end;
     $fn$;
   $waiter_request_wrapper$;
+  execute replace(
+    v_wrapper,
+    'public.waiter_request_guard_target',
+    format('public.%I', v_target)
+  );
 
   execute format(
     'revoke all on function public.create_table_order_with_print_jobs_request_body(%s) from public',
@@ -199,6 +241,17 @@ begin
     'revoke all on function public.create_table_order_with_print_jobs(%s) from public',
     v_signature
   );
+  if to_regprocedure(
+    format(
+      'public.create_table_order_with_print_jobs_staff_body(%s)',
+      v_signature
+    )
+  ) is not null then
+    execute format(
+      'revoke all on function public.create_table_order_with_print_jobs_staff_body(%s) from public',
+      v_signature
+    );
+  end if;
 
   foreach v_role in array array['anon', 'authenticated', 'service_role']
   loop
@@ -208,6 +261,18 @@ begin
         v_signature,
         v_role
       );
+      if to_regprocedure(
+        format(
+          'public.create_table_order_with_print_jobs_staff_body(%s)',
+          v_signature
+        )
+      ) is not null then
+        execute format(
+          'revoke all on function public.create_table_order_with_print_jobs_staff_body(%s) from %I',
+          v_signature,
+          v_role
+        );
+      end if;
       execute format(
         'revoke all on function public.create_table_order_with_print_jobs(%s) from %I',
         v_signature,
@@ -246,7 +311,7 @@ select public.install_waiter_request_single_order_guard();
 comment on function public.create_table_order_with_print_jobs(
   uuid, integer, jsonb, uuid, text, text, text, text
 ) is
-  'Keeps the previous print body. A new_order noted waiter_request: stays one open table bill; the print anchor order is cancelled and its kitchen ticket is kept.';
+  'Keeps the previous print body. A new_order noted waiter_request: stays one open table bill; the print anchor is print_anchor, not cancelled, and its kitchen ticket is kept.';
 
 notify pgrst, 'reload schema';
 

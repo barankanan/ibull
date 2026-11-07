@@ -184,3 +184,11 @@ comment on function public.transfer_table_orders_v2(
   uuid, integer, integer, text, jsonb, uuid, text, text
 ) is
   'Moves a full table or selected lines. Does not insert an empty order.';
+
+do $$
+begin
+  if to_regprocedure('public.install_table_operation_staff_wrappers()') is not null then
+    perform public.install_table_operation_staff_wrappers();
+  end if;
+end
+$$;

@@ -277,8 +277,8 @@ void main() {
           'id': 'print-anchor',
           'restaurant_id': 'rest-1',
           'table_id': 'table-4',
-          'status': 'cancelled',
-          'order_status': 'cancelled',
+          'status': 'print_anchor',
+          'order_status': 'print_anchor',
           'order_type': 'table',
           'notes': 'waiter_request:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
         },
@@ -288,6 +288,7 @@ void main() {
         storeTable: table,
       );
       expect(hidden, isNull);
+      expect(isGarsonActiveOrderStatus('print_anchor'), isFalse);
       expect(isGarsonActiveOrderStatus('cancelled'), isFalse);
     });
 
