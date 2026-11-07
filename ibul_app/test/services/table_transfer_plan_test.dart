@@ -95,4 +95,40 @@ void main() {
     expect(plan.movedLineIds, <String>['order-1#0']);
     expect(plan.mutations.single.destinationItems!.single['name'], 'Çay');
   });
+
+  test('full transfer clears the source bill', () {
+    final plan = planTableTransfer(
+      orders: orders,
+      toTable: 9,
+      transferType: 'full',
+    );
+
+    expect(transferClearsSourceTable(plan: plan, orders: orders), isTrue);
+  });
+
+  test('a line left on the source does not clear the kitchen row', () {
+    final plan = planTableTransfer(
+      orders: orders,
+      toTable: 9,
+      transferType: 'partial',
+      selectedLineIds: const <String>['order-1#0'],
+    );
+
+    expect(transferClearsSourceTable(plan: plan, orders: orders), isFalse);
+    expect(
+      RestaurantOrderLeftOnSourceException.message,
+      contains('yeniden göndermeyin'),
+    );
+  });
+
+  test('moving every selected line clears the source bill', () {
+    final plan = planTableTransfer(
+      orders: orders,
+      toTable: 9,
+      transferType: 'partial',
+      selectedLineIds: const <String>['order-1#0', 'order-1#1'],
+    );
+
+    expect(transferClearsSourceTable(plan: plan, orders: orders), isTrue);
+  });
 }

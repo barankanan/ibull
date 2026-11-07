@@ -604,6 +604,13 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 # Update Log
 
+## 2026-11-07 — yanlış masa
+
+- Tam masa aktarımı `table_orders` satırını taşır, `orders.table_id` eski masada kalırsa tahta siparişi eski masada yeniden gösterir. Düzeltmek için siparişi yeniden göndermek ikinci `orders` satırı ve ikinci mutfak fişi açar.
+- `follow_restaurant_orders_on_table_move` mevcut mutfak satırının `table_id` değerini hedef masaya yazar. Yeni sipariş eklemez. `print_jobs` satırı eklemez ve işin durumunu değiştirmez. Yalnızca hâlâ `pending` olan fişin masa etiketini günceller. Basılmış fiş olduğu gibi kalır.
+- Kaynak masada açık adisyon satırı duruyorsa mutfak kaydı taşınmaz. Kapalı sipariş, teslimat siparişi ve başka işletmenin kaydı taşınmaz.
+- Migration `ibul_app/supabase/migrations/20261107_follow_orders_on_table_move.sql` production'a uygulanmadı. Uygulanmadan personel oturumunda mutfak satırı RLS nedeniyle eski masada kalabilir. İstemci bu durumda yeniden göndermeyi söylemez.
+
 ## 2026-11-07
 
 - Personel yetkisi: `fullAccess` (Tam Erişim) sayfa işlemlerini kapsar, personel yönetimini kapsamaz. Tahsilat, işletme sahibi veya aktif `manageOrders` / Tam Erişim kaydı olmadan yazılamaz. Personel kendi yetki satırını yükseltemez; davet yalnızca durum olarak aktifleşir.
