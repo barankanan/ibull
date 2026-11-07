@@ -4,7 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/constants.dart';
+import '../../services/bill_edit_access.dart';
 import '../../services/waiter_order_request_service.dart';
+
+String _waiterDecisionError(Object error, String fallback) {
+  final friendly = friendlyWaiterRequestDecisionMessage(
+    message: error.toString(),
+  );
+  if (friendly != null) return friendly;
+  return '$fallback: $error';
+}
 
 /// Garson modülünde bekleyen (doğrulanmamış QR) müşteri istekleri.
 class WaiterOrderRequestsBanner extends StatelessWidget {
@@ -55,7 +64,7 @@ class _RequestCard extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Onay başarısız: $e'),
+            content: Text(_waiterDecisionError(e, 'Onay başarısız')),
             backgroundColor: Colors.red,
           ),
         );
@@ -106,7 +115,7 @@ class _RequestCard extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Red başarısız: $e'),
+            content: Text(_waiterDecisionError(e, 'Red başarısız')),
             backgroundColor: Colors.red,
           ),
         );
@@ -222,7 +231,7 @@ class _RequestCard extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Onay başarısız: $e'),
+            content: Text(_waiterDecisionError(e, 'Onay başarısız')),
             backgroundColor: Colors.red,
           ),
         );
