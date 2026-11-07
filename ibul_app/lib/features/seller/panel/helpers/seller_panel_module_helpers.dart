@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../models/seller_product.dart';
+import '../../../../models/staff_access_policy.dart';
 import '../models/seller_panel_types.dart';
 
 enum SellerPanelNavigationSource {
@@ -509,8 +510,7 @@ bool shouldShowGarsonInitialLoading({
   bool manualRefreshInProgress = false,
 }) {
   if (manualRefreshInProgress && hasEverRenderedBoard) return false;
-  if (hasEverRenderedBoard &&
-      (storeTableCount > 0 || lastGoodTableCount > 0)) {
+  if (hasEverRenderedBoard && (storeTableCount > 0 || lastGoodTableCount > 0)) {
     return false;
   }
   if (!initialLoading) return false;
@@ -854,24 +854,37 @@ bool isSellerFoodStoreCategory(String? category) {
 List<SellerModule> visibleSellerModules(
   String? storeCategory, {
   bool garsonOnly = false,
+  StaffGrant? staffGrant,
 }) {
+  final List<SellerModule> modules;
   if (garsonOnly) {
-    return <SellerModule>[SellerModule.garson];
+    modules = <SellerModule>[SellerModule.garson];
+  } else {
+    modules = <SellerModule>[
+      SellerModule.dashboard,
+      SellerModule.products,
+      SellerModule.collections,
+      SellerModule.orders,
+      if (isSellerFoodStoreCategory(storeCategory)) SellerModule.garson,
+      if (isSellerFoodStoreCategory(storeCategory)) SellerModule.system,
+      SellerModule.store,
+      SellerModule.team,
+      SellerModule.campaigns,
+      SellerModule.finance,
+      SellerModule.reviews,
+      SellerModule.support,
+    ];
   }
-  return <SellerModule>[
-    SellerModule.dashboard,
-    SellerModule.products,
-    SellerModule.collections,
-    SellerModule.orders,
-    if (isSellerFoodStoreCategory(storeCategory)) SellerModule.garson,
-    if (isSellerFoodStoreCategory(storeCategory)) SellerModule.system,
-    SellerModule.store,
-    SellerModule.team,
-    SellerModule.campaigns,
-    SellerModule.finance,
-    SellerModule.reviews,
-    SellerModule.support,
-  ];
+  if (staffGrant == null) return modules;
+  return modules
+      .where(
+        (module) => staffMayOpenModule(
+          module: module.name,
+          status: staffGrant.status,
+          permissions: staffGrant.permissions,
+        ),
+      )
+      .toList(growable: false);
 }
 
 String sellerModuleLabel(SellerModule module) {
