@@ -1733,8 +1733,8 @@ class StoreTableService {
           'p_session_key': resolvedSession,
           'p_amount': amountToStore,
           'p_method': resolvedMethod,
-          'p_idempotency_key': resolvedKey,
           'p_is_closing': isClosing,
+          'p_client_request_id': resolvedKey,
           if (paidBy != null && paidBy.trim().isNotEmpty)
             'p_paid_by': paidBy.trim(),
           if (waiterId != null && waiterId.trim().isNotEmpty)

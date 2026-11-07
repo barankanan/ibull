@@ -85,14 +85,14 @@ begin
     and public.table_order_is_open(status)
     and visit_id is not null;
 
+  if cardinality(v_visits) > 1 then
+    raise exception 'Bu masada birden fazla ziyaret var. Otomatik birleştirme yapılmadı.';
+  end if;
+
   if cardinality(v_visits) = 0 then
     v_visit := gen_random_uuid();
   else
-    select visit
-      into v_visit
-    from unnest(v_visits) as visit
-    order by visit::text
-    limit 1;
+    v_visit := v_visits[1];
   end if;
 
   update public.table_orders
@@ -100,16 +100,7 @@ begin
   where seller_id::text = p_seller_id::text
     and table_number = p_table_number
     and public.table_order_is_open(status)
-    and visit_id is distinct from v_visit;
-
-  if cardinality(v_visits) > 1 then
-    update public.table_payments
-    set visit_id = v_visit
-    where seller_id::text = p_seller_id::text
-      and table_number = p_table_number
-      and visit_id = any(v_visits)
-      and visit_id is distinct from v_visit;
-  end if;
+    and visit_id is null;
 
   return v_visit;
 end;

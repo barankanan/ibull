@@ -1042,7 +1042,10 @@ class OrderPrintJobService {
         : (response is Map
               ? Map<String, dynamic>.from(response)
               : <String, dynamic>{});
-    final printJobIds = _extractPrintJobIds(data['print_job_ids']);
+    final replayed = data['idempotent_replay'] == true;
+    final printJobIds = replayed
+        ? const <String>[]
+        : _extractPrintJobIds(data['print_job_ids']);
     final jobsForEventLog = printJobIds.isEmpty
         ? const <Map<String, dynamic>>[]
         : await _fetchPrintJobsByIds(printJobIds);
@@ -1589,12 +1592,46 @@ class OrderPrintJobService {
     );
     try {
       return await _client.rpc(
-        'send_table_order_idempotent',
+        'create_table_order_with_print_jobs',
         params: params,
       );
     } on PostgrestException catch (error) {
+      final replay = await _replayLocalOrder(
+        restaurantId: restaurantId,
+        localOrderId: (params['p_local_order_id'] ?? '').toString(),
+        error: error,
+      );
+      if (replay != null) return replay;
       throw Exception(_friendlyDispatchRpcError(error));
     }
+  }
+
+  Future<Map<String, dynamic>?> _replayLocalOrder({
+    required String restaurantId,
+    required String localOrderId,
+    required PostgrestException error,
+  }) async {
+    final text = '${error.message} ${error.details ?? ''} ${error.code ?? ''}'
+        .toLowerCase();
+    final duplicate = error.code == '23505' ||
+        text.contains('duplicate') ||
+        text.contains('unique');
+    if (!duplicate || localOrderId.trim().isEmpty) return null;
+    final rows = await _client
+        .from('orders')
+        .select('id, order_number')
+        .eq('restaurant_id', restaurantId)
+        .eq('local_order_id', localOrderId)
+        .limit(1);
+    if (rows is! List || rows.isEmpty || rows.first is! Map) return null;
+    final row = Map<String, dynamic>.from(rows.first as Map);
+    return <String, dynamic>{
+      'order_id': row['id'],
+      'order_number': row['order_number'],
+      'print_job_ids': const <String>[],
+      'print_job_count': 0,
+      'idempotent_replay': true,
+    };
   }
 
   String _friendlyDispatchRpcError(PostgrestException error) {
