@@ -14,6 +14,7 @@ import '../../utils/order_status_constants.dart';
 import '../../utils/table_labels.dart';
 import 'close_table_workflow.dart';
 import 'table_close_history_fallback.dart';
+import 'table_operation_access.dart';
 import 'table_order_history_utils.dart';
 import 'table_payment_guard.dart';
 import 'table_transfer_plan.dart';
@@ -123,12 +124,27 @@ class StoreTableService {
   }
 
   bool _isTableOrderPermissionError(PostgrestException error) {
-    final details =
-        '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
-            .toLowerCase();
-    return error.code == '42501' ||
-        details.contains('permission denied') ||
-        details.contains('row-level security');
+    return isTableOperationPermissionDenied(
+      code: error.code,
+      message: error.message,
+      details: error.details?.toString(),
+      hint: error.hint,
+    );
+  }
+
+  bool _shouldFallbackToDirectTableWrite(PostgrestException error) {
+    return shouldFallbackToDirectTableWrite(
+      code: error.code,
+      message: error.message,
+      details: error.details?.toString(),
+      hint: error.hint,
+    );
+  }
+
+  Exception _finalTableOperationDenial(String action) {
+    return Exception(
+      '$action yapılamadı. Bu restoran için masa işlemi yetkiniz yok.',
+    );
   }
 
   bool _isTableOrderMetadataColumnMissingError(PostgrestException error) {
@@ -1520,7 +1536,16 @@ class StoreTableService {
       );
       return;
     } on PostgrestException catch (rpcError) {
-      // RPC not found or permission error — fall through to direct DELETE.
+      if (!_shouldFallbackToDirectTableWrite(rpcError)) {
+        debugPrint(
+          '[StoreTableService.closeTableOrders] rpc=denied '
+          'code=${rpcError.code} msg=${rpcError.message} '
+          'action=no_direct_delete',
+        );
+        throw _finalTableOperationDenial('Masa kapatma');
+      }
+      // RPC missing or an older owner-only rejection. Direct delete remains
+      // the compatibility path until the staff-guard migration is applied.
       debugPrint(
         '[StoreTableService.closeTableOrders] rpc=failed '
         'code=${rpcError.code} msg=${rpcError.message} '
@@ -1543,6 +1568,9 @@ class StoreTableService {
           .eq('table_number', tableNumber)
           .timeout(tableOrderTimeout);
     } on PostgrestException catch (error) {
+      if (!_shouldFallbackToDirectTableWrite(error)) {
+        throw _finalTableOperationDenial('Masa kapatma');
+      }
       throw _tableOrderException('Masa kapatma', error);
     } on TimeoutException {
       throw Exception(
@@ -1961,6 +1989,13 @@ class StoreTableService {
         tableNumber: tableNumber,
       );
     } on PostgrestException catch (error) {
+      if (!_shouldFallbackToDirectTableWrite(error)) {
+        debugPrint(
+          '[StoreTableService] closeTableWithHistory denied ($error). '
+          'No client-side archive.',
+        );
+        throw _finalTableOperationDenial('Masa kapatma');
+      }
       // Fall back to client-side archive + delete if RPC unavailable (older DB)
       debugPrint(
         '[StoreTableService] closeTableWithHistory RPC failed ($error). Falling back to client-side archive.',
@@ -2475,11 +2510,19 @@ class StoreTableService {
         'moved_count': plan.movedLineIds.length,
       };
     } on PostgrestException catch (error) {
-      if (!_isMissingTransferRpc(error)) {
+      if (!_shouldFallbackToDirectTableWrite(error)) {
+        debugPrint(
+          '[StoreTableService] transferTableOrders denied ($error). '
+          'No client-side move.',
+        );
+        throw _finalTableOperationDenial('Masa aktarımı');
+      }
+      final legacyOwnerOnly = error.code == '42501';
+      if (!_isMissingTransferRpc(error) && !legacyOwnerOnly) {
         throw _tableOrderException('Masa aktarımı', error);
       }
       debugPrint(
-        '[StoreTableService] transfer_table_orders_v2 missing. '
+        '[StoreTableService] transfer_table_orders_v2 unavailable. '
         'Applying line-level plan locally. type=$canonical',
       );
     } on TimeoutException {

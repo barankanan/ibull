@@ -639,3 +639,6 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 - Masa tahsilatı artık açık hesabın kalan tutarını ve işlem anahtarını kontrol ediyor. Aynı anahtar ikinci satır açmıyor; masa yeniden açıldığında eski ziyaretin ödemesi yeni hesabı düşürmüyor.
 - `ibul_app/supabase/migrations/20261107_record_table_payment_guard.sql` production’a uygulanmadı. Uygulanmadan çapraz cihaz kilidi yok.
+- Masa kapatma ve masa aktarımı artık sahip, `manageOrders` veya Tam Erişim ister. Görüntüleme yetkisi, boş izin, davetli personel ve başka işletme bu işlemi yapamaz.
+- Mevcut RPC gövdeleri korunur. `install_table_operation_staff_wrappers()` onları sarar. `transfer_table_orders_v2` bu migration'dan sonra oluşursa aynı fonksiyon yeniden çalıştırılmalıdır.
+- `20261107_table_operation_staff_guard.sql` production'a bu otomasyon tarafından uygulanmaz.
