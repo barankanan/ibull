@@ -12,6 +12,7 @@ import '../../models/staff_access_policy.dart';
 import '../../utils/garson_active_orders_fetch.dart';
 import '../../utils/order_status_constants.dart';
 import '../../utils/table_labels.dart';
+import '../bill_edit_access.dart';
 import 'close_table_workflow.dart';
 import 'table_close_history_fallback.dart';
 import 'table_operation_access.dart';
@@ -205,12 +206,13 @@ class StoreTableService {
   }
 
   Exception _tableOrderException(String action, PostgrestException error) {
-    if (_isTableOrderPermissionError(error)) {
-      return Exception(
-        '$action yapılamadı. Yetki politikası (RLS) bu işlemi engelliyor.',
-      );
-    }
-    return Exception('$action yapılamadı: ${error.message}');
+    return tableOrderMutationException(
+      action: action,
+      code: error.code,
+      message: error.message,
+      details: error.details?.toString(),
+      hint: error.hint,
+    );
   }
 
   String _tableOrdersRealtimeFilter(String sellerId) {

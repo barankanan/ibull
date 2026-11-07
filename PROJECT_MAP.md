@@ -608,6 +608,9 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 - Personel yetkisi: `fullAccess` (Tam Erişim) sayfa işlemlerini kapsar, personel yönetimini kapsamaz. Tahsilat, işletme sahibi veya aktif `manageOrders` / Tam Erişim kaydı olmadan yazılamaz. Personel kendi yetki satırını yükseltemez; davet yalnızca durum olarak aktifleşir.
 - Sunucu kontrolü `ibul_app/supabase/migrations/20261107_staff_permission_enforcement.sql` içindedir. Production’a bu turda uygulanmadı.
+- Açık adisyon kalemi (`table_orders.items`) artık sahip, aktif `manageOrders` veya Tam Erişim olmadan değişmiyor. Mutfak durum güncellemesi, kalem değişmeden duruyor.
+- `approve_waiter_order_request` ve `reject_waiter_order_request` gövdeleri yeniden yazılmadı. Aynı yetki kuralı sarmalayıcıda. `auth.uid()` değiştirilmez.
+- Migration production'a uygulanmadı: `ibul_app/supabase/migrations/20261107_bill_item_edit_staff_guard.sql`. Sonradan public fonksiyon değişirse `select public.install_bill_item_edit_staff_guards();` yeniden çalıştırılmalı.
 
 ## 2026-11-06
 
