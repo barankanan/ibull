@@ -38682,28 +38682,50 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                       paymentMethod: result.method.value,
                                     );
                                   } else {
-                                    await _storeService.recordTablePayment(
-                                      sellerId: widget.sellerId,
-                                      tableNumber: widget.tableNumber,
-                                      amount: result.amount,
-                                      method: result.method.value,
-                                      waiterId: _currentWaiterId(),
-                                      waiterName: _currentWaiterName(),
-                                      sessionKey: _getOrCreateSessionKey(),
-                                      note: result.note,
-                                    );
-                                    if (!mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Ara ödeme kaydedildi: '
-                                          '${_formatMoney(result.amount)}',
+                                    try {
+                                      final saved = await _storeService
+                                          .recordTablePayment(
+                                            sellerId: widget.sellerId,
+                                            tableNumber: widget.tableNumber,
+                                            amount: result.amount,
+                                            method: result.method.value,
+                                            waiterId: _currentWaiterId(),
+                                            waiterName: _currentWaiterName(),
+                                            sessionKey:
+                                                _getOrCreateSessionKey(),
+                                            note: result.note,
+                                            idempotencyKey:
+                                                result.idempotencyKey,
+                                          );
+                                      if (!mounted) return;
+                                      final replayed =
+                                          saved['replayed'] == true;
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            replayed
+                                                ? 'Bu ara ödeme zaten kaydedilmişti.'
+                                                : 'Ara ödeme kaydedildi: '
+                                                      '${_formatMoney(result.amount)}',
+                                          ),
+                                          backgroundColor: const Color(
+                                            0xFF0F766E,
+                                          ),
                                         ),
-                                        backgroundColor: const Color(
-                                          0xFF0F766E,
-                                        ),
-                                      ),
-                                    );
+                                      );
+                                    } catch (error) {
+                                      if (!mounted) return;
+                                      final message = error
+                                          .toString()
+                                          .replaceFirst('Exception: ', '');
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(content: Text(message)),
+                                      );
+                                    }
                                   }
                                 })
                               : null,

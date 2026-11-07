@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config/runtime_config.dart';
+import '../../models/garson_operation_rules.dart';
 import '../../models/mixed_service_order.dart';
 import '../../utils/garson_active_orders_fetch.dart';
 import '../../utils/order_status_constants.dart';
@@ -13,6 +14,7 @@ import '../../utils/table_labels.dart';
 import 'close_table_workflow.dart';
 import 'table_close_history_fallback.dart';
 import 'table_order_history_utils.dart';
+import 'table_payment_guard.dart';
 
 class StoreTableService {
   StoreTableService({
@@ -26,6 +28,8 @@ class StoreTableService {
   final String? Function() _currentUserIdResolver;
   final Duration tableOrderTimeout;
   bool? _tableOrderHistorySupportsArchivedAt;
+  static final TablePaymentTurnstile _tablePaymentTurnstile =
+      TablePaymentTurnstile();
 
   bool _isStoreTablesMissingError(Object error) {
     if (error is! PostgrestException) return false;
@@ -1555,7 +1559,12 @@ class StoreTableService {
   // PAYMENT METHODS
   // ─────────────────────────────────────────────────────────────────────────────
 
-  /// Records a single payment event (partial or closing) for a table session.
+  /// Records a single payment event (partial or closing) for an open table.
+  ///
+  /// The same idempotency key returns the original row. A new key is rejected
+  /// when it would collect more than the open bill. The database function is
+  /// the atomic guard; the direct insert runs only when that function is not
+  /// deployed yet, and only after the same bill check.
   Future<Map<String, dynamic>> recordTablePayment({
     required String sellerId,
     required int tableNumber,
@@ -1563,6 +1572,180 @@ class StoreTableService {
     required double amount,
     required String method,
     bool isClosing = false,
+    String? paidBy,
+    String? waiterId,
+    String? waiterName,
+    String? note,
+    String? idempotencyKey,
+  }) async {
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    final resolvedSession = sessionKey.trim();
+    final resolvedMethod = method.trim();
+    final resolvedKey = (idempotencyKey ?? '').trim().isEmpty
+        ? newTablePaymentIdempotencyKey()
+        : idempotencyKey!.trim();
+    if (tableNumber <= 0) {
+      throw Exception('Masa numarası geçersiz.');
+    }
+    if (resolvedSession.isEmpty) {
+      throw Exception('Ödeme oturumu bulunamadı.');
+    }
+    final payloadErrors = validateTablePaymentPayload(<String, dynamic>{
+      'seller_id': resolvedSellerId,
+      'table_number': tableNumber,
+      'session_key': resolvedSession,
+      'amount': amount,
+      'method': resolvedMethod,
+    });
+    if (payloadErrors.isNotEmpty) {
+      throw Exception(payloadErrors.first);
+    }
+
+    return _tablePaymentTurnstile.run(
+      '$resolvedSellerId:$tableNumber',
+      () async {
+        final recorded = (await getTablePayments(
+          sellerId: resolvedSellerId,
+          tableNumber: tableNumber,
+        )).map(RecordedTablePayment.fromMap).toList(growable: false);
+        final replay = planTablePayment(
+          tableNumber: tableNumber,
+          billKurus: 0,
+          amount: amount,
+          idempotencyKey: resolvedKey,
+          openBillPayments: const <RecordedTablePayment>[],
+          idempotencyCandidates: recorded,
+        );
+        if (replay.isReplay && replay.existing != null) {
+          return <String, dynamic>{...replay.existing!.raw, 'replayed': true};
+        }
+        if (replay.isReject &&
+            replay.code == TablePaymentPlanCode.idempotency) {
+          throw Exception(replay.message ?? 'Ödeme işlemi kimliği geçersiz.');
+        }
+
+        final orders = await getTableOrdersSnapshot(
+          resolvedSellerId,
+          tableNumber: tableNumber,
+        );
+        if (orders.isNotEmpty) {
+          final openedAt = earliestOrderOpenedAt(orders);
+          final openPayments = paymentsInOpenBill(
+            payments: recorded,
+            openedAt: openedAt,
+            now: DateTime.now().toUtc(),
+            hasOpenOrders: true,
+          );
+          final plan = planTablePayment(
+            tableNumber: tableNumber,
+            billKurus: billKurusForOrders(orders),
+            amount: amount,
+            idempotencyKey: resolvedKey,
+            openBillPayments: openPayments,
+            idempotencyCandidates: recorded,
+          );
+          if (plan.isReplay && plan.existing != null) {
+            return <String, dynamic>{...plan.existing!.raw, 'replayed': true};
+          }
+          if (plan.isReject) {
+            throw Exception(plan.message ?? 'Ödeme kaydedilemedi.');
+          }
+        }
+
+        final amountToStore = kurusToMoney(moneyToKurus(amount));
+        final rpcParams = <String, dynamic>{
+          'p_seller_id': resolvedSellerId,
+          'p_table_number': tableNumber,
+          'p_session_key': resolvedSession,
+          'p_amount': amountToStore,
+          'p_method': resolvedMethod,
+          'p_idempotency_key': resolvedKey,
+          'p_is_closing': isClosing,
+          if (paidBy != null && paidBy.trim().isNotEmpty)
+            'p_paid_by': paidBy.trim(),
+          if (waiterId != null && waiterId.trim().isNotEmpty)
+            'p_waiter_id': waiterId.trim(),
+          if (waiterName != null && waiterName.trim().isNotEmpty)
+            'p_waiter_name': waiterName.trim(),
+          if (note != null && note.trim().isNotEmpty) 'p_note': note.trim(),
+        };
+
+        try {
+          final rpcResult = await _supabase
+              .rpc('record_table_payment', params: rpcParams)
+              .timeout(tableOrderTimeout);
+          return _paymentRowFromRpc(rpcResult);
+        } on PostgrestException catch (error) {
+          if (!_isRecordTablePaymentRpcMissing(error)) {
+            throw _tableOrderException('Ödeme kaydı', error);
+          }
+          debugPrint(
+            '[StoreTableService.recordTablePayment] rpc=missing '
+            'seller=$resolvedSellerId table=$tableNumber '
+            'action=guarded_insert',
+          );
+        } on TimeoutException {
+          throw Exception(
+            'Ödeme kaydı zaman aşımına uğradı. '
+            'Tekrar denemeden önce hesabı yenileyin.',
+          );
+        }
+
+        if (orders.isEmpty) {
+          throw Exception('Açık hesap doğrulanamadı. Ödeme kaydedilmedi.');
+        }
+        return _insertGuardedTablePayment(
+          sellerId: resolvedSellerId,
+          tableNumber: tableNumber,
+          sessionKey: resolvedSession,
+          amount: amountToStore,
+          method: resolvedMethod,
+          isClosing: isClosing,
+          paidBy: paidBy,
+          waiterId: waiterId,
+          waiterName: waiterName,
+          note: note,
+          idempotencyKey: resolvedKey,
+        );
+      },
+    );
+  }
+
+  Map<String, dynamic> _paymentRowFromRpc(dynamic result) {
+    if (result is Map) {
+      return Map<String, dynamic>.from(result);
+    }
+    if (result is List && result.isNotEmpty && result.first is Map) {
+      return Map<String, dynamic>.from(result.first as Map);
+    }
+    throw Exception('Ödeme kaydı yanıtı okunamadı.');
+  }
+
+  bool _isRecordTablePaymentRpcMissing(PostgrestException error) {
+    final message = '${error.message} ${error.details ?? ''}'.toLowerCase();
+    return error.code == '42883' ||
+        error.code == 'PGRST202' ||
+        (message.contains('record_table_payment') &&
+            (message.contains('does not exist') ||
+                message.contains('schema cache') ||
+                message.contains('could not find')));
+  }
+
+  bool _isMissingPaymentColumn(PostgrestException error, String column) {
+    final message = '${error.message} ${error.details ?? ''}'.toLowerCase();
+    return error.code == '42703' ||
+        error.code == 'PGRST204' ||
+        message.contains(column.toLowerCase());
+  }
+
+  Future<Map<String, dynamic>> _insertGuardedTablePayment({
+    required String sellerId,
+    required int tableNumber,
+    required String sessionKey,
+    required double amount,
+    required String method,
+    required bool isClosing,
+    required String idempotencyKey,
     String? paidBy,
     String? waiterId,
     String? waiterName,
@@ -1575,12 +1758,59 @@ class StoreTableService {
       'amount': amount,
       'method': method,
       'is_closing': isClosing,
-      if (paidBy != null && paidBy.isNotEmpty) 'paid_by': paidBy,
-      if (waiterId != null && waiterId.isNotEmpty) 'waiter_id': waiterId,
-      if (waiterName != null && waiterName.isNotEmpty)
-        'waiter_name': waiterName,
+      'idempotency_key': idempotencyKey,
+      if (paidBy != null && paidBy.trim().isNotEmpty) 'paid_by': paidBy.trim(),
+      if (waiterId != null && waiterId.trim().isNotEmpty)
+        'waiter_id': waiterId.trim(),
+      if (waiterName != null && waiterName.trim().isNotEmpty)
+        'waiter_name': waiterName.trim(),
       if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
     };
+    try {
+      return await _insertTablePaymentPayload(payload, replayed: false);
+    } on PostgrestException catch (error) {
+      if (error.code == '23505') {
+        final replayed = await _replayedTablePayment(
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+          idempotencyKey: idempotencyKey,
+        );
+        if (replayed != null) return replayed;
+      }
+      if (_isMissingPaymentColumn(error, 'idempotency_key')) {
+        payload.remove('idempotency_key');
+        try {
+          return await _insertTablePaymentPayload(payload, replayed: false);
+        } on PostgrestException catch (retryError) {
+          throw _tableOrderException('Ödeme kaydı', retryError);
+        }
+      }
+      throw _tableOrderException('Ödeme kaydı', error);
+    }
+  }
+
+  Future<Map<String, dynamic>?> _replayedTablePayment({
+    required String sellerId,
+    required int tableNumber,
+    required String idempotencyKey,
+  }) async {
+    final rows = await getTablePayments(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+    );
+    for (final row in rows) {
+      final key = row['idempotency_key']?.toString().trim();
+      if (key == idempotencyKey) {
+        return <String, dynamic>{...row, 'replayed': true};
+      }
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> _insertTablePaymentPayload(
+    Map<String, dynamic> payload, {
+    required bool replayed,
+  }) async {
     try {
       final inserted = await _supabase
           .from('table_payments')
@@ -1588,11 +1818,15 @@ class StoreTableService {
           .select()
           .single()
           .timeout(tableOrderTimeout);
-      return Map<String, dynamic>.from(inserted as Map);
-    } on PostgrestException catch (error) {
-      throw _tableOrderException('Ödeme kaydı', error);
+      return <String, dynamic>{
+        ...Map<String, dynamic>.from(inserted as Map),
+        'replayed': replayed,
+      };
     } on TimeoutException {
-      throw Exception('Ödeme kaydı zaman aşımına uğradı. Tekrar deneyin.');
+      throw Exception(
+        'Ödeme kaydı zaman aşımına uğradı. '
+        'Tekrar denemeden önce hesabı yenileyin.',
+      );
     }
   }
 
