@@ -1712,6 +1712,22 @@ class StoreService {
     );
   }
 
+  Future<Map<String, dynamic>> mergeTableBills({
+    required String sellerId,
+    required int sourceTable,
+    required int targetTable,
+    String? waiterId,
+    String? waiterName,
+  }) {
+    return _tableService.mergeTableBills(
+      sellerId: sellerId,
+      sourceTable: sourceTable,
+      targetTable: targetTable,
+      waiterId: waiterId,
+      waiterName: waiterName,
+    );
+  }
+
   Future<Map<String, dynamic>> transferTableOrders({
     required String sellerId,
     required int fromTable,

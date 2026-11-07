@@ -18,6 +18,7 @@ import 'table_close_history_fallback.dart';
 import 'table_operation_access.dart';
 import 'table_order_history_utils.dart';
 import 'table_payment_guard.dart';
+import 'table_merge_plan.dart';
 import 'table_transfer_plan.dart';
 
 class StoreTableService {
@@ -2425,6 +2426,83 @@ class StoreTableService {
       throw _tableOrderException('Geçmiş sipariş listesi', error);
     } on TimeoutException {
       throw Exception('Geçmiş siparişler alınamadı. Tekrar deneyin.');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // TABLE MERGE
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /// Moves the open source bill and its visit payments onto [targetTable].
+  /// There is no direct-write fallback: a missing or rejected RPC leaves
+  /// both tables unchanged.
+  Future<Map<String, dynamic>> mergeTableBills({
+    required String sellerId,
+    required int sourceTable,
+    required int targetTable,
+    String? waiterId,
+    String? waiterName,
+  }) async {
+    if (sourceTable <= 0 || targetTable <= 0 || sourceTable == targetTable) {
+      throw Exception('Kaynak ve hedef masa geçersiz.');
+    }
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    final sourceOrders = openTableBills(
+      await getTableOrdersByTable(
+        sellerId: resolvedSellerId,
+        tableNumber: sourceTable,
+      ),
+    );
+    final targetOrders = openTableBills(
+      await getTableOrdersByTable(
+        sellerId: resolvedSellerId,
+        tableNumber: targetTable,
+      ),
+    );
+    if (sourceOrders.isEmpty) {
+      throw Exception('Kaynak masada birleştirilecek açık adisyon yok.');
+    }
+    try {
+      final result = await _supabase
+          .rpc(
+            'merge_table_bills',
+            params: {
+              'p_seller_id': resolvedSellerId,
+              'p_source_table': sourceTable,
+              'p_target_table': targetTable,
+              'p_source_order_ids': openTableBillIds(sourceOrders),
+              'p_target_order_ids': openTableBillIds(targetOrders),
+              if (waiterId != null && waiterId.isNotEmpty)
+                'p_waiter_id': waiterId,
+              if (waiterName != null && waiterName.isNotEmpty)
+                'p_waiter_name': waiterName,
+            },
+          )
+          .timeout(tableOrderTimeout);
+      if (result is Map) return Map<String, dynamic>.from(result);
+      return const <String, dynamic>{'success': true};
+    } on PostgrestException catch (error) {
+      final text = '${error.message} ${error.details ?? ''}'.toLowerCase();
+      if (error.code == 'PGRST202' ||
+          error.code == '42883' ||
+          text.contains('merge_table_bills') &&
+              (text.contains('could not find') ||
+                  text.contains('does not exist') ||
+                  text.contains('schema cache'))) {
+        throw Exception(
+          'Masalar birleştirilemedi. Sunucu güncellemesi eksik. '
+          'İşlem durduruldu; hesaplar değiştirilmedi.',
+        );
+      }
+      if (text.contains('masa birleştirme yetkiniz yok')) {
+        throw Exception('Bu restoran için masa birleştirme yetkiniz yok.');
+      }
+      if (text.contains('masalar değişti')) {
+        throw Exception('Masalar değişti. Birleştirme yapılmadı.');
+      }
+      throw _tableOrderException('Masa birleştirme', error);
+    } on TimeoutException {
+      throw Exception('Masa birleştirme zaman aşımına uğradı. Tekrar deneyin.');
     }
   }
 
