@@ -23,6 +23,7 @@ import 'kitchen_order_number_fields.dart';
 import 'kitchen_print_trace_log.dart';
 import 'kitchen_product_mapping_cache_store.dart';
 import 'kitchen_routing_service.dart';
+import 'order_send_access.dart';
 import 'printer_encoding_profile_store.dart';
 import 'printer_event_log_service.dart';
 import 'printer_repository.dart';
@@ -1539,33 +1540,12 @@ class OrderPrintJobService {
   }
 
   String _friendlyDispatchRpcError(PostgrestException error) {
-    final details =
-        '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
-            .toLowerCase();
-    if (details.contains(
-          'column "table_number" of relation "orders" does not exist',
-        ) ||
-        details.contains('orders') &&
-            details.contains('table_number') &&
-            details.contains('does not exist')) {
-      return 'Mutfak fişi oluşturulamadı. Supabase orders tablosunda table_number kolonu yok '
-          'ama mutfak print RPC onu yazmaya çalışıyor. SQL patch uygulanmalı '
-          '(create_table_order_with_print_jobs_impl).';
-    }
-    if (details.contains('missing from-clause entry for table "v_item"') ||
-        details.contains('missing from-clause entry for table "v_item"')) {
-      return 'Mutfak fişi oluşturulamadı. SQL mutfak payload fonksiyonunda v_item '
-          'alias hatası var. (Supabase RPC: create_table_order_with_print_jobs)';
-    }
-    if (error.code == '42501' ||
-        details.contains('permission denied') ||
-        details.contains('bu restoran için işlem yetkiniz yok') ||
-        details.contains('row-level security')) {
-      return 'Mutfak fişi oluşturulamadı. Garson hesabının bu restoranda aktif '
-          'yazdırma yetkisi yok. Supabase tarafında store_sub_admins kaydında '
-          'email veya telefon eşleşmesi gerekli.';
-    }
-    return error.message;
+    return friendlyOrderSendRpcMessage(
+      code: error.code,
+      message: error.message,
+      details: error.details?.toString(),
+      hint: error.hint,
+    );
   }
 
   Future<_KitchenPrintDispatchOutcome> _dispatchCreatedPrintJobsGarsonFast({
