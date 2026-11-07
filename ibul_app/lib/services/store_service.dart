@@ -1,7 +1,9 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../core/config/runtime_config.dart';
 import '../models/seller_product.dart';
 import '../models/store_sub_category.dart';
@@ -300,9 +302,9 @@ class StoreService {
           .eq('is_active', true)
           .order('sort_order', ascending: true)
           .order('name', ascending: true);
-      final items = List<Map<String, dynamic>>.from(
-        response as List,
-      ).map(StoreSubCategory.fromMap).toList(growable: false);
+      final items = List<Map<String, dynamic>>.from(response as List)
+          .map(StoreSubCategory.fromMap)
+          .toList(growable: false);
       _setCachedStoreSubCategories(
         sellerId: trimmedSellerId,
         mainCategory: trimmedMainCategory,
@@ -712,8 +714,7 @@ class StoreService {
     SellerProduct product,
     List<XFile> images, {
     Function(String)? onProgress,
-    List<dynamic>?
-    variants, // Changed to dynamic to avoid type error if ProductVariant is not imported
+    List<dynamic>? variants, // Changed to dynamic to avoid type error if ProductVariant is not imported
   }) async {
     if (currentUserId == null) throw Exception('Kullanıcı girişi yapılmamış');
 
@@ -1683,6 +1684,7 @@ class StoreService {
     String? waiterName,
     String? sessionKey,
     String? note,
+    String? idempotencyKey,
   }) {
     return _tableService.recordTablePayment(
       sellerId: sellerId,
@@ -1693,6 +1695,7 @@ class StoreService {
       waiterName: waiterName,
       sessionKey: sessionKey ?? 'default',
       note: note,
+      idempotencyKey: idempotencyKey,
     );
   }
 
@@ -1789,9 +1792,9 @@ class StoreService {
         .select()
         .eq('seller_id', currentUserId!)
         .order('created_at', ascending: false);
-    return List<Map<String, dynamic>>.from(
-      rows as List<dynamic>,
-    ).map(_mapSnakeCaseToProduct).toList(growable: false);
+    return List<Map<String, dynamic>>.from(rows as List<dynamic>)
+        .map(_mapSnakeCaseToProduct)
+        .toList(growable: false);
   }
 
   Future<void> deleteProduct(String productId) async {

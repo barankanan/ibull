@@ -159,7 +159,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Bağlı olduğu dosyalar:` Supabase client, `runtime_config.dart`.
 - `Bu dosyayı kullanan dosyalar:` öncelikle `store_service.dart`; dolaylı olarak `home_screen.dart`, `qr_entry_screen.dart`, `business_detail_page.dart`.
 - `Değişirse etkilenecek yerler:` QR token doğrulama, masa seçimi ve table-order akışları.
-- `Risk notu:` QR bug’larının önemli kısmı burada veya bunu saran `store_service` katmanında çıkar. Ayrıca `table_order_history` okuma/yazma bu katmanda `closed_at` merkezli çalışmalı; prod ortamda `archived_at` yoksa fallback zorunludur yoksa garson kapanışları restart sonrası finans/genel bakışta kaybolmuş görünür.
+- `Risk notu:` QR bug’larının önemli kısmı burada veya bunu saran `store_service` katmanında çıkar. Ayrıca `table_order_history` okuma/yazma bu katmanda `closed_at` merkezli çalışmalı; prod ortamda `archived_at` yoksa fallback zorunludur yoksa garson kapanışları restart sonrası finans/genel bakışta kaybolmuş görünür. Ara ödeme `record_table_payment` uygulanmadan istemci kontrolüyle sınırlıdır; fonksiyon uygulanmadan iki cihaz aynı anda fazla tahsilat yazabilir.
 - `Durum:` kısmi
 
 ## `ibul_app/lib/services/order_service.dart`
@@ -629,3 +629,8 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `app_state.dart` seller-scoped cache yardımcıları ile seller panel için kalıcı dashboard/finance cache desteği aldı.
 - `seller_panel_page.dart` startup bootstrap sırası owner restore -> sellerId resolve -> cached closed-history hydrate -> store profile refresh olacak şekilde güçlendirildi; boş fetch artık mevcut cache’i ezmiyor.
 - `seller_panel_finance_modules.dart` owner bootstrap tamamlanmadan `FinanceShell` oluşturmuyor; hazır olunca sellerId içeren anahtarla provider yeniden kuruluyor.
+
+## 2026-11-07
+
+- Masa tahsilatı artık açık hesabın kalan tutarını ve işlem anahtarını kontrol ediyor. Aynı anahtar ikinci satır açmıyor; masa yeniden açıldığında eski ziyaretin ödemesi yeni hesabı düşürmüyor.
+- `ibul_app/supabase/migrations/20261107_record_table_payment_guard.sql` production’a uygulanmadı. Uygulanmadan çapraz cihaz kilidi yok.
