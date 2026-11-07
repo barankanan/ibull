@@ -427,9 +427,10 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 1. Seller login `AuthService.resolveLoginRoute()` ile rol çözer.
 2. `/seller` route’u `SellerPanelPage` açar.
 3. Seller panel sipariş/masa/mutfak işlemlerinde `StoreService`, `OrderService`, `OrderPrintJobService`, `SellerDashboardService` kullanır.
-4. Direct local print gerekiyorsa `LocalPrintService` ile localhost bridge çağrılır.
-5. Desktop sürekli dinleme gerekiyorsa `DesktopPrintHub` Supabase realtime veya pending sweep ile job claim eder.
-6. Bridge tarafında `local_print_bridge/server.py` baskıyı OS transport’una iletir.
+4. Yeni garson siparişi `create_table_order_with_print_jobs` ile kaydolur. Bu RPC yalnızca işletme sahibi, aktif `manageOrders` veya Tam Erişim ile çalışmalıdır. Görüntüleme yetkisi gövdeyi çağırabiliyorsa sipariş ve mutfak fişi oluşur. Gövde yeniden yazılmaz; `20261107_order_send_staff_guard.sql` mevcut fonksiyonu saklayıp dışarıdan aynı kuralı uygular. Migration uygulanmadan önce görüntüleme yetkisi sipariş gönderebilir.
+5. Direct local print gerekiyorsa `LocalPrintService` ile localhost bridge çağrılır.
+6. Desktop sürekli dinleme gerekiyorsa `DesktopPrintHub` Supabase realtime veya pending sweep ile job claim eder.
+7. Bridge tarafında `local_print_bridge/server.py` baskıyı OS transport’una iletir.
 
 ## Restaurant ops web veri akışı
 
@@ -624,3 +625,9 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `app_state.dart` seller-scoped cache yardımcıları ile seller panel için kalıcı dashboard/finance cache desteği aldı.
 - `seller_panel_page.dart` startup bootstrap sırası owner restore -> sellerId resolve -> cached closed-history hydrate -> store profile refresh olacak şekilde güçlendirildi; boş fetch artık mevcut cache’i ezmiyor.
 - `seller_panel_finance_modules.dart` owner bootstrap tamamlanmadan `FinanceShell` oluşturmuyor; hazır olunca sellerId içeren anahtarla provider yeniden kuruluyor.
+
+## 2026-11-07
+
+- `create_table_order_with_print_jobs` için personel sarmalayıcısı eklendi. Sahip, aktif `manageOrders` ve Tam Erişim sipariş gönderir. Görüntüleme, boş izin, davetli personel, başka işletme ve oturumsuz çağrı reddedilir.
+- Mevcut sipariş ve fiş gövdesi `create_table_order_with_print_jobs_staff_body` adıyla korunur. `auth.uid()` sarmalayıcıda değiştirilmez.
+- Production’a `ibul_app/supabase/migrations/20261107_order_send_staff_guard.sql` ayrıca uygulanmalıdır. Sonradan public fonksiyon değişirse `select public.install_order_send_staff_wrapper();` yeniden çalıştırılır.
