@@ -2496,12 +2496,21 @@ class StoreTableService {
             },
           )
           .timeout(tableOrderTimeout);
-      if (result is Map) return Map<String, dynamic>.from(result);
-      return <String, dynamic>{
-        'success': true,
-        'transfer_type': canonical,
-        'moved_count': plan.movedLineIds.length,
-      };
+      final Map<String, dynamic> moved = result is Map
+          ? Map<String, dynamic>.from(result)
+          : <String, dynamic>{
+              'success': true,
+              'transfer_type': canonical,
+              'moved_count': plan.movedLineIds.length,
+            };
+      await _followRestaurantOrdersAfterClearedTable(
+        sellerId: resolvedSellerId,
+        fromTable: fromTable,
+        toTable: toTable,
+        plan: plan,
+        sourceOrders: sourceOrders,
+      );
+      return moved;
     } on PostgrestException catch (error) {
       if (!_shouldFallbackToDirectTableWrite(error)) {
         debugPrint(
@@ -2531,12 +2540,125 @@ class StoreTableService {
       waiterName: waiterName,
       note: note,
     );
+    await _followRestaurantOrdersAfterClearedTable(
+      sellerId: resolvedSellerId,
+      fromTable: fromTable,
+      toTable: toTable,
+      plan: plan,
+      sourceOrders: sourceOrders,
+    );
     return <String, dynamic>{
       'success': true,
       'fallback': true,
       'transfer_type': canonical,
       'moved_line_ids': plan.movedLineIds,
     };
+  }
+
+  /// Points the existing kitchen `orders` row at the destination table.
+  ///
+  /// Runs only after the source bill is actually empty. It updates `table_id`
+  /// and does not insert an order or a print job. Pending ticket text is
+  /// corrected in the database trigger; this client never reprints.
+  Future<void> _followRestaurantOrdersAfterClearedTable({
+    required String sellerId,
+    required int fromTable,
+    required int toTable,
+    required TableTransferPlan plan,
+    required List<Map<String, dynamic>> sourceOrders,
+  }) async {
+    if (!transferClearsSourceTable(plan: plan, orders: sourceOrders)) return;
+
+    List<Map<String, dynamic>> remaining;
+    try {
+      remaining = await getTableOrdersByTable(
+        sellerId: sellerId,
+        tableNumber: fromTable,
+      );
+    } catch (error) {
+      debugPrint(
+        '[StoreTableService] follow_orders skipped '
+        'reason=source_bill_unreadable from=$fromTable error=$error',
+      );
+      return;
+    }
+    final sourceStillOpen = remaining.any(
+      (row) => !isGarsonTerminalOrderStatus(row['status']?.toString()),
+    );
+    if (sourceStillOpen) return;
+
+    final sourceIds = await resolveStoreTableIdsForNumber(
+      sellerId: sellerId,
+      tableNumber: fromTable,
+    );
+    final destinationIds = await resolveStoreTableIdsForNumber(
+      sellerId: sellerId,
+      tableNumber: toTable,
+    );
+    if (sourceIds.length != 1 || destinationIds.length != 1) {
+      debugPrint(
+        '[StoreTableService] follow_orders skipped '
+        'reason=store_table_not_unique from=$fromTable to=$toTable '
+        'source=${sourceIds.length} destination=${destinationIds.length}',
+      );
+      return;
+    }
+    if (sourceIds.single == destinationIds.single) return;
+
+    try {
+      await _supabase
+          .from('orders')
+          .update(<String, dynamic>{'table_id': destinationIds.single})
+          .eq('restaurant_id', sellerId)
+          .inFilter('table_id', sourceIds)
+          .or('order_type.eq.table,delivery_type.eq.table')
+          .not(
+            'status',
+            'in',
+            OrderStatusConstants.terminalStatuses.toList(),
+          )
+          .timeout(tableOrderTimeout);
+    } on PostgrestException catch (error) {
+      final missing =
+          error.code == '42703' ||
+          error.code == '42P01' ||
+          error.message.toLowerCase().contains('table_id');
+      debugPrint(
+        '[StoreTableService] follow_orders update '
+        'sellerId=$sellerId from=$fromTable to=$toTable error=$error',
+      );
+      if (missing) return;
+    } on TimeoutException catch (error) {
+      debugPrint(
+        '[StoreTableService] follow_orders update timeout '
+        'sellerId=$sellerId from=$fromTable error=$error',
+      );
+    }
+
+    try {
+      final left = await _supabase
+          .from('orders')
+          .select('id')
+          .eq('restaurant_id', sellerId)
+          .inFilter('table_id', sourceIds)
+          .or('order_type.eq.table,delivery_type.eq.table')
+          .not(
+            'status',
+            'in',
+            OrderStatusConstants.terminalStatuses.toList(),
+          )
+          .limit(5)
+          .timeout(tableOrderTimeout);
+      if ((left as List).isNotEmpty) {
+        throw const RestaurantOrderLeftOnSourceException();
+      }
+    } on RestaurantOrderLeftOnSourceException {
+      rethrow;
+    } catch (error) {
+      debugPrint(
+        '[StoreTableService] follow_orders probe skipped error=$error',
+      );
+    }
   }
 
   bool _isMissingTransferRpc(PostgrestException error) {

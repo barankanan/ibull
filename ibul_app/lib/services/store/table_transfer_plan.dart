@@ -186,6 +186,47 @@ TableTransferPlan planTableTransfer({
   );
 }
 
+/// True when every open bill row leaves the source table.
+///
+/// A partial move that keeps a line must not pull the kitchen `orders` row
+/// along, because that row still belongs to the bill that stayed behind.
+bool transferClearsSourceTable({
+  required TableTransferPlan plan,
+  required List<Map<String, dynamic>> orders,
+}) {
+  if (!plan.hasChanges) return false;
+  final activeIds = <String>{};
+  for (final order in orders) {
+    if (isGarsonTerminalOrderStatus(order['status']?.toString())) continue;
+    final id = order['id']?.toString().trim() ?? '';
+    if (id.isEmpty) continue;
+    activeIds.add(id);
+  }
+  if (activeIds.isEmpty) return false;
+  final moved = <String>{};
+  for (final mutation in plan.mutations) {
+    if (mutation.splitsOrder || mutation.nextTableNumber == null) {
+      return false;
+    }
+    moved.add(mutation.orderId);
+  }
+  return activeIds.every(moved.contains);
+}
+
+/// The bill row already moved, but the kitchen `orders` row is still on the
+/// source table. Retrying the send would open a second order and a second
+/// kitchen ticket.
+class RestaurantOrderLeftOnSourceException implements Exception {
+  const RestaurantOrderLeftOnSourceException();
+
+  static const String message =
+      'Adisyon yeni masaya geçti. Mutfak kaydı eski masada kaldı. '
+      'Siparişi yeniden göndermeyin; fiş tekrar basılmadı.';
+
+  @override
+  String toString() => message;
+}
+
 List<Map<String, dynamic>> _stampItems(String orderId, dynamic rawItems) {
   if (rawItems is! List) return const <Map<String, dynamic>>[];
   final items = <Map<String, dynamic>>[];

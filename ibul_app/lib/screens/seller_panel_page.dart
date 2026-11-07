@@ -38861,17 +38861,29 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                     );
                                   } catch (error) {
                                     if (!mounted) return;
+                                    final leftBehind = error
+                                        is RestaurantOrderLeftOnSourceException;
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: Text(
-                                          isFinalTableOperationDenialError(
-                                                error,
-                                              )
-                                              ? 'Masa aktarılamadı. Bu restoran için masa işlemi yetkiniz yok.'
-                                              : 'Masa aktarılamadı. Bağlantınızı kontrol edip tekrar deneyin.',
+                                          leftBehind
+                                              ? RestaurantOrderLeftOnSourceException
+                                                    .message
+                                              : isFinalTableOperationDenialError(
+                                                      error,
+                                                    )
+                                                  ? 'Masa aktarılamadı. Bu restoran için masa işlemi yetkiniz yok.'
+                                                  : 'Masa aktarılamadı. Bağlantınızı kontrol edip tekrar deneyin.',
                                         ),
                                       ),
                                     );
+                                    if (!leftBehind) return;
+                                    widget.onTableClosed?.call(
+                                      widget.tableNumber,
+                                    );
+                                    if (mounted) {
+                                      Navigator.of(context).maybePop();
+                                    }
                                     return;
                                   }
                                   if (!mounted) return;
