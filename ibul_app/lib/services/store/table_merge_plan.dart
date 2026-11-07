@@ -52,20 +52,20 @@ int mergedTableRemainingKurus({
         openedAt: sourceOpened,
         now: now,
         hasOpenOrders: sourceOpen.isNotEmpty,
-        openVisitIds: _visitIds(sourceOpen),
+        openVisitIds: openTableVisitIds(sourceOpen),
       ).fold<int>(0, (sum, payment) => sum + payment.amountKurus) +
       paymentsInOpenBill(
         payments: targetPayments.toList(growable: false),
         openedAt: targetOpened,
         now: now,
         hasOpenOrders: targetOpen.isNotEmpty,
-        openVisitIds: _visitIds(targetOpen),
+        openVisitIds: openTableVisitIds(targetOpen),
       ).fold<int>(0, (sum, payment) => sum + payment.amountKurus);
   final remaining = bill - paid;
   return remaining < 0 ? 0 : remaining;
 }
 
-Set<String> _visitIds(Iterable<Map<String, dynamic>> orders) {
+Set<String> openTableVisitIds(Iterable<Map<String, dynamic>> orders) {
   return orders
       .map((order) => order['visit_id']?.toString().trim() ?? '')
       .where((id) => id.isNotEmpty)
