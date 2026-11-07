@@ -642,10 +642,13 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 ## 2026-11-07
 
 - Masa tahsilatı artık açık hesabın kalan tutarını ve işlem anahtarını kontrol ediyor. Aynı anahtar ikinci satır açmıyor; masa yeniden açıldığında eski ziyaretin ödemesi yeni hesabı düşürmüyor.
-- `ibul_app/supabase/migrations/20261107_record_table_payment_guard.sql` production’a uygulanmadı. Uygulanmadan çapraz cihaz kilidi yok.
-- Masa kapatma ve masa aktarımı artık sahip, `manageOrders` veya Tam Erişim ister. Görüntüleme yetkisi, boş izin, davetli personel ve başka işletme bu işlemi yapamaz.
+- `ibul_app/supabase/migrations/20261107_record_table_payment_guard.sql` production’a uygulanmadı. Uygulanmadan çapraz cihaz kilidi yok. Mevcut `guard_table_payment` fazla ödeme tetikleyicisi durur.
+- Masa kapatma ve masa aktarımı artık sahip, `manageOrders` veya Tam Erişim ister. Görüntüleme yetkisi, boş izin, davetli personel ve başka işletme bu işlemi yapamaz. Sarmalayıcı `request.jwt.claim.sub` değerini işletme sahibine çevirmez; gerçek `auth.uid()` durur ve iç fonksiyon ancak doğrulanmış işlem iznini görür.
 - Mevcut RPC gövdeleri korunur. `install_table_operation_staff_wrappers()` onları sarar. `transfer_table_orders_v2` bu migration'dan sonra oluşursa aynı fonksiyon yeniden çalıştırılmalıdır.
 - `20261107_table_operation_staff_guard.sql` production'a bu otomasyon tarafından uygulanmaz.
 - `create_table_order_with_print_jobs` için personel sarmalayıcısı eklendi. Sahip, aktif `manageOrders` ve Tam Erişim sipariş gönderir. Görüntüleme, boş izin, davetli personel, başka işletme ve oturumsuz çağrı reddedilir.
-- Mevcut sipariş ve fiş gövdesi `create_table_order_with_print_jobs_staff_body` adıyla korunur. `auth.uid()` sarmalayıcıda değiştirilmez.
+- Mevcut sipariş ve fiş gövdesi `create_table_order_with_print_jobs_staff_body` adıyla korunur. Personel sarmalayıcısı `auth.uid()` değiştirmez. Kurulum, tek-adisyon sarmalayıcısının altında duran yazdırma gövdesini silmez.
 - Production’a `ibul_app/supabase/migrations/20261107_order_send_staff_guard.sql` ayrıca uygulanmalıdır. Sonradan public fonksiyon değişirse `select public.install_order_send_staff_wrapper();` yeniden çalıştırılır.
+- `approve_waiter_order_request` adisyonu `table_orders` içine yazar ve mutfak kalemi varsa `create_table_order_with_print_jobs` çağırır. Bu RPC ayrıca `orders` tablosuna `confirmed` / `sent` satırı açar. Garson tahtası iki tabloyu birden okur; masa doluyken birleştirme ikinci satırı gizler, adisyon kapanınca aktif `orders` satırı masayı yeniden açabilir.
+- Onay gövdesi yeniden yazılmadı. `install_waiter_request_single_order_guard()` mevcut yazdırma fonksiyonunu çağırır. Notu `waiter_request:` ile başlayan `new_order` çapası `print_anchor` olur. Bu bir müşteri iptali değildir: stok iadesi, iptal raporu ve fiş iptali tetiklenmez. Satır silinmez; `print_jobs.order_id` ve fiş kimliği durur. Doğrudan garson gönderimi aynı notu kullanmadığı için değişmez.
+- Geçmiş satırlar bu migration ile düzeltilmez. Public yazdırma fonksiyonu sonradan değişirse `select public.install_waiter_request_single_order_guard();` yeniden çalıştırılmalı.
