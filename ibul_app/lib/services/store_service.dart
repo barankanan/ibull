@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/config/runtime_config.dart';
 import '../models/seller_product.dart';
 import '../models/store_sub_category.dart';
+import '../models/staff_access_policy.dart';
 import '../models/sub_admin.dart';
 import '../utils/product_create_log.dart';
 import '../utils/product_edit_log.dart';
@@ -1798,14 +1799,64 @@ class StoreService {
     String subAdminId,
     List<SellerPermission> permissions,
   ) async {
-    await _supabase
+    final storeId = currentUserId;
+    if (storeId == null || storeId.isEmpty) {
+      throw Exception('Kullanıcı girişi yapılmamış');
+    }
+    final updated = await _supabase
         .from('store_sub_admins')
         .update({'permissions': permissions.map((e) => e.name).toList()})
-        .eq('id', subAdminId);
+        .eq('id', subAdminId)
+        .eq('store_id', storeId)
+        .select('id');
+    if (List<dynamic>.from(updated as List).isEmpty) {
+      throw Exception('Personel yetkisi güncellenemedi.');
+    }
   }
 
   Future<void> removeSubAdmin(String subAdminId) async {
-    await _supabase.from('store_sub_admins').delete().eq('id', subAdminId);
+    final storeId = currentUserId;
+    if (storeId == null || storeId.isEmpty) {
+      throw Exception('Kullanıcı girişi yapılmamış');
+    }
+    final removed = await _supabase
+        .from('store_sub_admins')
+        .delete()
+        .eq('id', subAdminId)
+        .eq('store_id', storeId)
+        .select('id');
+    if (List<dynamic>.from(removed as List).isEmpty) {
+      throw Exception('Personel kaydı kaldırılamadı.');
+    }
+  }
+
+  /// Active membership of the signed-in person at [storeId], if the row is
+  /// visible to them. Owners are not represented here.
+  Future<StaffGrant?> getOwnStaffGrant(String storeId) async {
+    final normalizedStoreId = storeId.trim();
+    final user = _supabase.auth.currentUser;
+    if (user == null || normalizedStoreId.isEmpty) return null;
+    final email = user.email?.trim() ?? '';
+    final phone = user.phone?.trim() ?? '';
+    final filters = <String>[];
+    if (email.isNotEmpty) filters.add('email.ilike.$email');
+    if (phone.isNotEmpty) filters.add('phone.eq.$phone');
+    if (filters.isEmpty) return null;
+    final row = await _supabase
+        .from('store_sub_admins')
+        .select('status, permissions')
+        .eq('store_id', normalizedStoreId)
+        .or(filters.join(','))
+        .limit(1)
+        .maybeSingle();
+    if (row == null) return null;
+    final map = Map<String, dynamic>.from(row);
+    return StaffGrant(
+      status: map['status']?.toString() ?? '',
+      permissions: parseStaffPermissionTokens(map['permissions']).toList(
+        growable: false,
+      ),
+    );
   }
 
   Future<List<Map<String, dynamic>>> getAllStores() async {

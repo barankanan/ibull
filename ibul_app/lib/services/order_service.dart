@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/config/runtime_config.dart';
+import '../models/staff_access_policy.dart';
 import 'supabase_service.dart';
 
 class OrderService {
@@ -3703,13 +3704,20 @@ class OrderService {
     try {
       final subAdmin = await _supabase
           .from('store_sub_admins')
-          .select('id')
+          .select('status, permissions')
           .eq('store_id', itemSellerId)
           .eq('status', 'active')
           .or(filters.join(','))
           .limit(1)
           .maybeSingle();
-      return subAdmin != null;
+      if (subAdmin == null) return false;
+      final row = Map<String, dynamic>.from(subAdmin);
+      return staffMayPerform(
+        isOwner: false,
+        status: row['status']?.toString() ?? '',
+        permissions: row['permissions'],
+        operation: StaffOperation.manageOrders,
+      );
     } catch (e) {
       debugPrint('OrderService seller access warn: $e');
       return false;

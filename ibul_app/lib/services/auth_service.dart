@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter/foundation.dart'
@@ -604,6 +605,26 @@ class AuthService {
     if (resolvedPhone != null && resolvedPhone.isNotEmpty) {
       filters.add('phone.eq.$resolvedPhone');
     }
+
+    try {
+      await _supabase.rpc('activate_own_store_sub_admin_invites');
+      debugPrint('[SubAdminActivation] rpc userId=${user.id}');
+      return;
+    } catch (error) {
+      final message = error.toString().toLowerCase();
+      final functionMissing =
+          message.contains('activate_own_store_sub_admin_invites') ||
+          message.contains('pgrst202') ||
+          message.contains('could not find the function');
+      if (!functionMissing) {
+        debugPrint(
+          '[SubAdminActivation] rpc skipped '
+          'userId=${user.id} error=$error',
+        );
+        return;
+      }
+    }
+
     if (filters.isEmpty) return;
 
     try {
