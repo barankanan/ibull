@@ -104,4 +104,34 @@ void main() {
 
     expect(remaining, 4000);
   });
+
+  test('başka ziyaretin ödemesi zamanı uygun olsa da eklenmez', () {
+    final remaining = mergedTableRemainingKurus(
+      sourceOrders: [
+        {
+          'id': 'source',
+          'status': 'sent',
+          'visit_id': 'visit-a',
+          'created_at': opened.toIso8601String(),
+          'items': [
+            {'name': 'Corba', 'quantity': 1, 'unit_price_snapshot': 40},
+          ],
+        },
+      ],
+      targetOrders: const <Map<String, dynamic>>[],
+      sourcePayments: [
+        RecordedTablePayment(
+          id: 'other',
+          tableNumber: 2,
+          amountKurus: 4000,
+          createdAt: opened.add(const Duration(minutes: 5)),
+          visitId: 'visit-b',
+          raw: const <String, dynamic>{},
+        ),
+      ],
+      targetPayments: const <RecordedTablePayment>[],
+    );
+
+    expect(remaining, 4000);
+  });
 }

@@ -18,6 +18,8 @@ apply_filename_order() {
   $PSQL -d "$db" -f "$MIG/20261107_table_operation_staff_guard.sql"
   $PSQL -d "$db" -f "$MIG/20261107_waiter_request_single_order.sql"
   $PSQL -d "$db" -f "$MIG/20261107_order_identity_idempotency.sql"
+  $PSQL -d "$db" -f "$MIG/20261107_merge_table_bills.sql"
+  $PSQL -d "$db" -f "$MIG/20261107_table_visit_identity.sql"
 }
 
 apply_waiter_before_send() {
@@ -30,6 +32,8 @@ apply_waiter_before_send() {
   $PSQL -d "$db" -f "$MIG/20261107_table_operation_staff_guard.sql"
   $PSQL -d "$db" -f "$MIG/20261107_order_send_staff_guard.sql"
   $PSQL -d "$db" -f "$MIG/20261107_order_identity_idempotency.sql"
+  $PSQL -d "$db" -f "$MIG/20261107_merge_table_bills.sql"
+  $PSQL -d "$db" -f "$MIG/20261107_table_visit_identity.sql"
 }
 
 reset_db() {

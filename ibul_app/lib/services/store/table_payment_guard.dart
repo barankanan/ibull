@@ -42,6 +42,7 @@ class RecordedTablePayment {
     required this.createdAt,
     required this.raw,
     this.idempotencyKey,
+    this.visitId,
   });
 
   final String id;
@@ -49,6 +50,7 @@ class RecordedTablePayment {
   final int amountKurus;
   final DateTime createdAt;
   final String? idempotencyKey;
+  final String? visitId;
   final Map<String, dynamic> raw;
 
   factory RecordedTablePayment.fromMap(Map<String, dynamic> map) {
@@ -60,10 +62,12 @@ class RecordedTablePayment {
     final tableNumber = rawTable is int
         ? rawTable
         : int.tryParse(rawTable?.toString() ?? '') ?? 0;
+    final visit = map['visit_id']?.toString().trim();
     return RecordedTablePayment(
       id: map['id']?.toString() ?? '',
       tableNumber: tableNumber,
       amountKurus: moneyToKurus(map['amount']),
+      visitId: visit == null || visit.isEmpty ? null : visit,
       createdAt: createdAt,
       idempotencyKey: key == null || key.isEmpty ? null : key,
       raw: Map<String, dynamic>.from(map),
@@ -159,13 +163,20 @@ List<RecordedTablePayment> paymentsInOpenBill({
   required DateTime? openedAt,
   required DateTime now,
   required bool hasOpenOrders,
+  Set<String> openVisitIds = const <String>{},
 }) {
   if (!hasOpenOrders) return const <RecordedTablePayment>[];
   final start =
       (openedAt ?? now.toUtc().subtract(tablePaymentOpenBillFallbackWindow))
           .toUtc();
   return payments
-      .where((payment) => !payment.createdAt.toUtc().isBefore(start))
+      .where((payment) {
+        final visit = payment.visitId;
+        if (visit != null && visit.isNotEmpty) {
+          return openVisitIds.contains(visit);
+        }
+        return !payment.createdAt.toUtc().isBefore(start);
+      })
       .toList(growable: false);
 }
 

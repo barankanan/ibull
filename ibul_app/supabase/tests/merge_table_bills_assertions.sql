@@ -120,6 +120,68 @@ begin
     raise exception 'rejected merge changed payments';
   end if;
 
+  update public.table_orders
+  set visit_id = 'abababab-abab-4aba-8aba-abababababa1'
+  where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  update public.table_orders
+  set visit_id = 'abababab-abab-4aba-8aba-abababababa2'
+  where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
+  update public.table_payments
+  set visit_id = 'abababab-abab-4aba-8aba-abababababa1'
+  where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1';
+  update public.table_payments
+  set visit_id = 'abababab-abab-4aba-8aba-abababababa2'
+  where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+  insert into public.table_payments (
+    id, seller_id, table_number, session_key, amount, idempotency_key, created_at
+  ) values (
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4',
+    v_owner,
+    2,
+    'other-visit',
+    4,
+    'pay-other-visit',
+    '2026-11-07 12:20:00+00'
+  );
+  update public.table_payments
+  set visit_id = 'abababab-abab-4aba-8aba-abababababa9'
+  where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4';
+  insert into public.table_orders (
+    id, seller_id, table_number, items, status, created_at, visit_id
+  ) values (
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa14',
+    v_owner, 14,
+    '[{"name":"Belirsiz","quantity":1,"price":20}]'::jsonb,
+    'sent', '2026-11-07 12:00:00+00', null
+  );
+  insert into public.table_payments (
+    id, seller_id, table_number, session_key, amount, idempotency_key, created_at
+  ) values (
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5',
+    v_owner, 14, 'ambiguous', 5, 'pay-ambiguous',
+    '2026-11-07 12:10:00+00'
+  );
+  update public.table_payments
+  set visit_id = null
+  where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5';
+  begin
+    perform public.merge_table_bills(
+      v_owner, 14, 3,
+      '["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa14"]'::jsonb,
+      '["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"]'::jsonb
+    );
+    raise exception 'ambiguous payment merge should have been rejected';
+  exception
+    when others then
+      if sqlerrm not like '%ziyareti belirsiz%' then
+        raise;
+      end if;
+  end;
+  if (select table_number from public.table_orders
+      where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa14') <> 14 then
+    raise exception 'ambiguous merge moved the source order';
+  end if;
+
   v_result := public.merge_table_bills(
     v_owner, 2, 3,
     '["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"]'::jsonb,
@@ -150,7 +212,7 @@ begin
       where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9') <> 2 then
     raise exception 'print anchor was moved';
   end if;
-  if (select count(*) from public.table_orders) <> 12 then
+  if (select count(*) from public.table_orders) <> 13 then
     raise exception 'merge inserted or deleted an order row';
   end if;
 
@@ -166,10 +228,34 @@ begin
       where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3') <> 2 then
     raise exception 'previous visit payment was moved';
   end if;
+  if (select table_number from public.table_payments
+      where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4') <> 2 then
+    raise exception 'a different visit payment was moved by time';
+  end if;
+  if (select visit_id from public.table_payments
+      where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1')
+     <> (select visit_id from public.table_orders
+         where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2') then
+    raise exception 'moved payment did not join the target visit';
+  end if;
   select count(*) into v_payments from public.table_payments;
-  if v_payments <> 3 then
+  if v_payments <> 5 then
     raise exception 'payment rows were copied: %', v_payments;
   end if;
+  begin
+    insert into public.table_payments (
+      id, seller_id, table_number, session_key, amount, idempotency_key
+    ) values (
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb6',
+      v_owner, 2, 'after-merge', 1, 'pay-after-merge'
+    );
+    raise exception 'payment insert on the emptied source should have failed';
+  exception
+    when others then
+      if sqlerrm not like '%Masa hesabı değişti%' then
+        raise;
+      end if;
+  end;
 
   if (select table_id from public.orders
       where id = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1')
