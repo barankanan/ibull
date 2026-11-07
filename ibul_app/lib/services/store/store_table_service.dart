@@ -10,6 +10,7 @@ import '../../models/mixed_service_order.dart';
 import '../../utils/garson_active_orders_fetch.dart';
 import '../../utils/order_status_constants.dart';
 import '../../utils/table_labels.dart';
+import '../bill_edit_access.dart';
 import 'close_table_workflow.dart';
 import 'table_close_history_fallback.dart';
 import 'table_order_history_utils.dart';
@@ -116,15 +117,6 @@ class StoreTableService {
             details.contains('check'));
   }
 
-  bool _isTableOrderPermissionError(PostgrestException error) {
-    final details =
-        '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
-            .toLowerCase();
-    return error.code == '42501' ||
-        details.contains('permission denied') ||
-        details.contains('row-level security');
-  }
-
   bool _isTableOrderMetadataColumnMissingError(PostgrestException error) {
     final details =
         '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
@@ -183,12 +175,13 @@ class StoreTableService {
   }
 
   Exception _tableOrderException(String action, PostgrestException error) {
-    if (_isTableOrderPermissionError(error)) {
-      return Exception(
-        '$action yapılamadı. Yetki politikası (RLS) bu işlemi engelliyor.',
-      );
-    }
-    return Exception('$action yapılamadı: ${error.message}');
+    return tableOrderMutationException(
+      action: action,
+      code: error.code,
+      message: error.message,
+      details: error.details?.toString(),
+      hint: error.hint,
+    );
   }
 
   String _tableOrdersRealtimeFilter(String sellerId) {
