@@ -32,6 +32,8 @@ import '../core/constants.dart';
 import '../core/web_seo.dart';
 import '../services/store/table_operation_access.dart';
 import '../services/store_service.dart';
+import '../services/store/table_merge_plan.dart';
+import '../services/store/table_payment_guard.dart';
 import '../services/store/table_transfer_plan.dart';
 import '../services/store/table_order_history_utils.dart';
 import '../services/auth_service.dart';
@@ -59,6 +61,7 @@ import '../models/restaurant_ops_models.dart';
 import '../models/desktop_printer_setup_models.dart';
 import '../models/garson_operation_rules.dart';
 import '../models/print_job_model.dart';
+import '../widgets/garson/merge_table_sheet.dart';
 import '../widgets/garson/transfer_table_modal.dart';
 import '../widgets/garson/payment_bottom_sheet.dart';
 import '../widgets/garson/undo_action_controller.dart';
@@ -38537,6 +38540,85 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     }
   }
 
+  Future<void> _mergeCurrentTable(
+    List<Map<String, dynamic>> tableOrders,
+  ) async {
+    List<Map<String, dynamic>> storeTableRows = widget.storeTables;
+    if (storeTableRows.isEmpty) {
+      storeTableRows = await _storeService
+          .getStoreTables(sellerId: widget.sellerId)
+          .catchError((Object _) => <Map<String, dynamic>>[]);
+    }
+    final occupied = await _resolveOccupiedTableNumbers();
+    final availableTables = _buildTransferTargetTables(
+      storeTableRows: storeTableRows,
+      occupied: occupied,
+    );
+    final sourceLabel = resolveTableCardTitle(
+      tableRow: _firstStoreTableRowForNumber(
+        storeTableRows,
+        widget.tableNumber,
+      ),
+      tableNumber: widget.tableNumber,
+    );
+    final sourceOpen = openTableBills(tableOrders);
+    var sourceItemCount = 0;
+    for (final order in sourceOpen) {
+      final items = order['items'];
+      if (items is! List) continue;
+      for (final item in items) {
+        if (item is! Map) continue;
+        final quantity = item['quantity'];
+        sourceItemCount += quantity is num ? quantity.round() : 1;
+      }
+    }
+    final sourcePayments = await _storeService
+        .getTablePayments(
+          sellerId: widget.sellerId,
+          tableNumber: widget.tableNumber,
+        )
+        .then((rows) => rows.map(RecordedTablePayment.fromMap).toList())
+        .catchError((Object _) => <RecordedTablePayment>[]);
+    final sourcePaid = sourcePayments.fold<int>(
+      0,
+      (sum, payment) => sum + payment.amountKurus,
+    );
+    if (!mounted) return;
+    final result = await MergeTableSheet.show(
+      context,
+      sourceTable: widget.tableNumber,
+      sourceLabel: sourceLabel,
+      targets: availableTables,
+      sourceItemCount: sourceItemCount,
+      sourcePaidLabel: formatTablePaymentKurus(sourcePaid),
+      remainingLabel: 'hedef seçilince sunucuda hesaplanır',
+    );
+    if (result == null || !mounted) return;
+    try {
+      await _storeService.mergeTableBills(
+        sellerId: widget.sellerId,
+        sourceTable: widget.tableNumber,
+        targetTable: result.targetTable,
+        waiterId: _currentWaiterId(),
+        waiterName: _currentWaiterName(),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final message = error.toString().replaceFirst('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$sourceLabel → ${result.targetLabel} birleştirildi.'),
+        backgroundColor: const Color(0xFF0F766E),
+      ),
+    );
+    widget.onTableClosed?.call(widget.tableNumber);
+    if (mounted) Navigator.of(context).maybePop();
+  }
+
   Future<void> _showOperationsSheet(
     List<Map<String, dynamic>> tableOrders,
   ) async {
@@ -38910,6 +38992,20 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                 })
                               : null,
                           accentColor: const Color(0xFF2563EB),
+                        ),
+                        const SizedBox(height: 8),
+                        actionTile(
+                          icon: Icons.merge_rounded,
+                          title: 'Masaları Birleştir',
+                          subtitle: canTransferTable
+                              ? 'Açık adisyon ve ara ödemeler hedef masaya taşınır'
+                              : TableLevelPolicy.transferBlocked,
+                          onTap: canTransferTable
+                              ? () => runAction(
+                                  () => _mergeCurrentTable(tableOrders),
+                                )
+                              : null,
+                          accentColor: const Color(0xFF0F766E),
                         ),
                         // Print actions — desktop only (>= 1200 px)
                         if (MediaQuery.of(sheetContext).size.width >= 1200) ...[
