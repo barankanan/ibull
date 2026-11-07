@@ -31,6 +31,7 @@ import '../core/app_motion.dart';
 import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/web_seo.dart';
+import '../services/store/table_operation_access.dart';
 import '../services/store_service.dart';
 import '../services/store/table_order_history_utils.dart';
 import '../services/auth_service.dart';
@@ -14375,6 +14376,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           'orders_closed_so_far=$ordersClosedTotal',
         );
       } catch (bulkErr) {
+        if (isFinalTableOperationDenialError(bulkErr)) {
+          // The server refused this caller. A per-order delete would repeat
+          // the close outside the authorized RPC.
+          debugPrint(
+            '[GARSON_CLOSE_BULK_ERROR] '
+            'table=$tableNumber '
+            'error=$bulkErr '
+            'action=permission_denied_no_direct_fallback',
+          );
+          rethrow;
+        }
         // Archive/delete failed (e.g. RLS blocks DELETE on table_orders).
         // Log the error and fall through to the per-order fallback below.
         debugPrint(
@@ -38804,15 +38816,31 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                     sourceLabel: sourceLabel,
                                   );
                                   if (result == null || !mounted) return;
-                                  await _storeService.transferTableOrders(
-                                    sellerId: widget.sellerId,
-                                    fromTable: widget.tableNumber,
-                                    toTable: result.toTable,
-                                    transferType: result.transferType.name,
-                                    itemIds: result.selectedItemIds,
-                                    waiterId: _currentWaiterId(),
-                                    note: result.note,
-                                  );
+                                  try {
+                                    await _storeService.transferTableOrders(
+                                      sellerId: widget.sellerId,
+                                      fromTable: widget.tableNumber,
+                                      toTable: result.toTable,
+                                      transferType: result.transferType.name,
+                                      itemIds: result.selectedItemIds,
+                                      waiterId: _currentWaiterId(),
+                                      note: result.note,
+                                    );
+                                  } catch (error) {
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          isFinalTableOperationDenialError(
+                                                error,
+                                              )
+                                              ? 'Masa aktarılamadı. Bu restoran için masa işlemi yetkiniz yok.'
+                                              : 'Masa aktarılamadı. Bağlantınızı kontrol edip tekrar deneyin.',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
                                   if (!mounted) return;
                                   // Use the real area labels (e.g. "Bahçe 3 →
                                   // Bahçe 1") rather than legacy "Masa N".

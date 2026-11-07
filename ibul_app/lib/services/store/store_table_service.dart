@@ -12,6 +12,7 @@ import '../../utils/order_status_constants.dart';
 import '../../utils/table_labels.dart';
 import 'close_table_workflow.dart';
 import 'table_close_history_fallback.dart';
+import 'table_operation_access.dart';
 import 'table_order_history_utils.dart';
 
 class StoreTableService {
@@ -117,12 +118,27 @@ class StoreTableService {
   }
 
   bool _isTableOrderPermissionError(PostgrestException error) {
-    final details =
-        '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
-            .toLowerCase();
-    return error.code == '42501' ||
-        details.contains('permission denied') ||
-        details.contains('row-level security');
+    return isTableOperationPermissionDenied(
+      code: error.code,
+      message: error.message,
+      details: error.details?.toString(),
+      hint: error.hint,
+    );
+  }
+
+  bool _shouldFallbackToDirectTableWrite(PostgrestException error) {
+    return shouldFallbackToDirectTableWrite(
+      code: error.code,
+      message: error.message,
+      details: error.details?.toString(),
+      hint: error.hint,
+    );
+  }
+
+  Exception _finalTableOperationDenial(String action) {
+    return Exception(
+      '$action yapılamadı. Bu restoran için masa işlemi yetkiniz yok.',
+    );
   }
 
   bool _isTableOrderMetadataColumnMissingError(PostgrestException error) {
@@ -1514,7 +1530,16 @@ class StoreTableService {
       );
       return;
     } on PostgrestException catch (rpcError) {
-      // RPC not found or permission error — fall through to direct DELETE.
+      if (!_shouldFallbackToDirectTableWrite(rpcError)) {
+        debugPrint(
+          '[StoreTableService.closeTableOrders] rpc=denied '
+          'code=${rpcError.code} msg=${rpcError.message} '
+          'action=no_direct_delete',
+        );
+        throw _finalTableOperationDenial('Masa kapatma');
+      }
+      // RPC missing or an older owner-only rejection. Direct delete remains
+      // the compatibility path until the staff-guard migration is applied.
       debugPrint(
         '[StoreTableService.closeTableOrders] rpc=failed '
         'code=${rpcError.code} msg=${rpcError.message} '
@@ -1537,6 +1562,9 @@ class StoreTableService {
           .eq('table_number', tableNumber)
           .timeout(tableOrderTimeout);
     } on PostgrestException catch (error) {
+      if (!_shouldFallbackToDirectTableWrite(error)) {
+        throw _finalTableOperationDenial('Masa kapatma');
+      }
       throw _tableOrderException('Masa kapatma', error);
     } on TimeoutException {
       throw Exception(
@@ -1674,6 +1702,13 @@ class StoreTableService {
         tableNumber: tableNumber,
       );
     } on PostgrestException catch (error) {
+      if (!_shouldFallbackToDirectTableWrite(error)) {
+        debugPrint(
+          '[StoreTableService] closeTableWithHistory denied ($error). '
+          'No client-side archive.',
+        );
+        throw _finalTableOperationDenial('Masa kapatma');
+      }
       // Fall back to client-side archive + delete if RPC unavailable (older DB)
       debugPrint(
         '[StoreTableService] closeTableWithHistory RPC failed ($error). Falling back to client-side archive.',
@@ -2148,19 +2183,33 @@ class StoreTableService {
       if (result is Map) return Map<String, dynamic>.from(result);
       return const <String, dynamic>{'success': true};
     } on PostgrestException catch (error) {
+      if (!_shouldFallbackToDirectTableWrite(error)) {
+        debugPrint(
+          '[StoreTableService] transferTableOrders denied ($error). '
+          'No client-side move.',
+        );
+        throw _finalTableOperationDenial('Masa aktarımı');
+      }
       debugPrint(
         '[StoreTableService] transferTableOrders RPC failed ($error). Falling back to client-side.',
       );
       // Client-side fallback: update all source orders to toTable
-      await _supabase
-          .from('table_orders')
-          .update({
-            'table_number': toTable,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('seller_id', sellerId)
-          .eq('table_number', fromTable)
-          .timeout(tableOrderTimeout);
+      try {
+        await _supabase
+            .from('table_orders')
+            .update({
+              'table_number': toTable,
+              'updated_at': DateTime.now().toIso8601String(),
+            })
+            .eq('seller_id', sellerId)
+            .eq('table_number', fromTable)
+            .timeout(tableOrderTimeout);
+      } on PostgrestException catch (fallbackError) {
+        if (!_shouldFallbackToDirectTableWrite(fallbackError)) {
+          throw _finalTableOperationDenial('Masa aktarımı');
+        }
+        rethrow;
+      }
       return const <String, dynamic>{'success': true, 'fallback': true};
     } on TimeoutException {
       throw Exception('Masa aktarımı zaman aşımına uğradı. Tekrar deneyin.');
