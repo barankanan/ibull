@@ -603,6 +603,11 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 # Update Log
 
+## 2026-11-07
+
+- Personel yetkisi: `fullAccess` (Tam Erişim) sayfa işlemlerini kapsar, personel yönetimini kapsamaz. Tahsilat, işletme sahibi veya aktif `manageOrders` / Tam Erişim kaydı olmadan yazılamaz. Personel kendi yetki satırını yükseltemez; davet yalnızca durum olarak aktifleşir.
+- Sunucu kontrolü `ibul_app/supabase/migrations/20261107_staff_permission_enforcement.sql` içindedir. Production’a bu turda uygulanmadı.
+
 ## 2026-11-06
 
 - Satıcı paneli derlemesi, son commit’in referans verdiği ama repoda olmayan yardımcılara bağlandı: `order_status_constants`, `table_order_history_utils`, `table_close_history_fallback`, `today_income_builder`, `garson_table_metrics`.

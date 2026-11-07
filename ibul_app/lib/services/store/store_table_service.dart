@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/config/runtime_config.dart';
 import '../../models/garson_operation_rules.dart';
 import '../../models/mixed_service_order.dart';
+import '../../models/staff_access_policy.dart';
 import '../../utils/garson_active_orders_fetch.dart';
 import '../../utils/order_status_constants.dart';
 import '../../utils/table_labels.dart';
@@ -1560,12 +1561,62 @@ class StoreTableService {
   // PAYMENT METHODS
   // ─────────────────────────────────────────────────────────────────────────────
 
+  /// Owners always pass. Anyone else must be an active staff member whose
+  /// grant includes order management or Tam Erişim. A lookup failure fails
+  /// closed so a missing membership cannot be treated as permission.
+  Future<void> _assertCallerCanCollectTablePayment(String sellerId) async {
+    final uid = (_supabase.auth.currentUser?.id ?? '').trim();
+    if (uid.isEmpty) {
+      throw Exception('Bu restoran için ödeme yetkiniz yok.');
+    }
+    if (uid == sellerId.trim()) return;
+
+    Map<String, dynamic>? row;
+    try {
+      row = await _ownStaffMembershipRow(sellerId);
+    } catch (error) {
+      debugPrint(
+        '[StoreTableService] staff payment grant lookup failed: $error',
+      );
+      throw Exception('Bu restoran için ödeme yetkiniz yok.');
+    }
+    final allowed = staffMayPerform(
+      isOwner: false,
+      status: row?['status']?.toString() ?? '',
+      permissions: row?['permissions'],
+      operation: StaffOperation.collectPayment,
+    );
+    if (!allowed) {
+      throw Exception('Bu restoran için ödeme yetkiniz yok.');
+    }
+  }
+
+  Future<Map<String, dynamic>?> _ownStaffMembershipRow(String storeId) async {
+    final user = _supabase.auth.currentUser;
+    final email = user?.email?.trim() ?? '';
+    final phone = user?.phone?.trim() ?? '';
+    final filters = <String>[];
+    if (email.isNotEmpty) filters.add('email.ilike.$email');
+    if (phone.isNotEmpty) filters.add('phone.eq.$phone');
+    if (filters.isEmpty) return null;
+    final row = await _supabase
+        .from('store_sub_admins')
+        .select('status, permissions')
+        .eq('store_id', storeId)
+        .or(filters.join(','))
+        .limit(1)
+        .maybeSingle();
+    if (row == null) return null;
+    return Map<String, dynamic>.from(row);
+  }
+
   /// Records a single payment event (partial or closing) for an open table.
   ///
   /// The same idempotency key returns the original row. A new key is rejected
   /// when it would collect more than the open bill. The database function is
   /// the atomic guard; the direct insert runs only when that function is not
-  /// deployed yet, and only after the same bill check.
+  /// deployed yet, and only after the same bill check. The direct insert also
+  /// requires the owner or an active manageOrders / Tam Erişim grant.
   Future<Map<String, dynamic>> recordTablePayment({
     required String sellerId,
     required int tableNumber,
@@ -1752,6 +1803,7 @@ class StoreTableService {
     String? waiterName,
     String? note,
   }) async {
+    await _assertCallerCanCollectTablePayment(sellerId);
     final payload = <String, dynamic>{
       'seller_id': sellerId,
       'table_number': tableNumber,
