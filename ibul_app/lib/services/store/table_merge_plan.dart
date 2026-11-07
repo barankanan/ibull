@@ -65,6 +65,41 @@ int mergedTableRemainingKurus({
   return remaining < 0 ? 0 : remaining;
 }
 
+/// Server sentences the cashier should see unchanged. A 42501 from this RPC
+/// is an authorization result, not a generic row-policy failure.
+String? friendlyMergeTableBillMessage({
+  required String? code,
+  required String message,
+  String? details,
+}) {
+  final text = '${message.toLowerCase()} ${(details ?? '').toLowerCase()}';
+  if (text.contains('ziyareti belirsiz') ||
+      text.contains('belirsiz ziyaret') ||
+      text.contains('birden fazla')) {
+    return 'Birleştirme yapılmadı. Ziyareti belirsiz veya birden fazla '
+        'ziyaret var. Ödemeler taşınmadı.';
+  }
+  if (text.contains('masalar değişti')) {
+    return 'Masalar değişti. Birleştirme yapılmadı.';
+  }
+  if (text.contains('masa aktarma yetkisi') ||
+      text.contains('birleştirme yetkisi') ||
+      text.contains('yetkisi doğrulanamadı') ||
+      code == '42501') {
+    return 'Bu restoran için masa birleştirme yetkiniz yok.';
+  }
+  if (code == 'PGRST202' ||
+      code == '42883' ||
+      (text.contains('merge_table_bills') &&
+          (text.contains('could not find') ||
+              text.contains('does not exist') ||
+              text.contains('schema cache')))) {
+    return 'Masalar birleştirilemedi. Sunucu güncellemesi eksik. '
+        'İşlem durduruldu; hesaplar değiştirilmedi.';
+  }
+  return null;
+}
+
 Set<String> _visitIds(Iterable<Map<String, dynamic>> orders) {
   return orders
       .map((order) => order['visit_id']?.toString().trim() ?? '')

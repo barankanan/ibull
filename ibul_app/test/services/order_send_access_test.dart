@@ -99,7 +99,7 @@ void main() {
       notes: 'trace note',
       idempotencyKey: 'send-1',
     );
-    expect(withKey['p_idempotency_key'], 'send-1');
+    expect(withKey['p_local_order_id'], 'send-1');
     expect(withKey['p_order_type'], 'table');
 
     final withoutKey = buildCreateTableOrderRpcParams(
@@ -110,7 +110,7 @@ void main() {
       ],
       idempotencyKey: '   ',
     );
-    expect(withoutKey.containsKey('p_idempotency_key'), isFalse);
+    expect(withoutKey['p_local_order_id'], isNull);
   });
 
   test('print anchor is terminal and is not a cancellation', () {

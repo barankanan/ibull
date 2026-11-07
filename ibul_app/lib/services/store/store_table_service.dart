@@ -1733,8 +1733,8 @@ class StoreTableService {
           'p_session_key': resolvedSession,
           'p_amount': amountToStore,
           'p_method': resolvedMethod,
-          'p_idempotency_key': resolvedKey,
           'p_is_closing': isClosing,
+          'p_client_request_id': resolvedKey,
           if (paidBy != null && paidBy.trim().isNotEmpty)
             'p_paid_by': paidBy.trim(),
           if (waiterId != null && waiterId.trim().isNotEmpty)
@@ -2440,8 +2440,6 @@ class StoreTableService {
     required String sellerId,
     required int sourceTable,
     required int targetTable,
-    String? waiterId,
-    String? waiterName,
   }) async {
     if (sourceTable <= 0 || targetTable <= 0 || sourceTable == targetTable) {
       throw Exception('Kaynak ve hedef masa geçersiz.');
@@ -2472,34 +2470,18 @@ class StoreTableService {
               'p_target_table': targetTable,
               'p_source_order_ids': openTableBillIds(sourceOrders),
               'p_target_order_ids': openTableBillIds(targetOrders),
-              if (waiterId != null && waiterId.isNotEmpty)
-                'p_waiter_id': waiterId,
-              if (waiterName != null && waiterName.isNotEmpty)
-                'p_waiter_name': waiterName,
             },
           )
           .timeout(tableOrderTimeout);
       if (result is Map) return Map<String, dynamic>.from(result);
       return const <String, dynamic>{'success': true};
     } on PostgrestException catch (error) {
-      final text = '${error.message} ${error.details ?? ''}'.toLowerCase();
-      if (error.code == 'PGRST202' ||
-          error.code == '42883' ||
-          text.contains('merge_table_bills') &&
-              (text.contains('could not find') ||
-                  text.contains('does not exist') ||
-                  text.contains('schema cache'))) {
-        throw Exception(
-          'Masalar birleştirilemedi. Sunucu güncellemesi eksik. '
-          'İşlem durduruldu; hesaplar değiştirilmedi.',
-        );
-      }
-      if (text.contains('masa birleştirme yetkiniz yok')) {
-        throw Exception('Bu restoran için masa birleştirme yetkiniz yok.');
-      }
-      if (text.contains('masalar değişti')) {
-        throw Exception('Masalar değişti. Birleştirme yapılmadı.');
-      }
+      final friendly = friendlyMergeTableBillMessage(
+        code: error.code,
+        message: error.message,
+        details: error.details?.toString(),
+      );
+      if (friendly != null) throw Exception(friendly);
       throw _tableOrderException('Masa birleştirme', error);
     } on TimeoutException {
       throw Exception('Masa birleştirme zaman aşımına uğradı. Tekrar deneyin.');

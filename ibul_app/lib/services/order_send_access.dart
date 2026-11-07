@@ -115,7 +115,7 @@ Map<String, dynamic> buildCreateTableOrderRpcParams({
     'p_notes': notes,
     'p_job_type': jobType,
     'p_order_type': 'table',
-    if (key.isNotEmpty) 'p_idempotency_key': key,
+    'p_local_order_id': key.isEmpty ? null : key,
   };
 }
 
