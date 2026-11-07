@@ -12,13 +12,11 @@
 -- write on table_orders. Run install_table_operation_staff_wrappers() again
 -- after transfer_table_orders_v2 is created so that function is wrapped too.
 --
--- The wrapper does not copy the seller id into request.jwt.claim.sub. That
--- setting is auth.uid() for the rest of the transaction, so impersonation
--- would let later triggers and writes treat the staff member as the owner.
--- After the real grant check, the wrapper sets ibul.verified_order_seller.
--- Legacy owner-only predicates accept that verified seller while auth.uid()
--- stays the caller. Direct execution of the inner body is revoked, so a
--- caller cannot set the grant and skip the wrapper.
+-- The wrapper does not copy the seller id into request.jwt.claim.sub and does
+-- not trust a session variable. auth.uid() stays the caller. Legacy owner-only
+-- predicates are rewritten to user_can_manage_restaurant_orders, which reads
+-- that same uid. A caller who sets ibul.verified_order_seller still fails the
+-- real grant check. Direct execution of the inner body is revoked.
 --
 -- Do not apply this file to production from automation.
 -- =============================================================================
@@ -171,8 +169,10 @@ as $$
 declare
   v_def text := pg_get_functiondef(p_impl);
   v_next text;
+  v_begin text;
+  v_pos integer;
 begin
-  if v_def is null or position('ibul.verified_order_seller' in v_def) > 0 then
+  if v_def is null or position('user_can_manage_restaurant_orders(p_seller_id)' in v_def) > 0 then
     return;
   end if;
 
@@ -180,25 +180,51 @@ begin
   v_next := regexp_replace(
     v_next,
     'if\s+p_seller_id\s+is\s+distinct\s+from\s+auth\.uid\(\)\s+then',
-    'if p_seller_id is distinct from auth.uid() and coalesce(current_setting(''ibul.verified_order_seller'', true), '''') is distinct from p_seller_id::text then',
+    'if not public.user_can_manage_restaurant_orders(p_seller_id) then',
     'gi'
   );
   v_next := regexp_replace(
     v_next,
     'if\s+p_seller_id\s*<>\s*auth\.uid\(\)\s+then',
-    'if p_seller_id <> auth.uid() and coalesce(current_setting(''ibul.verified_order_seller'', true), '''') is distinct from p_seller_id::text then',
+    'if not public.user_can_manage_restaurant_orders(p_seller_id) then',
     'gi'
   );
   v_next := regexp_replace(
     v_next,
     'if\s+auth\.uid\(\)\s*<>\s*p_seller_id\s+then',
-    'if auth.uid() <> p_seller_id and coalesce(current_setting(''ibul.verified_order_seller'', true), '''') is distinct from p_seller_id::text then',
+    'if not public.user_can_manage_restaurant_orders(p_seller_id) then',
     'gi'
   );
   v_next := regexp_replace(
     v_next,
-    'if\s+auth\.uid\(\)\s+is\s+distinct\s+from\s+p_seller_id(\s+and\s+)',
-    'if auth.uid() is distinct from p_seller_id and coalesce(current_setting(''ibul.verified_order_seller'', true), '''') is distinct from p_seller_id::text\1',
+    'if\s+auth\.uid\(\)\s+is\s+distinct\s+from\s+p_seller_id\s+then',
+    'if not public.user_can_manage_restaurant_orders(p_seller_id) then',
+    'gi'
+  );
+
+  -- Loose membership checks (view-only, empty grant) stay in the body.
+  -- A real manageOrders gate is inserted once, after the first BEGIN, so a
+  -- forged session variable cannot widen them. Only the first BEGIN is used;
+  -- this does not depend on regexp_replace's occurrence argument.
+  if position('user_can_manage_restaurant_orders(p_seller_id)' in v_next) = 0
+     and position('p_seller_id' in v_next) > 0
+  then
+    v_begin := substring(v_next from '[Bb][Ee][Gg][Ii][Nn]');
+    if v_begin is not null then
+      v_pos := position(v_begin in v_next);
+      v_next := overlay(
+        v_next
+        placing v_begin || E'\n  if not public.user_can_manage_restaurant_orders(p_seller_id) then\n    raise exception ''Bu restoran için masa işlemi yetkiniz yok.'' using errcode = ''42501'';\n  end if;'
+        from v_pos
+        for char_length(v_begin)
+      );
+    end if;
+  end if;
+
+  v_next := regexp_replace(
+    v_next,
+    'auth\.uid\(\)\s+is\s+distinct\s+from\s+p_seller_id',
+    'not public.user_can_manage_restaurant_orders(p_seller_id)',
     'gi'
   );
 
@@ -290,7 +316,7 @@ begin
 
     if lower(v_result) = 'void' then
       v_statement := format(
-        'create or replace function public.%I(%s) returns void language plpgsql security definer set search_path = public as $body$ begin if coalesce(current_setting(''request.jwt.claim.role'', true), '''') <> ''service_role'' and not public.user_can_manage_restaurant_orders(p_seller_id) then raise exception ''Bu restoran için masa işlemi yetkiniz yok.'' using errcode = ''42501''; end if; perform set_config(''ibul.verified_order_seller'', p_seller_id::text, true); perform public.%I(%s); end $body$;',
+        'create or replace function public.%I(%s) returns void language plpgsql security definer set search_path = public as $body$ begin if coalesce(current_setting(''request.jwt.claim.role'', true), '''') <> ''service_role'' and not public.user_can_manage_restaurant_orders(p_seller_id) then raise exception ''Bu restoran için masa işlemi yetkiniz yok.'' using errcode = ''42501''; end if; perform public.%I(%s); end $body$;',
         v_spec.fn_name,
         v_spec.fn_args,
         v_impl_name,
@@ -298,7 +324,7 @@ begin
       );
     else
       v_statement := format(
-        'create or replace function public.%I(%s) returns %s language plpgsql security definer set search_path = public as $body$ begin if coalesce(current_setting(''request.jwt.claim.role'', true), '''') <> ''service_role'' and not public.user_can_manage_restaurant_orders(p_seller_id) then raise exception ''Bu restoran için masa işlemi yetkiniz yok.'' using errcode = ''42501''; end if; perform set_config(''ibul.verified_order_seller'', p_seller_id::text, true); return public.%I(%s); end $body$;',
+        'create or replace function public.%I(%s) returns %s language plpgsql security definer set search_path = public as $body$ begin if coalesce(current_setting(''request.jwt.claim.role'', true), '''') <> ''service_role'' and not public.user_can_manage_restaurant_orders(p_seller_id) then raise exception ''Bu restoran için masa işlemi yetkiniz yok.'' using errcode = ''42501''; end if; return public.%I(%s); end $body$;',
         v_spec.fn_name,
         v_spec.fn_args,
         v_result,

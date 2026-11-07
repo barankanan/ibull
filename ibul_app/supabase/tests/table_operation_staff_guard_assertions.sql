@@ -87,11 +87,10 @@ begin
   v_wrapper := pg_get_functiondef(
     'public.close_table_with_history(uuid,integer,text,text,uuid,text,text)'::regprocedure
   );
-  if position('request.jwt.claim.sub' in v_wrapper) > 0 then
-    raise exception 'ASSERT FAIL close wrapper still impersonates the owner';
-  end if;
-  if position('ibul.verified_order_seller' in v_wrapper) = 0 then
-    raise exception 'ASSERT FAIL close wrapper lost the verified-seller grant';
+  if position('request.jwt.claim.sub' in v_wrapper) > 0
+     or position('ibul.verified_order_seller' in v_wrapper) > 0
+  then
+    raise exception 'ASSERT FAIL close wrapper still borrows owner authority';
   end if;
   raise notice 'PASS staff identity stays the caller';
 end
@@ -431,3 +430,55 @@ begin
 end
 $$;
 select pg_temp.assert_table('v2 fullAccess transfer', 19, 190);
+
+do $$
+declare
+  v_denied boolean := false;
+  v_status text;
+begin
+  perform set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+  perform set_config(
+    'ibul.verified_order_seller',
+    '11111111-1111-1111-1111-111111111111',
+    true
+  );
+  begin
+    perform public.close_table_with_history(
+      '11111111-1111-1111-1111-111111111111',
+      20
+    );
+  exception
+    when insufficient_privilege then
+      v_denied := true;
+  end;
+  if not v_denied then
+    raise exception 'ASSERT FAIL forged verified_order_seller closed a table';
+  end if;
+  select status into v_status
+  from public.table_orders
+  where seller_id = '11111111-1111-1111-1111-111111111111'
+    and table_number = 20;
+  if v_status is distinct from 'sent' then
+    raise exception 'ASSERT FAIL forged grant changed table 20: %', v_status;
+  end if;
+
+  execute 'grant execute on function public.close_table_with_history_impl(uuid,integer,text,text,uuid,text,text) to authenticated';
+  v_denied := false;
+  begin
+    execute 'set local role authenticated';
+    perform public.close_table_with_history_impl(
+      '11111111-1111-1111-1111-111111111111',
+      20
+    );
+  exception
+    when insufficient_privilege then
+      v_denied := true;
+  end;
+  execute 'revoke all on function public.close_table_with_history_impl(uuid,integer,text,text,uuid,text,text) from authenticated';
+  if not v_denied then
+    raise exception 'ASSERT FAIL inner close accepted a forged seller grant';
+  end if;
+  raise notice 'PASS forged verified_order_seller does not grant owner authority';
+end
+$$;

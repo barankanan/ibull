@@ -40,6 +40,7 @@ import '../services/campaign_service.dart';
 import '../services/order_service.dart';
 import '../services/kitchen_print_trace_log.dart';
 import '../services/order_print_job_service.dart';
+import '../services/order_send_access.dart';
 import '../services/desktop_print_orchestrator.dart';
 import '../services/desktop_print_hub.dart';
 import '../services/printer_encoding_profile_store.dart';
@@ -12106,7 +12107,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         normalized == 'complete' ||
         normalized == 'completed_payment' ||
         normalized == 'payment_completed' ||
-        normalized == 'archived';
+        normalized == 'archived' ||
+        normalized == 'print_anchor';
   }
 
   bool _isGarsonClosedStatus(String? status) {
@@ -33901,6 +33903,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   bool _isLoadingProducts = false;
   bool _hasShownRealtimeFallbackWarning = false;
   bool _isSubmitting = false;
+  String? _orderSendIdempotencyKey;
   late int _bottomIndex;
   String _selectedCategory = 'Tümü';
   String? _editingOrderId;
@@ -36956,6 +36959,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   ) async {
     if (_isSubmitting) return;
     if (!_canSubmitDraft()) return;
+    _orderSendIdempotencyKey ??= newOrderSendIdempotencyKey();
+    final sendKey = _orderSendIdempotencyKey!;
     setState(() => _isSubmitting = true);
     final pipelineWatch = Stopwatch()..start();
     final isUpdate =
@@ -37235,6 +37240,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           waiterName: _currentWaiterName(),
           jobType: 'new_order',
           garsonDesktopFastKitchen: canFastKitchen,
+          idempotencyKey: sendKey,
         );
         kitchenPerfDbSaveMs = orderDispatchWatch.elapsedMilliseconds;
         _orderPrintJobService.debugLogResult(dispatchResult);
@@ -37358,6 +37364,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           ? 'Sipariş güncellendi.'
           : 'Sipariş gönderildi.';
       setState(() {
+        _orderSendIdempotencyKey = null;
         _draftItems.clear();
         _editingOrderId = null;
         _editingOrderSnapshot = null;

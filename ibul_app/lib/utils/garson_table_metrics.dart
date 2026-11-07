@@ -42,7 +42,8 @@ GarsonActiveTableMetrics computeGarsonActiveTableMetrics({
         status == 'paid' ||
         status == 'completed' ||
         status == 'completed_payment' ||
-        status == 'archived';
+        status == 'archived' ||
+        status == 'print_anchor';
     if (!isTerminal) {
       openTables.add(tableKey);
     }

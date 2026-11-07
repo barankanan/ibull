@@ -80,9 +80,9 @@ begin
 end
 $$;
 select pg_temp.assert_probe(
-  'manageOrders sends and preserved body still impersonates owner',
+  'manageOrders sends as the real staff user',
   2,
-  '11111111-1111-1111-1111-111111111111',
+  '22222222-2222-2222-2222-222222222222',
   'impl'
 );
 
@@ -100,7 +100,7 @@ $$;
 select pg_temp.assert_probe(
   'fullAccess sends',
   3,
-  '11111111-1111-1111-1111-111111111111',
+  '33333333-3333-3333-3333-333333333333',
   'impl'
 );
 
@@ -118,7 +118,7 @@ $$;
 select pg_temp.assert_probe(
   'Tam Erişim sends',
   4,
-  '11111111-1111-1111-1111-111111111111',
+  '99999999-9999-9999-9999-999999999999',
   'impl'
 );
 
@@ -136,7 +136,7 @@ $$;
 select pg_temp.assert_probe(
   'phone manageOrders sends',
   5,
-  '11111111-1111-1111-1111-111111111111',
+  '88888888-8888-8888-8888-888888888888',
   'impl'
 );
 
@@ -357,7 +357,7 @@ $$;
 select pg_temp.assert_probe(
   'second install keeps manageOrders send',
   14,
-  '11111111-1111-1111-1111-111111111111',
+  '22222222-2222-2222-2222-222222222222',
   'impl'
 );
 

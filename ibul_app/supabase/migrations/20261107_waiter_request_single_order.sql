@@ -185,7 +185,29 @@ begin
       v_notes text := btrim(coalesce(p_notes, ''));
       v_job text := btrim(coalesce(p_job_type, ''));
       v_updated integer := 0;
+      v_auto_key text;
     begin
+      v_auto_key := (regexp_match(
+        v_notes,
+        '^(waiter_request:[0-9a-fA-F-]{36})'
+      ))[1];
+      if v_auto_key is not null
+         and to_regclass('public.order_send_idempotency') is not null
+      then
+        perform pg_advisory_xact_lock(
+          hashtext(p_restaurant_id::text),
+          hashtext(v_auto_key)
+        );
+        select result
+          into v_result
+        from public.order_send_idempotency
+        where restaurant_id = p_restaurant_id
+          and idempotency_key = v_auto_key;
+        if found then
+          return v_result || jsonb_build_object('idempotent_replay', true);
+        end if;
+      end if;
+
       v_result := public.create_table_order_with_print_jobs_request_body(
         p_restaurant_id,
         p_table_number,
@@ -221,6 +243,17 @@ begin
             );
           end if;
         end if;
+      end if;
+
+      if v_auto_key is not null
+         and to_regclass('public.order_send_idempotency') is not null
+      then
+        insert into public.order_send_idempotency (
+          restaurant_id, idempotency_key, result
+        ) values (
+          p_restaurant_id, v_auto_key, v_result
+        )
+        on conflict (restaurant_id, idempotency_key) do nothing;
       end if;
 
       return v_result;

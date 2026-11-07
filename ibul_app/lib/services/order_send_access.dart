@@ -1,3 +1,41 @@
+import 'dart:math';
+
+/// Stable key for one garson send. A retry of that send reuses the key so
+/// the server returns the original orders and print_jobs rows.
+String newOrderSendIdempotencyKey() {
+  final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+  final salt = Random().nextInt(0x7fffffff);
+  return 'send-$now-$salt';
+}
+
+/// RPC arguments for `create_table_order_with_print_jobs`.
+///
+/// The idempotency argument is omitted when empty so an older 8-argument
+/// function still matches.
+Map<String, dynamic> buildCreateTableOrderRpcParams({
+  required String restaurantId,
+  required int tableNumber,
+  required List<Map<String, dynamic>> items,
+  String? waiterId,
+  String? waiterName,
+  String? notes,
+  String jobType = 'new_order',
+  String? idempotencyKey,
+}) {
+  final key = (idempotencyKey ?? '').trim();
+  return <String, dynamic>{
+    'p_restaurant_id': restaurantId,
+    'p_table_number': tableNumber,
+    'p_items': items,
+    'p_waiter_id': (waiterId == null || waiterId.isEmpty) ? null : waiterId,
+    'p_waiter_name': waiterName,
+    'p_notes': notes,
+    'p_job_type': jobType,
+    'p_order_type': 'table',
+    if (key.isNotEmpty) 'p_idempotency_key': key,
+  };
+}
+
 /// Garson-facing text for `create_table_order_with_print_jobs` failures.
 String friendlyOrderSendRpcMessage({
   required String? code,

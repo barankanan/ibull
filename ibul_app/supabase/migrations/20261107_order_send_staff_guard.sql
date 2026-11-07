@@ -98,6 +98,57 @@ begin
 end;
 $$;
 
+create or replace function public.neutralize_order_identity_impersonation(
+  p_fn regprocedure
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_def text := pg_get_functiondef(p_fn);
+  v_next text;
+begin
+  if v_def is null then
+    return;
+  end if;
+
+  v_next := v_def;
+  -- Remove only the impersonation statement. Whitespace and either
+  -- restaurant or seller id are accepted. The pattern is the same on
+  -- PostgreSQL 14 through 17; it does not use the occurrence argument
+  -- added in PostgreSQL 15.
+  v_next := regexp_replace(
+    v_next,
+    'perform\s+set_config\(\s*''request\.jwt\.claim\.sub''\s*,\s*p_(restaurant_id|seller_id)::text\s*,\s*true\s*\)\s*;\s*',
+    '',
+    'gi'
+  );
+  v_next := regexp_replace(
+    v_next,
+    'if\s+auth\.uid\(\)\s*(<>|is\s+distinct\s+from)\s*p_restaurant_id\s+then\s+raise\s',
+    'if not public.user_can_manage_restaurant_orders(p_restaurant_id) then raise ',
+    'gi'
+  );
+  v_next := regexp_replace(
+    v_next,
+    'if\s+p_restaurant_id\s*(<>|is\s+distinct\s+from)\s*auth\.uid\(\)\s+then\s+raise\s',
+    'if not public.user_can_manage_restaurant_orders(p_restaurant_id) then raise ',
+    'gi'
+  );
+
+  if v_next ~* 'set_config\(\s*''request\.jwt\.claim\.sub''' then
+    raise exception
+      'Yazdırma fonksiyonundaki kimlik taklidi tanınmadı: %', p_fn::text;
+  end if;
+
+  if v_next is distinct from v_def then
+    execute v_next;
+  end if;
+end;
+$$;
+
 create or replace function public.install_order_send_staff_wrapper()
 returns void
 language plpgsql
@@ -196,6 +247,29 @@ begin
     raise exception 'Sipariş gönderme sarmalayıcısı kurulamadı.';
   end if;
 
+  perform public.neutralize_order_identity_impersonation(v_body);
+  v_impl := to_regprocedure(
+    format('public.create_table_order_with_print_jobs_impl(%s)', v_signature)
+  );
+  if v_impl is not null then
+    perform public.neutralize_order_identity_impersonation(v_impl);
+  end if;
+  if to_regprocedure(
+    format(
+      'public.create_table_order_with_print_jobs_request_body(%s)',
+      v_signature
+    )
+  ) is not null then
+    perform public.neutralize_order_identity_impersonation(
+      to_regprocedure(
+        format(
+          'public.create_table_order_with_print_jobs_request_body(%s)',
+          v_signature
+        )
+      )
+    );
+  end if;
+
   execute $order_send_wrapper$
     create or replace function public.create_table_order_with_print_jobs(
       p_restaurant_id uuid,
@@ -289,6 +363,7 @@ $$;
 
 revoke all on function public.normalize_staff_permission(text) from public;
 revoke all on function public.user_can_manage_restaurant_orders(uuid) from public;
+revoke all on function public.neutralize_order_identity_impersonation(regprocedure) from public;
 revoke all on function public.install_order_send_staff_wrapper() from public;
 
 do $$

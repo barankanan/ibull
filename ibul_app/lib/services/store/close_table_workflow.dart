@@ -19,6 +19,7 @@ const Set<String> closeTableTerminalStatuses = <String>{
   'archived',
   'payment_completed',
   'completed_payment',
+  'print_anchor',
 };
 
 bool isTerminalCloseStatus(String? raw) {

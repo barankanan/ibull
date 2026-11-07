@@ -919,8 +919,12 @@ class OrderPrintJobService {
     String? notes,
     String jobType = 'new_order',
     bool garsonDesktopFastKitchen = false,
+    String? idempotencyKey,
   }) async {
     final traceId = _generateTraceId();
+    final sendKey = (idempotencyKey ?? '').trim().isEmpty
+        ? traceId
+        : idempotencyKey!.trim();
     final pipelineStartedAt = DateTime.now().toIso8601String();
     final pipelineWatch = Stopwatch()..start();
     final productMappings = mergedKitchenProductMappingsForRestaurant(
@@ -979,6 +983,7 @@ class OrderPrintJobService {
       notes: notes,
       traceId: traceId,
       jobType: jobType,
+      idempotencyKey: sendKey,
     );
     final rpcMs = rpcWatch.elapsedMilliseconds;
 
@@ -1516,27 +1521,50 @@ class OrderPrintJobService {
     required String? notes,
     required String traceId,
     required String jobType,
+    String? idempotencyKey,
   }) async {
+    final noteText =
+        '$traceId${notes != null && notes.isNotEmpty ? ' $notes' : ''}';
+    final params = buildCreateTableOrderRpcParams(
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+      items: normalized,
+      waiterId: waiterId,
+      waiterName: waiterName,
+      notes: noteText,
+      jobType: jobType,
+      idempotencyKey: idempotencyKey,
+    );
     try {
       return await _client.rpc(
-        'create_table_order_with_print_jobs',
-        params: {
-          'p_restaurant_id': restaurantId,
-          'p_table_number': tableNumber,
-          'p_items': normalized,
-          'p_waiter_id': (waiterId == null || waiterId.isEmpty)
-              ? null
-              : waiterId,
-          'p_waiter_name': waiterName,
-          'p_notes':
-              '$traceId${notes != null && notes.isNotEmpty ? ' $notes' : ''}',
-          'p_job_type': jobType,
-          'p_order_type': 'table',
-        },
+        'send_table_order_idempotent',
+        params: params,
       );
     } on PostgrestException catch (error) {
+      if (params.containsKey('p_idempotency_key') &&
+          _isCreateTableOrderOverloadMissing(error)) {
+        params.remove('p_idempotency_key');
+        try {
+          return await _client.rpc(
+            'create_table_order_with_print_jobs',
+            params: params,
+          );
+        } on PostgrestException catch (retryError) {
+          throw Exception(_friendlyDispatchRpcError(retryError));
+        }
+      }
       throw Exception(_friendlyDispatchRpcError(error));
     }
+  }
+
+  bool _isCreateTableOrderOverloadMissing(PostgrestException error) {
+    final message = '${error.message} ${error.details ?? ''}'.toLowerCase();
+    return error.code == 'PGRST202' ||
+        error.code == '42883' ||
+        (message.contains('send_table_order_idempotent') &&
+            (message.contains('could not find') ||
+                message.contains('does not exist') ||
+                message.contains('schema cache')));
   }
 
   String _friendlyDispatchRpcError(PostgrestException error) {
