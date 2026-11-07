@@ -33,6 +33,9 @@ const Set<String> garsonTerminalOrderStatuses = <String>{
   'completed_payment',
   'payment_completed',
   'archived',
+  // Print anchor for an approved waiter request. It is not a customer cancel
+  // and must not reopen the table after the bill closes.
+  'print_anchor',
 };
 
 bool isGarsonTerminalOrderStatus(String? status) {
@@ -121,7 +124,7 @@ void logGarsonOrdersDebugSql({required String restaurantId}) {
     "select id, table_id, store_table_id, table_number, status, created_at, updated_at "
     "from public.orders "
     "where restaurant_id = '$restaurantId' "
-    "and status not in ('closed','paid','cancelled','completed_payment','archived') "
+    "and status not in ('closed','paid','cancelled','completed_payment','archived','print_anchor') "
     "order by created_at desc limit 20",
   );
   debugPrint(

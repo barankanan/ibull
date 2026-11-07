@@ -159,7 +159,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Bağlı olduğu dosyalar:` Supabase client, `runtime_config.dart`.
 - `Bu dosyayı kullanan dosyalar:` öncelikle `store_service.dart`; dolaylı olarak `home_screen.dart`, `qr_entry_screen.dart`, `business_detail_page.dart`.
 - `Değişirse etkilenecek yerler:` QR token doğrulama, masa seçimi ve table-order akışları.
-- `Risk notu:` QR bug’larının önemli kısmı burada veya bunu saran `store_service` katmanında çıkar. Ayrıca `table_order_history` okuma/yazma bu katmanda `closed_at` merkezli çalışmalı; prod ortamda `archived_at` yoksa fallback zorunludur yoksa garson kapanışları restart sonrası finans/genel bakışta kaybolmuş görünür.
+- `Risk notu:` QR bug’larının önemli kısmı burada veya bunu saran `store_service` katmanında çıkar. Ayrıca `table_order_history` okuma/yazma bu katmanda `closed_at` merkezli çalışmalı; prod ortamda `archived_at` yoksa fallback zorunludur yoksa garson kapanışları restart sonrası finans/genel bakışta kaybolmuş görünür. Ara ödeme `record_table_payment` uygulanmadan istemci kontrolüyle sınırlıdır; fonksiyon uygulanmadan iki cihaz aynı anda fazla tahsilat yazabilir.
 - `Durum:` kısmi
 
 ## `ibul_app/lib/services/order_service.dart`
@@ -427,9 +427,10 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 1. Seller login `AuthService.resolveLoginRoute()` ile rol çözer.
 2. `/seller` route’u `SellerPanelPage` açar.
 3. Seller panel sipariş/masa/mutfak işlemlerinde `StoreService`, `OrderService`, `OrderPrintJobService`, `SellerDashboardService` kullanır.
-4. Direct local print gerekiyorsa `LocalPrintService` ile localhost bridge çağrılır.
-5. Desktop sürekli dinleme gerekiyorsa `DesktopPrintHub` Supabase realtime veya pending sweep ile job claim eder.
-6. Bridge tarafında `local_print_bridge/server.py` baskıyı OS transport’una iletir.
+4. Yeni garson siparişi `create_table_order_with_print_jobs` ile kaydolur. Bu RPC yalnızca işletme sahibi, aktif `manageOrders` veya Tam Erişim ile çalışmalıdır. Görüntüleme yetkisi gövdeyi çağırabiliyorsa sipariş ve mutfak fişi oluşur. Gövde yeniden yazılmaz; `20261107_order_send_staff_guard.sql` mevcut fonksiyonu saklayıp dışarıdan aynı kuralı uygular. Migration uygulanmadan önce görüntüleme yetkisi sipariş gönderebilir.
+5. Direct local print gerekiyorsa `LocalPrintService` ile localhost bridge çağrılır.
+6. Desktop sürekli dinleme gerekiyorsa `DesktopPrintHub` Supabase realtime veya pending sweep ile job claim eder.
+7. Bridge tarafında `local_print_bridge/server.py` baskıyı OS transport’una iletir.
 
 ## Restaurant ops web veri akışı
 
@@ -603,6 +604,19 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 # Update Log
 
+## 2026-11-07
+
+- Personel yetkisi: `fullAccess` (Tam Erişim) sayfa işlemlerini kapsar, personel yönetimini kapsamaz. Tahsilat, işletme sahibi veya aktif `manageOrders` / Tam Erişim kaydı olmadan yazılamaz. Personel kendi yetki satırını yükseltemez; davet yalnızca durum olarak aktifleşir.
+- Sunucu kontrolü `ibul_app/supabase/migrations/20261107_staff_permission_enforcement.sql` içindedir. Production’a bu turda uygulanmadı.
+- Açık adisyon kalemi (`table_orders.items`) artık sahip, aktif `manageOrders` veya Tam Erişim olmadan değişmiyor. Mutfak durum güncellemesi, kalem değişmeden duruyor.
+- `approve_waiter_order_request` ve `reject_waiter_order_request` gövdeleri yeniden yazılmadı. Aynı yetki kuralı sarmalayıcıda. `auth.uid()` değiştirilmez.
+- Migration production'a uygulanmadı: `ibul_app/supabase/migrations/20261107_bill_item_edit_staff_guard.sql`. Sonradan public fonksiyon değişirse `select public.install_bill_item_edit_staff_guards();` yeniden çalıştırılmalı.
+
+## 2026-11-06
+
+- Satıcı paneli derlemesi, son commit’in referans verdiği ama repoda olmayan yardımcılara bağlandı: `order_status_constants`, `table_order_history_utils`, `table_close_history_fallback`, `today_income_builder`, `garson_table_metrics`.
+- Masa aktarımı artık seçili satır planıyla çalışır. Kısmi aktarım, RPC hata verince tüm masayı taşıyan yedek yola düşmez. `transfer_table_orders_v2` migration’ı üretimde ayrıca uygulanmalıdır.
+
 ## 2026-06-12
 
 - İlk `PROJECT_MAP.md` oluşturuldu.
@@ -624,3 +638,20 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `app_state.dart` seller-scoped cache yardımcıları ile seller panel için kalıcı dashboard/finance cache desteği aldı.
 - `seller_panel_page.dart` startup bootstrap sırası owner restore -> sellerId resolve -> cached closed-history hydrate -> store profile refresh olacak şekilde güçlendirildi; boş fetch artık mevcut cache’i ezmiyor.
 - `seller_panel_finance_modules.dart` owner bootstrap tamamlanmadan `FinanceShell` oluşturmuyor; hazır olunca sellerId içeren anahtarla provider yeniden kuruluyor.
+
+## 2026-11-07
+
+- Masa tahsilatı artık açık hesabın kalan tutarını ve işlem anahtarını kontrol ediyor. Aynı anahtar ikinci satır açmıyor; masa yeniden açıldığında eski ziyaretin ödemesi yeni hesabı düşürmüyor.
+- `ibul_app/supabase/migrations/20261107_record_table_payment_guard.sql` production’a uygulanmadı. Uygulanmadan çapraz cihaz kilidi yok. Mevcut `guard_table_payment` fazla ödeme tetikleyicisi durur.
+- Masa kapatma ve masa aktarımı artık sahip, `manageOrders` veya Tam Erişim ister. Görüntüleme yetkisi, boş izin, davetli personel ve başka işletme bu işlemi yapamaz. Sarmalayıcı `request.jwt.claim.sub` değerini işletme sahibine çevirmez; gerçek `auth.uid()` durur ve iç fonksiyon ancak doğrulanmış işlem iznini görür.
+- Mevcut RPC gövdeleri korunur. `install_table_operation_staff_wrappers()` onları sarar. `transfer_table_orders_v2` bu migration'dan sonra oluşursa aynı fonksiyon yeniden çalıştırılmalıdır.
+- `20261107_table_operation_staff_guard.sql` production'a bu otomasyon tarafından uygulanmaz.
+- `create_table_order_with_print_jobs` için personel sarmalayıcısı eklendi. Sahip, aktif `manageOrders` ve Tam Erişim sipariş gönderir. Görüntüleme, boş izin, davetli personel, başka işletme ve oturumsuz çağrı reddedilir.
+- Mevcut sipariş ve fiş gövdesi `create_table_order_with_print_jobs_staff_body` adıyla korunur. Personel sarmalayıcısı `auth.uid()` değiştirmez. Kurulum, tek-adisyon sarmalayıcısının altında duran yazdırma gövdesini silmez.
+- Production’a `ibul_app/supabase/migrations/20261107_order_send_staff_guard.sql` ayrıca uygulanmalıdır. Sonradan public fonksiyon değişirse `select public.install_order_send_staff_wrapper();` yeniden çalıştırılır.
+- `approve_waiter_order_request` adisyonu `table_orders` içine yazar ve mutfak kalemi varsa `create_table_order_with_print_jobs` çağırır. Bu RPC ayrıca `orders` tablosuna `confirmed` / `sent` satırı açar. Garson tahtası iki tabloyu birden okur; masa doluyken birleştirme ikinci satırı gizler, adisyon kapanınca aktif `orders` satırı masayı yeniden açabilir.
+- Onay gövdesi yeniden yazılmadı. `install_waiter_request_single_order_guard()` mevcut yazdırma fonksiyonunu çağırır. Notu `waiter_request:` ile başlayan `new_order` çapası `print_anchor` olur. Bu bir müşteri iptali değildir: stok iadesi, iptal raporu ve fiş iptali tetiklenmez. Satır silinmez; `print_jobs.order_id` ve fiş kimliği durur. Doğrudan garson gönderimi aynı notu kullanmadığı için değişmez.
+- Geçmiş satırlar bu migration ile düzeltilmez. Public yazdırma fonksiyonu sonradan değişirse `select public.install_waiter_request_single_order_guard();` yeniden çalıştırılmalı.
+- Production sırası, dosya adına göre: `20261106_transfer_table_orders_v2.sql`, `20261107_bill_item_edit_staff_guard.sql`, `20261107_order_send_staff_guard.sql`, `20261107_record_table_payment_guard.sql`, `20261107_staff_permission_enforcement.sql`, `20261107_table_operation_staff_guard.sql`, `20261107_waiter_request_single_order.sql`, `20261107_order_identity_idempotency.sql`. Bu otomasyon production’a uygulamaz.
+- Yazdırma fonksiyonu restoran sahibini taklit etmez. `ibul.verified_order_seller` yetki vermez. Aynı `p_idempotency_key` ikinci `orders` veya `print_jobs` satırı açmaz.
+- Gönderim anahtarı `ibul.order_send_ledger.v1` ile cihazda durur. Uygulama kapanıp açılınca aynı parmak izi eski anahtarı kullanır. Başarılı gönderim anahtarı siler. Yeni istenen anahtar kayıtlı anahtarın yerine geçmez.

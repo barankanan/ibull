@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart'
         defaultTargetPlatform,
         kIsWeb,
         TargetPlatform;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/desktop_printer_setup_models.dart';
@@ -23,6 +24,7 @@ import 'kitchen_order_number_fields.dart';
 import 'kitchen_print_trace_log.dart';
 import 'kitchen_product_mapping_cache_store.dart';
 import 'kitchen_routing_service.dart';
+import 'order_send_access.dart';
 import 'printer_encoding_profile_store.dart';
 import 'printer_event_log_service.dart';
 import 'printer_repository.dart';
@@ -909,6 +911,39 @@ class OrderPrintJobService {
     }
   }
 
+  static const String _orderSendLedgerKey = 'ibul.order_send_ledger.v1';
+  final OrderSendKeyLedger _sendKeys = OrderSendKeyLedger();
+  bool _sendKeysLoaded = false;
+
+  Future<void> _ensureSendKeysLoaded() async {
+    if (_sendKeysLoaded) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_orderSendLedgerKey);
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          _sendKeys.restore(
+            decoded.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            ),
+          );
+        }
+      }
+      _sendKeys.sink = (keys) async {
+        final store = await SharedPreferences.getInstance();
+        if (keys.isEmpty) {
+          await store.remove(_orderSendLedgerKey);
+          return;
+        }
+        await store.setString(_orderSendLedgerKey, jsonEncode(keys));
+      };
+      _sendKeysLoaded = true;
+    } catch (error) {
+      debugPrint('[OrderSend] ledger persist unavailable: $error');
+    }
+  }
+
   Future<OrderPrintJobDispatchResult> dispatchNewOrder({
     required String restaurantId,
     required int tableNumber,
@@ -918,6 +953,7 @@ class OrderPrintJobService {
     String? notes,
     String jobType = 'new_order',
     bool garsonDesktopFastKitchen = false,
+    String? idempotencyKey,
   }) async {
     final traceId = _generateTraceId();
     final pipelineStartedAt = DateTime.now().toIso8601String();
@@ -945,6 +981,19 @@ class OrderPrintJobService {
     if (normalized.isEmpty) {
       throw Exception('Print job oluşturmak için sipariş kalemi bulunamadı.');
     }
+    final sendFingerprint = orderSendActionFingerprint(
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+      jobType: jobType,
+      items: normalized,
+    );
+    await _ensureSendKeysLoaded();
+    final sendKey = resolveOrderSendKey(
+      ledger: _sendKeys,
+      fingerprint: sendFingerprint,
+      requestedKey: idempotencyKey,
+    );
+    await _sendKeys.flush();
 
     debugPrint('[GarsonPrint][send_order_start]');
     debugPrint('table=$tableNumber');
@@ -969,7 +1018,9 @@ class OrderPrintJobService {
     );
 
     final rpcWatch = Stopwatch()..start();
-    final response = await _runCreateTableOrderWithPrintJobsRpc(
+    late final dynamic response;
+    try {
+      response = await _runCreateTableOrderWithPrintJobsRpc(
       restaurantId: restaurantId,
       tableNumber: tableNumber,
       normalized: normalized,
@@ -978,7 +1029,12 @@ class OrderPrintJobService {
       notes: notes,
       traceId: traceId,
       jobType: jobType,
+      idempotencyKey: sendKey,
     );
+    } catch (error) {
+      // Keep [sendKey] so the same action retries with the same record.
+      rethrow;
+    }
     final rpcMs = rpcWatch.elapsedMilliseconds;
 
     final data = response is Map<String, dynamic>
@@ -1249,6 +1305,8 @@ class OrderPrintJobService {
       },
     };
 
+    _sendKeys.complete(sendFingerprint);
+    await _sendKeys.flush();
     return OrderPrintJobDispatchResult(
       orderId: data['order_id']?.toString(),
       orderNumber: data['order_number']?.toString(),
@@ -1515,23 +1573,24 @@ class OrderPrintJobService {
     required String? notes,
     required String traceId,
     required String jobType,
+    String? idempotencyKey,
   }) async {
+    final noteText =
+        '$traceId${notes != null && notes.isNotEmpty ? ' $notes' : ''}';
+    final params = buildCreateTableOrderRpcParams(
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+      items: normalized,
+      waiterId: waiterId,
+      waiterName: waiterName,
+      notes: noteText,
+      jobType: jobType,
+      idempotencyKey: idempotencyKey,
+    );
     try {
       return await _client.rpc(
-        'create_table_order_with_print_jobs',
-        params: {
-          'p_restaurant_id': restaurantId,
-          'p_table_number': tableNumber,
-          'p_items': normalized,
-          'p_waiter_id': (waiterId == null || waiterId.isEmpty)
-              ? null
-              : waiterId,
-          'p_waiter_name': waiterName,
-          'p_notes':
-              '$traceId${notes != null && notes.isNotEmpty ? ' $notes' : ''}',
-          'p_job_type': jobType,
-          'p_order_type': 'table',
-        },
+        'send_table_order_idempotent',
+        params: params,
       );
     } on PostgrestException catch (error) {
       throw Exception(_friendlyDispatchRpcError(error));
@@ -1539,33 +1598,12 @@ class OrderPrintJobService {
   }
 
   String _friendlyDispatchRpcError(PostgrestException error) {
-    final details =
-        '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
-            .toLowerCase();
-    if (details.contains(
-          'column "table_number" of relation "orders" does not exist',
-        ) ||
-        details.contains('orders') &&
-            details.contains('table_number') &&
-            details.contains('does not exist')) {
-      return 'Mutfak fişi oluşturulamadı. Supabase orders tablosunda table_number kolonu yok '
-          'ama mutfak print RPC onu yazmaya çalışıyor. SQL patch uygulanmalı '
-          '(create_table_order_with_print_jobs_impl).';
-    }
-    if (details.contains('missing from-clause entry for table "v_item"') ||
-        details.contains('missing from-clause entry for table "v_item"')) {
-      return 'Mutfak fişi oluşturulamadı. SQL mutfak payload fonksiyonunda v_item '
-          'alias hatası var. (Supabase RPC: create_table_order_with_print_jobs)';
-    }
-    if (error.code == '42501' ||
-        details.contains('permission denied') ||
-        details.contains('bu restoran için işlem yetkiniz yok') ||
-        details.contains('row-level security')) {
-      return 'Mutfak fişi oluşturulamadı. Garson hesabının bu restoranda aktif '
-          'yazdırma yetkisi yok. Supabase tarafında store_sub_admins kaydında '
-          'email veya telefon eşleşmesi gerekli.';
-    }
-    return error.message;
+    return friendlyOrderSendRpcMessage(
+      code: error.code,
+      message: error.message,
+      details: error.details?.toString(),
+      hint: error.hint,
+    );
   }
 
   Future<_KitchenPrintDispatchOutcome> _dispatchCreatedPrintJobsGarsonFast({

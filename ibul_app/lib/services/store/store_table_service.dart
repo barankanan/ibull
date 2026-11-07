@@ -6,13 +6,19 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config/runtime_config.dart';
+import '../../models/garson_operation_rules.dart';
 import '../../models/mixed_service_order.dart';
+import '../../models/staff_access_policy.dart';
 import '../../utils/garson_active_orders_fetch.dart';
 import '../../utils/order_status_constants.dart';
 import '../../utils/table_labels.dart';
+import '../bill_edit_access.dart';
 import 'close_table_workflow.dart';
 import 'table_close_history_fallback.dart';
+import 'table_operation_access.dart';
 import 'table_order_history_utils.dart';
+import 'table_payment_guard.dart';
+import 'table_transfer_plan.dart';
 
 class StoreTableService {
   StoreTableService({
@@ -26,6 +32,8 @@ class StoreTableService {
   final String? Function() _currentUserIdResolver;
   final Duration tableOrderTimeout;
   bool? _tableOrderHistorySupportsArchivedAt;
+  static final TablePaymentTurnstile _tablePaymentTurnstile =
+      TablePaymentTurnstile();
 
   bool _isStoreTablesMissingError(Object error) {
     if (error is! PostgrestException) return false;
@@ -116,13 +124,19 @@ class StoreTableService {
             details.contains('check'));
   }
 
-  bool _isTableOrderPermissionError(PostgrestException error) {
-    final details =
-        '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
-            .toLowerCase();
-    return error.code == '42501' ||
-        details.contains('permission denied') ||
-        details.contains('row-level security');
+  bool _shouldFallbackToDirectTableWrite(PostgrestException error) {
+    return shouldFallbackToDirectTableWrite(
+      code: error.code,
+      message: error.message,
+      details: error.details?.toString(),
+      hint: error.hint,
+    );
+  }
+
+  Exception _finalTableOperationDenial(String action) {
+    return Exception(
+      '$action yapılamadı. Bu restoran için masa işlemi yetkiniz yok.',
+    );
   }
 
   bool _isTableOrderMetadataColumnMissingError(PostgrestException error) {
@@ -183,12 +197,13 @@ class StoreTableService {
   }
 
   Exception _tableOrderException(String action, PostgrestException error) {
-    if (_isTableOrderPermissionError(error)) {
-      return Exception(
-        '$action yapılamadı. Yetki politikası (RLS) bu işlemi engelliyor.',
-      );
-    }
-    return Exception('$action yapılamadı: ${error.message}');
+    return tableOrderMutationException(
+      action: action,
+      code: error.code,
+      message: error.message,
+      details: error.details?.toString(),
+      hint: error.hint,
+    );
   }
 
   String _tableOrdersRealtimeFilter(String sellerId) {
@@ -1514,7 +1529,16 @@ class StoreTableService {
       );
       return;
     } on PostgrestException catch (rpcError) {
-      // RPC not found or permission error — fall through to direct DELETE.
+      if (!_shouldFallbackToDirectTableWrite(rpcError)) {
+        debugPrint(
+          '[StoreTableService.closeTableOrders] rpc=denied '
+          'code=${rpcError.code} msg=${rpcError.message} '
+          'action=no_direct_delete',
+        );
+        throw _finalTableOperationDenial('Masa kapatma');
+      }
+      // RPC missing or an older owner-only rejection. Direct delete remains
+      // the compatibility path until the staff-guard migration is applied.
       debugPrint(
         '[StoreTableService.closeTableOrders] rpc=failed '
         'code=${rpcError.code} msg=${rpcError.message} '
@@ -1537,6 +1561,9 @@ class StoreTableService {
           .eq('table_number', tableNumber)
           .timeout(tableOrderTimeout);
     } on PostgrestException catch (error) {
+      if (!_shouldFallbackToDirectTableWrite(error)) {
+        throw _finalTableOperationDenial('Masa kapatma');
+      }
       throw _tableOrderException('Masa kapatma', error);
     } on TimeoutException {
       throw Exception(
@@ -1555,7 +1582,62 @@ class StoreTableService {
   // PAYMENT METHODS
   // ─────────────────────────────────────────────────────────────────────────────
 
-  /// Records a single payment event (partial or closing) for a table session.
+  /// Owners always pass. Anyone else must be an active staff member whose
+  /// grant includes order management or Tam Erişim. A lookup failure fails
+  /// closed so a missing membership cannot be treated as permission.
+  Future<void> _assertCallerCanCollectTablePayment(String sellerId) async {
+    final uid = (_supabase.auth.currentUser?.id ?? '').trim();
+    if (uid.isEmpty) {
+      throw Exception('Bu restoran için ödeme yetkiniz yok.');
+    }
+    if (uid == sellerId.trim()) return;
+
+    Map<String, dynamic>? row;
+    try {
+      row = await _ownStaffMembershipRow(sellerId);
+    } catch (error) {
+      debugPrint(
+        '[StoreTableService] staff payment grant lookup failed: $error',
+      );
+      throw Exception('Bu restoran için ödeme yetkiniz yok.');
+    }
+    final allowed = staffMayPerform(
+      isOwner: false,
+      status: row?['status']?.toString() ?? '',
+      permissions: row?['permissions'],
+      operation: StaffOperation.collectPayment,
+    );
+    if (!allowed) {
+      throw Exception('Bu restoran için ödeme yetkiniz yok.');
+    }
+  }
+
+  Future<Map<String, dynamic>?> _ownStaffMembershipRow(String storeId) async {
+    final user = _supabase.auth.currentUser;
+    final email = user?.email?.trim() ?? '';
+    final phone = user?.phone?.trim() ?? '';
+    final filters = <String>[];
+    if (email.isNotEmpty) filters.add('email.ilike.$email');
+    if (phone.isNotEmpty) filters.add('phone.eq.$phone');
+    if (filters.isEmpty) return null;
+    final row = await _supabase
+        .from('store_sub_admins')
+        .select('status, permissions')
+        .eq('store_id', storeId)
+        .or(filters.join(','))
+        .limit(1)
+        .maybeSingle();
+    if (row == null) return null;
+    return Map<String, dynamic>.from(row);
+  }
+
+  /// Records a single payment event (partial or closing) for an open table.
+  ///
+  /// The same idempotency key returns the original row. A new key is rejected
+  /// when it would collect more than the open bill. The database function is
+  /// the atomic guard; the direct insert runs only when that function is not
+  /// deployed yet, and only after the same bill check. The direct insert also
+  /// requires the owner or an active manageOrders / Tam Erişim grant.
   Future<Map<String, dynamic>> recordTablePayment({
     required String sellerId,
     required int tableNumber,
@@ -1567,7 +1649,182 @@ class StoreTableService {
     String? waiterId,
     String? waiterName,
     String? note,
+    String? idempotencyKey,
   }) async {
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    final resolvedSession = sessionKey.trim();
+    final resolvedMethod = method.trim();
+    final resolvedKey = (idempotencyKey ?? '').trim().isEmpty
+        ? newTablePaymentIdempotencyKey()
+        : idempotencyKey!.trim();
+    if (tableNumber <= 0) {
+      throw Exception('Masa numarası geçersiz.');
+    }
+    if (resolvedSession.isEmpty) {
+      throw Exception('Ödeme oturumu bulunamadı.');
+    }
+    final payloadErrors = validateTablePaymentPayload(<String, dynamic>{
+      'seller_id': resolvedSellerId,
+      'table_number': tableNumber,
+      'session_key': resolvedSession,
+      'amount': amount,
+      'method': resolvedMethod,
+    });
+    if (payloadErrors.isNotEmpty) {
+      throw Exception(payloadErrors.first);
+    }
+
+    return _tablePaymentTurnstile.run(
+      '$resolvedSellerId:$tableNumber',
+      () async {
+        final recorded = (await getTablePayments(
+          sellerId: resolvedSellerId,
+          tableNumber: tableNumber,
+        )).map(RecordedTablePayment.fromMap).toList(growable: false);
+        final replay = planTablePayment(
+          tableNumber: tableNumber,
+          billKurus: 0,
+          amount: amount,
+          idempotencyKey: resolvedKey,
+          openBillPayments: const <RecordedTablePayment>[],
+          idempotencyCandidates: recorded,
+        );
+        if (replay.isReplay && replay.existing != null) {
+          return <String, dynamic>{...replay.existing!.raw, 'replayed': true};
+        }
+        if (replay.isReject &&
+            replay.code == TablePaymentPlanCode.idempotency) {
+          throw Exception(replay.message ?? 'Ödeme işlemi kimliği geçersiz.');
+        }
+
+        final orders = await getTableOrdersSnapshot(
+          resolvedSellerId,
+          tableNumber: tableNumber,
+        );
+        if (orders.isNotEmpty) {
+          final openedAt = earliestOrderOpenedAt(orders);
+          final openPayments = paymentsInOpenBill(
+            payments: recorded,
+            openedAt: openedAt,
+            now: DateTime.now().toUtc(),
+            hasOpenOrders: true,
+          );
+          final plan = planTablePayment(
+            tableNumber: tableNumber,
+            billKurus: billKurusForOrders(orders),
+            amount: amount,
+            idempotencyKey: resolvedKey,
+            openBillPayments: openPayments,
+            idempotencyCandidates: recorded,
+          );
+          if (plan.isReplay && plan.existing != null) {
+            return <String, dynamic>{...plan.existing!.raw, 'replayed': true};
+          }
+          if (plan.isReject) {
+            throw Exception(plan.message ?? 'Ödeme kaydedilemedi.');
+          }
+        }
+
+        final amountToStore = kurusToMoney(moneyToKurus(amount));
+        final rpcParams = <String, dynamic>{
+          'p_seller_id': resolvedSellerId,
+          'p_table_number': tableNumber,
+          'p_session_key': resolvedSession,
+          'p_amount': amountToStore,
+          'p_method': resolvedMethod,
+          'p_idempotency_key': resolvedKey,
+          'p_is_closing': isClosing,
+          if (paidBy != null && paidBy.trim().isNotEmpty)
+            'p_paid_by': paidBy.trim(),
+          if (waiterId != null && waiterId.trim().isNotEmpty)
+            'p_waiter_id': waiterId.trim(),
+          if (waiterName != null && waiterName.trim().isNotEmpty)
+            'p_waiter_name': waiterName.trim(),
+          if (note != null && note.trim().isNotEmpty) 'p_note': note.trim(),
+        };
+
+        try {
+          final rpcResult = await _supabase
+              .rpc('record_table_payment', params: rpcParams)
+              .timeout(tableOrderTimeout);
+          return _paymentRowFromRpc(rpcResult);
+        } on PostgrestException catch (error) {
+          if (!_isRecordTablePaymentRpcMissing(error)) {
+            throw _tableOrderException('Ödeme kaydı', error);
+          }
+          debugPrint(
+            '[StoreTableService.recordTablePayment] rpc=missing '
+            'seller=$resolvedSellerId table=$tableNumber '
+            'action=guarded_insert',
+          );
+        } on TimeoutException {
+          throw Exception(
+            'Ödeme kaydı zaman aşımına uğradı. '
+            'Tekrar denemeden önce hesabı yenileyin.',
+          );
+        }
+
+        if (orders.isEmpty) {
+          throw Exception('Açık hesap doğrulanamadı. Ödeme kaydedilmedi.');
+        }
+        return _insertGuardedTablePayment(
+          sellerId: resolvedSellerId,
+          tableNumber: tableNumber,
+          sessionKey: resolvedSession,
+          amount: amountToStore,
+          method: resolvedMethod,
+          isClosing: isClosing,
+          paidBy: paidBy,
+          waiterId: waiterId,
+          waiterName: waiterName,
+          note: note,
+          idempotencyKey: resolvedKey,
+        );
+      },
+    );
+  }
+
+  Map<String, dynamic> _paymentRowFromRpc(dynamic result) {
+    if (result is Map) {
+      return Map<String, dynamic>.from(result);
+    }
+    if (result is List && result.isNotEmpty && result.first is Map) {
+      return Map<String, dynamic>.from(result.first as Map);
+    }
+    throw Exception('Ödeme kaydı yanıtı okunamadı.');
+  }
+
+  bool _isRecordTablePaymentRpcMissing(PostgrestException error) {
+    final message = '${error.message} ${error.details ?? ''}'.toLowerCase();
+    return error.code == '42883' ||
+        error.code == 'PGRST202' ||
+        (message.contains('record_table_payment') &&
+            (message.contains('does not exist') ||
+                message.contains('schema cache') ||
+                message.contains('could not find')));
+  }
+
+  bool _isMissingPaymentColumn(PostgrestException error, String column) {
+    final message = '${error.message} ${error.details ?? ''}'.toLowerCase();
+    return error.code == '42703' ||
+        error.code == 'PGRST204' ||
+        message.contains(column.toLowerCase());
+  }
+
+  Future<Map<String, dynamic>> _insertGuardedTablePayment({
+    required String sellerId,
+    required int tableNumber,
+    required String sessionKey,
+    required double amount,
+    required String method,
+    required bool isClosing,
+    required String idempotencyKey,
+    String? paidBy,
+    String? waiterId,
+    String? waiterName,
+    String? note,
+  }) async {
+    await _assertCallerCanCollectTablePayment(sellerId);
     final payload = <String, dynamic>{
       'seller_id': sellerId,
       'table_number': tableNumber,
@@ -1575,12 +1832,59 @@ class StoreTableService {
       'amount': amount,
       'method': method,
       'is_closing': isClosing,
-      if (paidBy != null && paidBy.isNotEmpty) 'paid_by': paidBy,
-      if (waiterId != null && waiterId.isNotEmpty) 'waiter_id': waiterId,
-      if (waiterName != null && waiterName.isNotEmpty)
-        'waiter_name': waiterName,
+      'idempotency_key': idempotencyKey,
+      if (paidBy != null && paidBy.trim().isNotEmpty) 'paid_by': paidBy.trim(),
+      if (waiterId != null && waiterId.trim().isNotEmpty)
+        'waiter_id': waiterId.trim(),
+      if (waiterName != null && waiterName.trim().isNotEmpty)
+        'waiter_name': waiterName.trim(),
       if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
     };
+    try {
+      return await _insertTablePaymentPayload(payload, replayed: false);
+    } on PostgrestException catch (error) {
+      if (error.code == '23505') {
+        final replayed = await _replayedTablePayment(
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+          idempotencyKey: idempotencyKey,
+        );
+        if (replayed != null) return replayed;
+      }
+      if (_isMissingPaymentColumn(error, 'idempotency_key')) {
+        payload.remove('idempotency_key');
+        try {
+          return await _insertTablePaymentPayload(payload, replayed: false);
+        } on PostgrestException catch (retryError) {
+          throw _tableOrderException('Ödeme kaydı', retryError);
+        }
+      }
+      throw _tableOrderException('Ödeme kaydı', error);
+    }
+  }
+
+  Future<Map<String, dynamic>?> _replayedTablePayment({
+    required String sellerId,
+    required int tableNumber,
+    required String idempotencyKey,
+  }) async {
+    final rows = await getTablePayments(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+    );
+    for (final row in rows) {
+      final key = row['idempotency_key']?.toString().trim();
+      if (key == idempotencyKey) {
+        return <String, dynamic>{...row, 'replayed': true};
+      }
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> _insertTablePaymentPayload(
+    Map<String, dynamic> payload, {
+    required bool replayed,
+  }) async {
     try {
       final inserted = await _supabase
           .from('table_payments')
@@ -1588,11 +1892,15 @@ class StoreTableService {
           .select()
           .single()
           .timeout(tableOrderTimeout);
-      return Map<String, dynamic>.from(inserted as Map);
-    } on PostgrestException catch (error) {
-      throw _tableOrderException('Ödeme kaydı', error);
+      return <String, dynamic>{
+        ...Map<String, dynamic>.from(inserted as Map),
+        'replayed': replayed,
+      };
     } on TimeoutException {
-      throw Exception('Ödeme kaydı zaman aşımına uğradı. Tekrar deneyin.');
+      throw Exception(
+        'Ödeme kaydı zaman aşımına uğradı. '
+        'Tekrar denemeden önce hesabı yenileyin.',
+      );
     }
   }
 
@@ -1674,6 +1982,13 @@ class StoreTableService {
         tableNumber: tableNumber,
       );
     } on PostgrestException catch (error) {
+      if (!_shouldFallbackToDirectTableWrite(error)) {
+        debugPrint(
+          '[StoreTableService] closeTableWithHistory denied ($error). '
+          'No client-side archive.',
+        );
+        throw _finalTableOperationDenial('Masa kapatma');
+      }
       // Fall back to client-side archive + delete if RPC unavailable (older DB)
       debugPrint(
         '[StoreTableService] closeTableWithHistory RPC failed ($error). Falling back to client-side archive.',
@@ -1763,8 +2078,10 @@ class StoreTableService {
     }
 
     final fallbackPlan = planTableCloseHistoryFallback(
+      tableNumber: tableNumber,
       closedOrders: closedOrders,
       recentHistoryRows: recentHistoryRows,
+      closedAt: effectiveClosedAt.toLocal(),
     );
     if (!fallbackPlan.shouldInsert) return false;
 
@@ -2115,8 +2432,11 @@ class StoreTableService {
   // TABLE TRANSFER
   // ─────────────────────────────────────────────────────────────────────────────
 
-  /// Transfers orders between tables via the RPC.
-  /// Falls back to a client-side move if the RPC is unavailable.
+  /// Transfers orders between tables.
+  ///
+  /// Partial and customer transfers never fall back to moving the whole table.
+  /// The legacy `transfer_table_orders` RPC treats a failed item match as an
+  /// empty destination order and its client fallback used to move every row.
   Future<Map<String, dynamic>> transferTableOrders({
     required String sellerId,
     required int fromTable,
@@ -2127,16 +2447,47 @@ class StoreTableService {
     String? waiterName,
     String? note,
   }) async {
+    if (fromTable <= 0 || toTable <= 0) {
+      throw Exception('Geçersiz masa numarası.');
+    }
+    if (fromTable == toTable) {
+      throw Exception('Kaynak ve hedef masa aynı olamaz.');
+    }
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    final canonical = canonicalTableTransferType(transferType);
+    List<Map<String, dynamic>> sourceOrders;
+    try {
+      sourceOrders = await getTableOrdersByTable(
+        sellerId: resolvedSellerId,
+        tableNumber: fromTable,
+      );
+    } on TimeoutException {
+      throw Exception('Masa aktarımı zaman aşımına uğradı. Tekrar deneyin.');
+    }
+    final plan = planTableTransfer(
+      orders: sourceOrders,
+      toTable: toTable,
+      transferType: canonical,
+      selectedLineIds: itemIds,
+    );
+    if (!plan.hasChanges) {
+      throw Exception(
+        canonical == 'full'
+            ? 'Aktarılacak açık sipariş bulunamadı.'
+            : 'Seçilen ürünler bu masada bulunamadı. Masa olduğu gibi bırakıldı.',
+      );
+    }
+
     try {
       final result = await _supabase
           .rpc(
-            'transfer_table_orders',
+            'transfer_table_orders_v2',
             params: {
-              'p_seller_id': sellerId,
+              'p_seller_id': resolvedSellerId,
               'p_from_table': fromTable,
               'p_to_table': toTable,
-              'p_transfer_type': transferType,
-              'p_item_ids': itemIds,
+              'p_transfer_type': canonical,
+              'p_item_ids': plan.movedLineIds,
               if (waiterId != null && waiterId.isNotEmpty)
                 'p_waiter_id': waiterId,
               if (waiterName != null && waiterName.isNotEmpty)
@@ -2146,24 +2497,148 @@ class StoreTableService {
           )
           .timeout(tableOrderTimeout);
       if (result is Map) return Map<String, dynamic>.from(result);
-      return const <String, dynamic>{'success': true};
+      return <String, dynamic>{
+        'success': true,
+        'transfer_type': canonical,
+        'moved_count': plan.movedLineIds.length,
+      };
     } on PostgrestException catch (error) {
+      if (!_shouldFallbackToDirectTableWrite(error)) {
+        debugPrint(
+          '[StoreTableService] transferTableOrders denied ($error). '
+          'No client-side move.',
+        );
+        throw _finalTableOperationDenial('Masa aktarımı');
+      }
+      final legacyOwnerOnly = error.code == '42501';
+      if (!_isMissingTransferRpc(error) && !legacyOwnerOnly) {
+        throw _tableOrderException('Masa aktarımı', error);
+      }
       debugPrint(
-        '[StoreTableService] transferTableOrders RPC failed ($error). Falling back to client-side.',
+        '[StoreTableService] transfer_table_orders_v2 unavailable. '
+        'Applying line-level plan locally. type=$canonical',
       );
-      // Client-side fallback: update all source orders to toTable
-      await _supabase
-          .from('table_orders')
-          .update({
-            'table_number': toTable,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('seller_id', sellerId)
-          .eq('table_number', fromTable)
-          .timeout(tableOrderTimeout);
-      return const <String, dynamic>{'success': true, 'fallback': true};
     } on TimeoutException {
       throw Exception('Masa aktarımı zaman aşımına uğradı. Tekrar deneyin.');
+    }
+
+    await _applyTableTransferPlan(
+      sellerId: resolvedSellerId,
+      fromTable: fromTable,
+      toTable: toTable,
+      plan: plan,
+      waiterId: waiterId,
+      waiterName: waiterName,
+      note: note,
+    );
+    return <String, dynamic>{
+      'success': true,
+      'fallback': true,
+      'transfer_type': canonical,
+      'moved_line_ids': plan.movedLineIds,
+    };
+  }
+
+  bool _isMissingTransferRpc(PostgrestException error) {
+    if (error.code == '42501') return false;
+    final details =
+        '${error.code ?? ''} ${error.message} ${error.details ?? ''}'
+            .toLowerCase();
+    final namesFunction =
+        details.contains('transfer_table_orders_v2') &&
+        (details.contains('could not find') ||
+            details.contains('schema cache') ||
+            details.contains('does not exist'));
+    return error.code == '42883' || error.code == 'PGRST202' || namesFunction;
+  }
+
+  Future<void> _applyTableTransferPlan({
+    required String sellerId,
+    required int fromTable,
+    required int toTable,
+    required TableTransferPlan plan,
+    String? waiterId,
+    String? waiterName,
+    String? note,
+  }) async {
+    for (final mutation in plan.mutations) {
+      final update = <String, dynamic>{
+        'items': mutation.nextItems,
+        if (mutation.nextTableNumber != null)
+          'table_number': mutation.nextTableNumber,
+      };
+      try {
+        await _supabase
+            .from('table_orders')
+            .update(update)
+            .eq('id', mutation.orderId)
+            .eq('seller_id', sellerId)
+            .timeout(tableOrderTimeout);
+      } on PostgrestException catch (error) {
+        throw _tableOrderException('Masa aktarımı', error);
+      } on TimeoutException {
+        throw Exception('Masa aktarımı zaman aşımına uğradı. Tekrar deneyin.');
+      }
+
+      final destinationItems = mutation.destinationItems;
+      if (destinationItems == null || destinationItems.isEmpty) continue;
+      try {
+        await _supabase
+            .from('table_orders')
+            .insert({
+              'seller_id': sellerId,
+              'table_number': toTable,
+              'items': destinationItems,
+              'status': mutation.destinationStatus,
+              'created_at': DateTime.now().toUtc().toIso8601String(),
+            })
+            .timeout(tableOrderTimeout);
+      } catch (error) {
+        try {
+          await _supabase
+              .from('table_orders')
+              .update({
+                'items': mutation.previousItems,
+                'table_number': mutation.previousTableNumber,
+              })
+              .eq('id', mutation.orderId)
+              .eq('seller_id', sellerId)
+              .timeout(tableOrderTimeout);
+        } catch (restoreError) {
+          debugPrint(
+            '[StoreTableService] transfer restore failed '
+            'orderId=${mutation.orderId} error=$restoreError',
+          );
+        }
+        if (error is PostgrestException) {
+          throw _tableOrderException('Masa aktarımı', error);
+        }
+        if (error is TimeoutException) {
+          throw Exception(
+            'Masa aktarımı zaman aşımına uğradı. Tekrar deneyin.',
+          );
+        }
+        rethrow;
+      }
+    }
+
+    try {
+      await _supabase.from('table_transfers_log').insert({
+        'seller_id': sellerId,
+        'from_table': fromTable,
+        'to_table': toTable,
+        'transfer_type': plan.transferType,
+        'transferred_items': plan.movedLineIds,
+        'order_ids': plan.mutations.map((mutation) => mutation.orderId).toList(),
+        if (waiterId != null && waiterId.isNotEmpty) 'waiter_id': waiterId,
+        if (waiterName != null && waiterName.isNotEmpty)
+          'waiter_name': waiterName,
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+      }).timeout(tableOrderTimeout);
+    } catch (error) {
+      debugPrint(
+        '[StoreTableService] table_transfers_log insert skipped: $error',
+      );
     }
   }
 

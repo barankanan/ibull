@@ -9,7 +9,6 @@ import 'package:flutter/foundation.dart'
         kIsWeb,
         listEquals;
 import 'package:flutter/material.dart';
-import '../utils/order_status_constants.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -31,7 +30,9 @@ import '../core/app_motion.dart';
 import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/web_seo.dart';
+import '../services/store/table_operation_access.dart';
 import '../services/store_service.dart';
+import '../services/store/table_transfer_plan.dart';
 import '../services/store/table_order_history_utils.dart';
 import '../services/auth_service.dart';
 import '../services/support_service.dart';
@@ -39,6 +40,7 @@ import '../services/campaign_service.dart';
 import '../services/order_service.dart';
 import '../services/kitchen_print_trace_log.dart';
 import '../services/order_print_job_service.dart';
+import '../services/order_send_access.dart';
 import '../services/desktop_print_orchestrator.dart';
 import '../services/desktop_print_hub.dart';
 import '../services/printer_encoding_profile_store.dart';
@@ -67,6 +69,7 @@ import '../models/seller_product.dart';
 import '../models/product_pricing.dart';
 import 'home_screen.dart';
 import 'seller/add_product_page.dart';
+import '../models/staff_access_policy.dart';
 import '../models/sub_admin.dart';
 import '../widgets/common/video_player_widget.dart';
 import '../widgets/province_district_picker_dialog.dart';
@@ -374,6 +377,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   Timer? _productsRealtimeRetryTimer;
   List<StoreCampaign> _campaigns = [];
   List<SubAdmin> _subAdmins = [];
+  StaffGrant? _ownStaffGrant;
   StreamSubscription<List<SubAdmin>>? _subAdminsSubscription;
   StreamSubscription<List<SupportTicket>>? _supportTicketsSubscription;
   StreamSubscription<List<Map<String, dynamic>>>?
@@ -1726,6 +1730,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
             'action=ensureModuleDataLoaded',
       );
       unawaited(_ensureDesktopPrintHubStarted(reason: 'post_frame_init'));
+      unawaited(_refreshOwnStaffGrant());
       unawaited(_ensureModuleDataLoaded(_selectedModule));
       _scheduleLocalPrintStatusRefreshIfNeeded(
         module: _selectedModule,
@@ -1813,20 +1818,62 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       '[SellerOwnerId][remember] source=$source ownerId=$normalized '
       'authUserId=${_authService.currentUser?.id ?? '-'}',
     );
-    if (!persist) return;
-    final authUserId = _normalizeSellerIdentity(_authService.currentUser?.id);
-    if (authUserId.isEmpty) return;
-    unawaited(() async {
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(
-          _sellerDataOwnerStorageKey(authUserId),
-          normalized,
-        );
-      } catch (_) {
-        // ignore
+    if (persist) {
+      final authUserId = _normalizeSellerIdentity(_authService.currentUser?.id);
+      if (authUserId.isNotEmpty) {
+        unawaited(() async {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(
+              _sellerDataOwnerStorageKey(authUserId),
+              normalized,
+            );
+          } catch (_) {
+            // ignore
+          }
+        }());
       }
-    }());
+    }
+    unawaited(_refreshOwnStaffGrant());
+  }
+
+  Future<void> _refreshOwnStaffGrant() async {
+    final authId = _normalizeSellerIdentity(_authService.currentUser?.id);
+    final ownerId = _normalizeSellerIdentity(_sellerDataOwnerId);
+    if (!mounted) return;
+    if (authId.isEmpty || ownerId.isEmpty || authId == ownerId) {
+      if (_ownStaffGrant != null) {
+        setState(() => _ownStaffGrant = null);
+      }
+      return;
+    }
+    try {
+      final grant = await _storeService.getOwnStaffGrant(ownerId);
+      if (!mounted) return;
+      setState(() => _ownStaffGrant = grant);
+    } catch (error) {
+      debugPrint('[StaffGrant] lookup failed: $error');
+    }
+  }
+
+  bool get _staffSessionRestricted {
+    final authId = _normalizeSellerIdentity(_authService.currentUser?.id);
+    final ownerId = _normalizeSellerIdentity(_sellerDataOwnerId);
+    return _ownStaffGrant != null &&
+        authId.isNotEmpty &&
+        ownerId.isNotEmpty &&
+        authId != ownerId;
+  }
+
+  bool get _staffMayCollectPayment {
+    final grant = _ownStaffGrant;
+    if (!_staffSessionRestricted || grant == null) return true;
+    return staffMayPerform(
+      isOwner: false,
+      status: grant.status,
+      permissions: grant.permissions,
+      operation: StaffOperation.collectPayment,
+    );
   }
 
   Future<void> _restorePersistedSellerDataOwnerIdWithReload({
@@ -12060,7 +12107,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         normalized == 'complete' ||
         normalized == 'completed_payment' ||
         normalized == 'payment_completed' ||
-        normalized == 'archived';
+        normalized == 'archived' ||
+        normalized == 'print_anchor';
   }
 
   bool _isGarsonClosedStatus(String? status) {
@@ -14375,6 +14423,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           'orders_closed_so_far=$ordersClosedTotal',
         );
       } catch (bulkErr) {
+        if (isFinalTableOperationDenialError(bulkErr)) {
+          // The server refused this caller. A per-order delete would repeat
+          // the close outside the authorized RPC.
+          debugPrint(
+            '[GARSON_CLOSE_BULK_ERROR] '
+            'table=$tableNumber '
+            'error=$bulkErr '
+            'action=permission_denied_no_direct_fallback',
+          );
+          rethrow;
+        }
         // Archive/delete failed (e.g. RLS blocks DELETE on table_orders).
         // Log the error and fall through to the per-order fallback below.
         debugPrint(
@@ -15179,6 +15238,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final flowPage = _MobileGarsonTableFlowPage(
       sellerId: sellerId,
       tableNumber: tableNumber,
+      allowCollectPayment: _staffMayCollectPayment,
       tableTitleOverride: tableTitle,
       products: List<SellerProduct>.from(_products),
       initialTabIndex: initialOrder == null ? 0 : 2,
@@ -15606,22 +15666,33 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   String _mobilePermissionLabel(SellerPermission permission) {
-    switch (permission) {
-      case SellerPermission.manageProducts:
-        return 'Ürün';
-      case SellerPermission.viewOrders:
-        return 'Sipariş Gör';
-      case SellerPermission.manageOrders:
-        return 'Sipariş Yönet';
-      case SellerPermission.manageCampaigns:
-        return 'Kampanya';
-      case SellerPermission.viewFinance:
-        return 'Finans';
-      case SellerPermission.manageSupport:
-        return 'Destek';
-      case SellerPermission.manageStoreProfile:
-        return 'Mağaza';
-    }
+    return sellerPermissionShortLabel(permission);
+  }
+
+  Widget _staffPermissionTile({
+    required SellerPermission permission,
+    required Set<SellerPermission> selected,
+    required void Function(VoidCallback fn) onChanged,
+  }) {
+    return CheckboxListTile(
+      value: selected.contains(permission),
+      onChanged: (checked) {
+        onChanged(() {
+          if (checked == true) {
+            selected.add(permission);
+          } else {
+            selected.remove(permission);
+          }
+        });
+      },
+      dense: true,
+      title: Text(sellerPermissionLabel(permission)),
+      subtitle: permission == SellerPermission.fullAccess
+          ? const Text(
+              'İlgili sayfaların işlemlerini kapsar. Personel yetkisi vermez.',
+            )
+          : null,
+    );
   }
 
   Widget _buildMobileCampaignsModule() {
@@ -15872,7 +15943,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   List<SellerModule> _visibleSellerModules() {
-    return visibleSellerModules(_storeCategory, garsonOnly: _isWaiterEntry);
+    return visibleSellerModules(
+      _storeCategory,
+      garsonOnly: _isWaiterEntry,
+      staffGrant: _staffSessionRestricted ? _ownStaffGrant : null,
+    );
   }
 
   DateTimeRange get _dashboardDateRange {
@@ -33056,24 +33131,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       rows: _subAdmins.map((u) {
                         final contact = u.email ?? u.phone ?? '-';
                         final perms = u.permissions
-                            .map((e) {
-                              switch (e) {
-                                case SellerPermission.manageProducts:
-                                  return 'Ürün';
-                                case SellerPermission.viewOrders:
-                                  return 'Sipariş Gör';
-                                case SellerPermission.manageOrders:
-                                  return 'Sipariş Yönet';
-                                case SellerPermission.manageCampaigns:
-                                  return 'Kampanya';
-                                case SellerPermission.viewFinance:
-                                  return 'Finans Gör';
-                                case SellerPermission.manageSupport:
-                                  return 'Destek';
-                                case SellerPermission.manageStoreProfile:
-                                  return 'Mağaza';
-                              }
-                            })
+                            .map(sellerPermissionShortLabel)
                             .join(', ');
                         return DataRow(
                           cells: [
@@ -33260,33 +33318,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         ),
                       ),
                       const SizedBox(height: 8),
-                      ...SellerPermission.values.map((p) {
-                        final labelMap = {
-                          SellerPermission.manageProducts: 'Ürünleri Yönet',
-                          SellerPermission.viewOrders: 'Siparişleri Görüntüle',
-                          SellerPermission.manageOrders: 'Siparişleri Yönet',
-                          SellerPermission.manageCampaigns:
-                              'Kampanyaları Yönet',
-                          SellerPermission.viewFinance: 'Finansı Görüntüle',
-                          SellerPermission.manageSupport: 'Destek Yönetimi',
-                          SellerPermission.manageStoreProfile: 'Mağaza Profili',
-                        };
-                        final checked = selected.contains(p);
-                        return CheckboxListTile(
-                          value: checked,
-                          onChanged: (v) {
-                            setS(() {
-                              if (v == true) {
-                                selected.add(p);
-                              } else {
-                                selected.remove(p);
-                              }
-                            });
-                          },
-                          dense: true,
-                          title: Text(labelMap[p]!),
-                        );
-                      }),
+                      ...SellerPermission.values.map(
+                        (p) => _staffPermissionTile(
+                          permission: p,
+                          selected: selected,
+                          onChanged: setS,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -33336,33 +33374,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      ...SellerPermission.values.map((p) {
-                        final labelMap = {
-                          SellerPermission.manageProducts: 'Ürünleri Yönet',
-                          SellerPermission.viewOrders: 'Siparişleri Görüntüle',
-                          SellerPermission.manageOrders: 'Siparişleri Yönet',
-                          SellerPermission.manageCampaigns:
-                              'Kampanyaları Yönet',
-                          SellerPermission.viewFinance: 'Finansı Görüntüle',
-                          SellerPermission.manageSupport: 'Destek Yönetimi',
-                          SellerPermission.manageStoreProfile: 'Mağaza Profili',
-                        };
-                        final checked = selected.contains(p);
-                        return CheckboxListTile(
-                          value: checked,
-                          onChanged: (v) {
-                            setS(() {
-                              if (v == true) {
-                                selected.add(p);
-                              } else {
-                                selected.remove(p);
-                              }
-                            });
-                          },
-                          dense: true,
-                          title: Text(labelMap[p]!),
-                        );
-                      }),
+                      ...SellerPermission.values.map(
+                        (p) => _staffPermissionTile(
+                          permission: p,
+                          selected: selected,
+                          onChanged: setS,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -33793,6 +33811,7 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
     this.cachedKitchenPrinterName,
     this.cachedKitchenPrinterBackend,
     this.cachedKitchenPrinterQueue,
+    this.allowCollectPayment = true,
   });
 
   final String sellerId;
@@ -33855,6 +33874,11 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
   final String? cachedKitchenPrinterBackend;
   final String? cachedKitchenPrinterQueue;
 
+  /// False when the signed-in person is staff without order or Tam Erişim
+  /// permission. Owners and unrestricted sessions keep the existing payment
+  /// actions.
+  final bool allowCollectPayment;
+
   bool get effectiveCanUseLocalPrintFastPath =>
       canUseLocalPrintFastPath ??
       (supportsDirectLocalPrintBridge &&
@@ -33879,6 +33903,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   bool _isLoadingProducts = false;
   bool _hasShownRealtimeFallbackWarning = false;
   bool _isSubmitting = false;
+  String? _orderSendIdempotencyKey;
   late int _bottomIndex;
   String _selectedCategory = 'Tümü';
   String? _editingOrderId;
@@ -35291,9 +35316,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         product,
         availableProducts: selectableProducts,
         preselectTemplateItems: false,
-      ),
-      templateChildDefaults: MixedServiceOrder.templateChildDefaultsByProductId(
-        product,
       ),
       availablePricingModes: _availablePricingModesForTemplate(product),
     );
@@ -36937,6 +36959,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   ) async {
     if (_isSubmitting) return;
     if (!_canSubmitDraft()) return;
+    _orderSendIdempotencyKey ??= newOrderSendIdempotencyKey();
+    final sendKey = _orderSendIdempotencyKey!;
     setState(() => _isSubmitting = true);
     final pipelineWatch = Stopwatch()..start();
     final isUpdate =
@@ -37216,6 +37240,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           waiterName: _currentWaiterName(),
           jobType: 'new_order',
           garsonDesktopFastKitchen: canFastKitchen,
+          idempotencyKey: sendKey,
         );
         kitchenPerfDbSaveMs = orderDispatchWatch.elapsedMilliseconds;
         _orderPrintJobService.debugLogResult(dispatchResult);
@@ -37339,6 +37364,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           ? 'Sipariş güncellendi.'
           : 'Sipariş gönderildi.';
       setState(() {
+        _orderSendIdempotencyKey = null;
         _draftItems.clear();
         _editingOrderId = null;
         _editingOrderSnapshot = null;
@@ -38520,7 +38546,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     final canTransferTable =
         hasTableOrders && TableLevelPolicy.canTransfer(orderStatuses);
     final canPayTable =
-        hasTableOrders && TableLevelPolicy.canPay(orderStatuses);
+        hasTableOrders &&
+        TableLevelPolicy.canPay(orderStatuses) &&
+        widget.allowCollectPayment;
     final canReprintKitchen =
         hasTableOrders && TableLevelPolicy.canReprint(orderStatuses);
     await showModalBottomSheet<void>(
@@ -38682,28 +38710,50 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                       paymentMethod: result.method.value,
                                     );
                                   } else {
-                                    await _storeService.recordTablePayment(
-                                      sellerId: widget.sellerId,
-                                      tableNumber: widget.tableNumber,
-                                      amount: result.amount,
-                                      method: result.method.value,
-                                      waiterId: _currentWaiterId(),
-                                      waiterName: _currentWaiterName(),
-                                      sessionKey: _getOrCreateSessionKey(),
-                                      note: result.note,
-                                    );
-                                    if (!mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Ara ödeme kaydedildi: '
-                                          '${_formatMoney(result.amount)}',
+                                    try {
+                                      final saved = await _storeService
+                                          .recordTablePayment(
+                                            sellerId: widget.sellerId,
+                                            tableNumber: widget.tableNumber,
+                                            amount: result.amount,
+                                            method: result.method.value,
+                                            waiterId: _currentWaiterId(),
+                                            waiterName: _currentWaiterName(),
+                                            sessionKey:
+                                                _getOrCreateSessionKey(),
+                                            note: result.note,
+                                            idempotencyKey:
+                                                result.idempotencyKey,
+                                          );
+                                      if (!mounted) return;
+                                      final replayed =
+                                          saved['replayed'] == true;
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            replayed
+                                                ? 'Bu ara ödeme zaten kaydedilmişti.'
+                                                : 'Ara ödeme kaydedildi: '
+                                                      '${_formatMoney(result.amount)}',
+                                          ),
+                                          backgroundColor: const Color(
+                                            0xFF0F766E,
+                                          ),
                                         ),
-                                        backgroundColor: const Color(
-                                          0xFF0F766E,
-                                        ),
-                                      ),
-                                    );
+                                      );
+                                    } catch (error) {
+                                      if (!mounted) return;
+                                      final message = error
+                                          .toString()
+                                          .replaceFirst('Exception: ', '');
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(content: Text(message)),
+                                      );
+                                    }
                                   }
                                 })
                               : null,
@@ -38785,16 +38835,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                   );
                                   // Flatten all items across orders on this
                                   // table for the partial/customer-based modes.
-                                  final allItems = tableOrders
-                                      .expand<Map<String, dynamic>>((order) {
-                                        final items = order['items'];
-                                        if (items is List) {
-                                          return items
-                                              .cast<Map<String, dynamic>>();
-                                        }
-                                        return const [];
-                                      })
-                                      .toList();
+                                  // Stable line ids keep the selection aligned
+                                  // with the rows stored in table_orders.
+                                  final allItems = flattenOrdersForTransfer(
+                                    tableOrders,
+                                  );
                                   if (!mounted) return;
                                   final result = await TransferTableModal.show(
                                     context,
@@ -38804,15 +38849,31 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                     sourceLabel: sourceLabel,
                                   );
                                   if (result == null || !mounted) return;
-                                  await _storeService.transferTableOrders(
-                                    sellerId: widget.sellerId,
-                                    fromTable: widget.tableNumber,
-                                    toTable: result.toTable,
-                                    transferType: result.transferType.name,
-                                    itemIds: result.selectedItemIds,
-                                    waiterId: _currentWaiterId(),
-                                    note: result.note,
-                                  );
+                                  try {
+                                    await _storeService.transferTableOrders(
+                                      sellerId: widget.sellerId,
+                                      fromTable: widget.tableNumber,
+                                      toTable: result.toTable,
+                                      transferType: result.transferType.value,
+                                      itemIds: result.selectedItemIds,
+                                      waiterId: _currentWaiterId(),
+                                      note: result.note,
+                                    );
+                                  } catch (error) {
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          isFinalTableOperationDenialError(
+                                                error,
+                                              )
+                                              ? 'Masa aktarılamadı. Bu restoran için masa işlemi yetkiniz yok.'
+                                              : 'Masa aktarılamadı. Bağlantınızı kontrol edip tekrar deneyin.',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
                                   if (!mounted) return;
                                   // Use the real area labels (e.g. "Bahçe 3 →
                                   // Bahçe 1") rather than legacy "Masa N".

@@ -238,6 +238,60 @@ void main() {
       expect(fetched.any((order) => order['id'] == 'order-live-1'), isTrue);
     });
 
+    test('onay çapası kapanınca masa yeniden açılmaz', () {
+      const table = <String, dynamic>{
+        'id': 'table-4',
+        'table_number': 4,
+        'display_label': 'Masa 4',
+      };
+      final anchor = normalizeRestaurantOrderToGarsonTableOrder(
+        order: const <String, dynamic>{
+          'id': 'print-anchor',
+          'restaurant_id': 'rest-1',
+          'table_id': 'table-4',
+          'status': 'confirmed',
+          'order_status': 'sent',
+          'order_type': 'table',
+          'notes': 'waiter_request:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
+        },
+        items: const <Map<String, dynamic>>[
+          {'name': 'Çorba', 'quantity': 1, 'line_total': 90},
+        ],
+        storeTable: table,
+      );
+
+      final reopened = mergeGarsonActiveOrderSources(
+        tableOrders: const <Map<String, dynamic>>[],
+        restaurantOrders: <Map<String, dynamic>>[anchor!],
+      );
+      expect(reopened, hasLength(1));
+      expect(
+        isGarsonActiveOrderStatus(
+          resolveGarsonOrderStatusField(reopened.first),
+        ),
+        isTrue,
+      );
+
+      final hidden = normalizeRestaurantOrderToGarsonTableOrder(
+        order: const <String, dynamic>{
+          'id': 'print-anchor',
+          'restaurant_id': 'rest-1',
+          'table_id': 'table-4',
+          'status': 'print_anchor',
+          'order_status': 'print_anchor',
+          'order_type': 'table',
+          'notes': 'waiter_request:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
+        },
+        items: const <Map<String, dynamic>>[
+          {'name': 'Çorba', 'quantity': 1, 'line_total': 90},
+        ],
+        storeTable: table,
+      );
+      expect(hidden, isNull);
+      expect(isGarsonActiveOrderStatus('print_anchor'), isFalse);
+      expect(isGarsonActiveOrderStatus('cancelled'), isFalse);
+    });
+
     test('fallback fetch board state orders_count > 0 yapar', () {
       const bahce1 = <String, dynamic>{
         'id': 'table-bahce-1',

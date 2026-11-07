@@ -1,10 +1,13 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../core/config/runtime_config.dart';
 import '../models/seller_product.dart';
 import '../models/store_sub_category.dart';
+import '../models/staff_access_policy.dart';
 import '../models/sub_admin.dart';
 import '../utils/product_create_log.dart';
 import '../utils/product_edit_log.dart';
@@ -300,9 +303,9 @@ class StoreService {
           .eq('is_active', true)
           .order('sort_order', ascending: true)
           .order('name', ascending: true);
-      final items = List<Map<String, dynamic>>.from(
-        response as List,
-      ).map(StoreSubCategory.fromMap).toList(growable: false);
+      final items = List<Map<String, dynamic>>.from(response as List)
+          .map(StoreSubCategory.fromMap)
+          .toList(growable: false);
       _setCachedStoreSubCategories(
         sellerId: trimmedSellerId,
         mainCategory: trimmedMainCategory,
@@ -530,6 +533,89 @@ class StoreService {
     }
   }
 
+  Future<Map<String, dynamic>?> getStoreProfileForSellerId(
+    String sellerId,
+  ) async {
+    final normalizedSellerId = sellerId.trim();
+    if (normalizedSellerId.isEmpty) return null;
+
+    const storeProfileColumns =
+        'business_name,website,description,slogan,phone,email,whatsapp,'
+        'support_phone,address,postal_code,tax_number,instagram,facebook,'
+        'twitter,city,district,business_type,working_hours,is_store_open,'
+        'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
+        'cover_url,gallery_images,banners,seller_videos,store_lat,'
+        'store_lng,category,rating,is_verified';
+
+    try {
+      final data = await _supabase
+          .from('stores')
+          .select(storeProfileColumns)
+          .eq('seller_id', normalizedSellerId)
+          .maybeSingle();
+      if (data == null) return null;
+      final mapped = StoreServiceMappers.storeToCamelCase(data);
+      final name = mapped['storeName']?.toString().trim() ?? '';
+      if (name.isNotEmpty && normalizedSellerId == currentUserId) {
+        _cachedBusinessName = name;
+      }
+      return mapped;
+    } catch (e, stackTrace) {
+      debugPrint(
+        '[StoreService] getStoreProfileForSellerId failed '
+        'sellerId=$normalizedSellerId error=$e',
+      );
+      debugPrintStack(stackTrace: stackTrace);
+      return null;
+    }
+  }
+
+  /// Owner id for the signed-in seller, or the parent store when the
+  /// session belongs to an active sub-admin / waiter.
+  Future<String?> resolveStoreOwnerIdForCurrentUser() async {
+    final userId = currentUserId?.trim() ?? '';
+    if (userId.isEmpty) return null;
+
+    try {
+      final storeRow = await _supabase
+          .from('stores')
+          .select('seller_id')
+          .eq('seller_id', userId)
+          .maybeSingle();
+      final directSellerId = storeRow?['seller_id']?.toString().trim() ?? '';
+      if (directSellerId.isNotEmpty) return directSellerId;
+    } catch (_) {
+      // Fall through to sub-admin resolution.
+    }
+
+    final authUser = _supabase.auth.currentUser;
+    final email = authUser?.email?.trim() ?? '';
+    final phone = authUser?.phone?.trim() ?? '';
+    final filters = <String>[];
+    if (email.isNotEmpty) {
+      filters.add('email.eq.$email');
+    }
+    if (phone.isNotEmpty) {
+      filters.add('phone.eq.$phone');
+    }
+    if (filters.isEmpty) return userId;
+
+    try {
+      final subAdminRow = await _supabase
+          .from('store_sub_admins')
+          .select('store_id, status')
+          .eq('status', 'active')
+          .or(filters.join(','))
+          .maybeSingle();
+      final ownerId = subAdminRow?['store_id']?.toString().trim() ?? '';
+      if (ownerId.isNotEmpty) return ownerId;
+    } catch (_) {
+      // Keep prior auth-id fallback behavior.
+    }
+
+    return userId;
+  }
+
   // Upload Document (for Seller Application)
   Future<String> uploadDocument(
     String fileName,
@@ -629,8 +715,7 @@ class StoreService {
     SellerProduct product,
     List<XFile> images, {
     Function(String)? onProgress,
-    List<dynamic>?
-    variants, // Changed to dynamic to avoid type error if ProductVariant is not imported
+    List<dynamic>? variants, // Changed to dynamic to avoid type error if ProductVariant is not imported
   }) async {
     if (currentUserId == null) throw Exception('Kullanıcı girişi yapılmamış');
 
@@ -1518,6 +1603,30 @@ class StoreService {
     return _tableService.getTableOrdersByIds(ids);
   }
 
+  Future<bool> ensureTableHistoryRecorded({
+    required String sellerId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> closedOrders,
+    required String paymentMethod,
+    String? paymentNote,
+    String? waiterId,
+    String? waiterName,
+    String? tableLabel,
+    DateTime? closedAt,
+  }) {
+    return _tableService.ensureTableHistoryRecorded(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      closedOrders: closedOrders,
+      paymentMethod: paymentMethod,
+      paymentNote: paymentNote,
+      waiterId: waiterId,
+      waiterName: waiterName,
+      tableLabel: tableLabel,
+      closedAt: closedAt,
+    );
+  }
+
   Future<void> closeTableOrders({
     required String sellerId,
     required int tableNumber,
@@ -1576,6 +1685,7 @@ class StoreService {
     String? waiterName,
     String? sessionKey,
     String? note,
+    String? idempotencyKey,
   }) {
     return _tableService.recordTablePayment(
       sellerId: sellerId,
@@ -1586,6 +1696,7 @@ class StoreService {
       waiterName: waiterName,
       sessionKey: sessionKey ?? 'default',
       note: note,
+      idempotencyKey: idempotencyKey,
     );
   }
 
@@ -1682,9 +1793,9 @@ class StoreService {
         .select()
         .eq('seller_id', currentUserId!)
         .order('created_at', ascending: false);
-    return List<Map<String, dynamic>>.from(
-      rows as List<dynamic>,
-    ).map(_mapSnakeCaseToProduct).toList(growable: false);
+    return List<Map<String, dynamic>>.from(rows as List<dynamic>)
+        .map(_mapSnakeCaseToProduct)
+        .toList(growable: false);
   }
 
   Future<void> deleteProduct(String productId) async {
@@ -1798,14 +1909,64 @@ class StoreService {
     String subAdminId,
     List<SellerPermission> permissions,
   ) async {
-    await _supabase
+    final storeId = currentUserId;
+    if (storeId == null || storeId.isEmpty) {
+      throw Exception('Kullanıcı girişi yapılmamış');
+    }
+    final updated = await _supabase
         .from('store_sub_admins')
         .update({'permissions': permissions.map((e) => e.name).toList()})
-        .eq('id', subAdminId);
+        .eq('id', subAdminId)
+        .eq('store_id', storeId)
+        .select('id');
+    if (List<dynamic>.from(updated as List).isEmpty) {
+      throw Exception('Personel yetkisi güncellenemedi.');
+    }
   }
 
   Future<void> removeSubAdmin(String subAdminId) async {
-    await _supabase.from('store_sub_admins').delete().eq('id', subAdminId);
+    final storeId = currentUserId;
+    if (storeId == null || storeId.isEmpty) {
+      throw Exception('Kullanıcı girişi yapılmamış');
+    }
+    final removed = await _supabase
+        .from('store_sub_admins')
+        .delete()
+        .eq('id', subAdminId)
+        .eq('store_id', storeId)
+        .select('id');
+    if (List<dynamic>.from(removed as List).isEmpty) {
+      throw Exception('Personel kaydı kaldırılamadı.');
+    }
+  }
+
+  /// Active membership of the signed-in person at [storeId], if the row is
+  /// visible to them. Owners are not represented here.
+  Future<StaffGrant?> getOwnStaffGrant(String storeId) async {
+    final normalizedStoreId = storeId.trim();
+    final user = _supabase.auth.currentUser;
+    if (user == null || normalizedStoreId.isEmpty) return null;
+    final email = user.email?.trim() ?? '';
+    final phone = user.phone?.trim() ?? '';
+    final filters = <String>[];
+    if (email.isNotEmpty) filters.add('email.ilike.$email');
+    if (phone.isNotEmpty) filters.add('phone.eq.$phone');
+    if (filters.isEmpty) return null;
+    final row = await _supabase
+        .from('store_sub_admins')
+        .select('status, permissions')
+        .eq('store_id', normalizedStoreId)
+        .or(filters.join(','))
+        .limit(1)
+        .maybeSingle();
+    if (row == null) return null;
+    final map = Map<String, dynamic>.from(row);
+    return StaffGrant(
+      status: map['status']?.toString() ?? '',
+      permissions: parseStaffPermissionTokens(map['permissions']).toList(
+        growable: false,
+      ),
+    );
   }
 
   Future<List<Map<String, dynamic>>> getAllStores() async {

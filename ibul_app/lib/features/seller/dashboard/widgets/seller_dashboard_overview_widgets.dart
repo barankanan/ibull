@@ -101,6 +101,141 @@ class SellerDashboardStatusCard extends StatelessWidget {
   }
 }
 
+class EarningsSummaryCard extends StatelessWidget {
+  const EarningsSummaryCard({
+    super.key,
+    required this.dailyValue,
+    required this.monthlyValue,
+    required this.dayLabel,
+    required this.monthLabel,
+    required this.monthOptions,
+    required this.selectedMonth,
+    required this.formatMonthOption,
+    required this.onPickDay,
+    required this.onMonthChanged,
+  });
+
+  final String dailyValue;
+  final String monthlyValue;
+  final String dayLabel;
+  final String monthLabel;
+  final List<DateTime> monthOptions;
+  final DateTime selectedMonth;
+  final String Function(DateTime month) formatMonthOption;
+  final Future<void> Function() onPickDay;
+  final ValueChanged<DateTime> onMonthChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SellerDashboardCardShell(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Kazanç',
+            style: TextStyle(
+              color: Color(0xFF0F172A),
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _EarningsFigure(
+                  label: 'Günlük',
+                  value: dailyValue,
+                  caption: dayLabel,
+                  onTap: onPickDay,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _EarningsFigure(
+                  label: 'Aylık',
+                  value: monthlyValue,
+                  caption: monthLabel,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<DateTime>(
+            key: ValueKey<DateTime>(selectedMonth),
+            initialValue: monthOptions.contains(selectedMonth)
+                ? selectedMonth
+                : null,
+            decoration: const InputDecoration(
+              labelText: 'Ay',
+              isDense: true,
+              border: OutlineInputBorder(),
+            ),
+            items: monthOptions
+                .map(
+                  (month) => DropdownMenuItem<DateTime>(
+                    value: month,
+                    child: Text(formatMonthOption(month)),
+                  ),
+                )
+                .toList(growable: false),
+            onChanged: (value) {
+              if (value != null) onMonthChanged(value);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EarningsFigure extends StatelessWidget {
+  const _EarningsFigure({
+    required this.label,
+    required this.value,
+    required this.caption,
+    this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final String caption;
+  final Future<void> Function()? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF64748B),
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Color(0xFF0F172A),
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          caption,
+          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+        ),
+      ],
+    );
+    if (onTap == null) return content;
+    return InkWell(onTap: onTap, child: content);
+  }
+}
+
 class SellerDashboardRevenueCard extends StatelessWidget {
   const SellerDashboardRevenueCard({super.key, required this.data});
 
