@@ -624,3 +624,10 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `app_state.dart` seller-scoped cache yardımcıları ile seller panel için kalıcı dashboard/finance cache desteği aldı.
 - `seller_panel_page.dart` startup bootstrap sırası owner restore -> sellerId resolve -> cached closed-history hydrate -> store profile refresh olacak şekilde güçlendirildi; boş fetch artık mevcut cache’i ezmiyor.
 - `seller_panel_finance_modules.dart` owner bootstrap tamamlanmadan `FinanceShell` oluşturmuyor; hazır olunca sellerId içeren anahtarla provider yeniden kuruluyor.
+
+## 2026-11-07
+
+- Production SQL yetkisi `.cursor/rules/ibul-ai-engineer-sql.mdc` içindedir. Güvenli ve doğrulanmış migration ayrıca izin beklemadan uygulanır. Yedek, canlı şema, yayımlanmış uygulama uyumu veya bağlantı doğrulanamazsa SQL çalışmaz.
+- PR #9 (`cursor/integrate-restaurant-guards-b3a9`) ve PR #11 (`20261107_merge_table_bills.sql`) 7 Kasım 2026 20:34 TR saatinde production’a uygulanmadı. Durum BLOCKED. Canlı projeye güvenli bağlantı yok, geri yüklenebilir yedek doğrulanamadı, iki PR de main’de değil.
+- 7 Kasım 2026 akşamı, Europe/Istanbul: Bağlı proje ref’i `ihmixxzqnpamcwmrfibx`, CLI hedefi production, PostgreSQL 17.6. Denetim yalnız `db query --read-only` ile yapıldı. `db push`, `migration repair` ve `db reset` çalıştırılmadı. `schema_migrations` tek satır: `20260825163448` / `remote_commit`. `orders.status` ve `table_orders.status` text, CHECK yok, `visit_id` yok. `table_orders.seller_id` text, `table_payments` kimliği `client_request_id`. PITR kapalı, listelenen fiziksel yedek yok, geri yükleme testi yok. Karar NO-GO.
+
