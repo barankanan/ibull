@@ -14443,6 +14443,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       // bug — surface it to the user.
       var ordersClosedTotal = 0;
       var bulkCloseCommitted = false;
+      var writesForbidden = false;
 
       // ── 4. Archive to table_order_history then remove active orders.
       // Revenue (Genel Bakış / Finans) reads ONLY from table_order_history
@@ -14457,6 +14458,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           waiterId: currentUser?.id,
           waiterName: _sellerPrintJobService.safeUserDisplayName(currentUser),
         );
+        writesForbidden = closeResult['writes_forbidden'] == true;
         bulkCloseCommitted = true;
         final reportedClosed = closeResult['orders_updated'];
         if (reportedClosed is num) {
@@ -14469,14 +14471,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           'orders_closed_so_far=$ordersClosedTotal',
         );
       } catch (bulkErr) {
-        if (isFinalTableOperationDenialError(bulkErr)) {
-          // The server refused this caller. A per-order delete would repeat
-          // the close outside the authorized RPC.
+        if (isFinalTableOperationDenialError(bulkErr) ||
+            isCloseWriteForbiddenError(bulkErr)) {
+          // Permission denial and an unverified or blocked close must not
+          // continue into delete, customer-order updates, or history inserts.
           debugPrint(
             '[GARSON_CLOSE_BULK_ERROR] '
             'table=$tableNumber '
             'error=$bulkErr '
-            'action=permission_denied_no_direct_fallback',
+            'action=no_direct_fallback',
           );
           rethrow;
         }
@@ -14492,7 +14495,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
       // ── 5. Per-order fallback: re-fetch the targeted rows by ID to see
       //       which ones the bulk delete missed, then delete/status each.
-      if (targetOrderIds.isNotEmpty) {
+      if (!writesForbidden && targetOrderIds.isNotEmpty) {
         final survivors = await _storeService.getTableOrdersByIds(
           targetOrderIds,
         );
@@ -14549,7 +14552,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       //       marked closed. A filter-based re-query (seller_id + table_number)
       //       would silently "succeed" when orders were never in table_orders or
       //       when a type mismatch caused the filter to match 0 rows.
-      if (targetOrderIds.isNotEmpty) {
+      if (!writesForbidden && targetOrderIds.isNotEmpty) {
         final remainingById = await _storeService.getTableOrdersByIds(
           targetOrderIds,
         );
@@ -14573,51 +14576,55 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       }
 
       // A committed close_table_with_history already mirrored `orders`.
-      // A timeout throws first, and the per-order loop above only touches
-      // `table_orders`. Mirror customer orders before fallback history,
-      // because history's closed_at hides still-open rows from the snapshot.
-      ordersClosedTotal += await mirrorRestaurantOrdersBeforeFallbackHistory(
-        bulkCloseCommitted: bulkCloseCommitted,
-        mirrorRestaurantOrders: () =>
-            _storeService.closeRestaurantOrdersForTable(
-              sellerId: sellerId,
-              tableNumber: tableNumber,
-            ),
-        readOpenOrders: () => _storeService.getTableOrdersSnapshot(
-          sellerId,
-          tableNumber: tableNumber,
-        ),
-      );
-
-      final currentUser = _authService.currentUser;
-      final closeCompletedAt = DateTime.now();
-      try {
-        final insertedFallbackHistory = await _storeService
-            .ensureTableHistoryRecorded(
-              sellerId: sellerId,
-              tableNumber: tableNumber,
-              closedOrders: sessionOrders,
-              paymentMethod: 'cash',
-              waiterId: currentUser?.id,
-              waiterName: _sellerPrintJobService.safeUserDisplayName(
-                currentUser,
+      // Timeout and any other read-only result forbid this write. Mirror
+      // customer orders before fallback history only when further writes
+      // are still allowed, because history's closed_at hides still-open rows.
+      if (!writesForbidden) {
+        ordersClosedTotal += await mirrorRestaurantOrdersBeforeFallbackHistory(
+          bulkCloseCommitted: bulkCloseCommitted,
+          mirrorRestaurantOrders: () =>
+              _storeService.closeRestaurantOrdersForTable(
+                sellerId: sellerId,
+                tableNumber: tableNumber,
               ),
-              tableLabel: tableLabel,
-              closedAt: closeCompletedAt,
-            );
-        debugPrint(
-          '[GARSON_CLOSE_HISTORY_ENSURE] '
-          'table=$tableNumber '
-          'inserted_fallback=$insertedFallbackHistory '
-          'orders=${tableOrders.length}',
+          readOpenOrders: () => _storeService.getTableOrdersSnapshot(
+            sellerId,
+            tableNumber: tableNumber,
+          ),
         );
-      } catch (historyError) {
-        debugPrint(
-          '[GARSON_CLOSE_HISTORY_ENSURE_FAILED] '
-          'table=$tableNumber '
-          'error=$historyError',
-        );
-        rethrow;
+      }
+
+      if (!writesForbidden) {
+        final currentUser = _authService.currentUser;
+        final closeCompletedAt = DateTime.now();
+        try {
+          final insertedFallbackHistory = await _storeService
+              .ensureTableHistoryRecorded(
+                sellerId: sellerId,
+                tableNumber: tableNumber,
+                closedOrders: sessionOrders,
+                paymentMethod: 'cash',
+                waiterId: currentUser?.id,
+                waiterName: _sellerPrintJobService.safeUserDisplayName(
+                  currentUser,
+                ),
+                tableLabel: tableLabel,
+                closedAt: closeCompletedAt,
+              );
+          debugPrint(
+            '[GARSON_CLOSE_HISTORY_ENSURE] '
+            'table=$tableNumber '
+            'inserted_fallback=$insertedFallbackHistory '
+            'orders=${tableOrders.length}',
+          );
+        } catch (historyError) {
+          debugPrint(
+            '[GARSON_CLOSE_HISTORY_ENSURE_FAILED] '
+            'table=$tableNumber '
+            'error=$historyError',
+          );
+          rethrow;
+        }
       }
 
       // Final merged-source verification: `table_orders` may be closed while
@@ -38289,7 +38296,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         widget.sellerId,
         tableNumber: widget.tableNumber,
       );
-      await _storeService.closeTableWithHistory(
+      final closeResult = await _storeService.closeTableWithHistory(
         sellerId: widget.sellerId,
         tableNumber: widget.tableNumber,
         paymentMethod: paymentMethod,
@@ -38297,19 +38304,22 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         waiterName: _currentWaiterName(),
         sessionKey: _getOrCreateSessionKey(),
       );
+      final writesForbidden = closeResult['writes_forbidden'] == true;
       final sessionOrders = preCloseSessionOrders.isNotEmpty
           ? preCloseSessionOrders
           : orders;
-      await _storeService.ensureTableHistoryRecorded(
-        sellerId: widget.sellerId,
-        tableNumber: widget.tableNumber,
-        closedOrders: sessionOrders,
-        paymentMethod: paymentMethod,
-        waiterId: _currentWaiterId(),
-        waiterName: _currentWaiterName(),
-        tableLabel: widget.tableTitleOverride ?? 'Masa ${widget.tableNumber}',
-        closedAt: closeCompletedAt,
-      );
+      if (!writesForbidden) {
+        await _storeService.ensureTableHistoryRecorded(
+          sellerId: widget.sellerId,
+          tableNumber: widget.tableNumber,
+          closedOrders: sessionOrders,
+          paymentMethod: paymentMethod,
+          waiterId: _currentWaiterId(),
+          waiterName: _currentWaiterName(),
+          tableLabel: widget.tableTitleOverride ?? 'Masa ${widget.tableNumber}',
+          closedAt: closeCompletedAt,
+        );
+      }
       final remainingActiveOrders = await _storeService.getTableOrdersSnapshot(
         widget.sellerId,
         tableNumber: widget.tableNumber,

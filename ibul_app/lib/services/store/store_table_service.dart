@@ -2206,6 +2206,7 @@ class StoreTableService {
       return _readOnlyCloseVerification(
         sellerId: sellerId,
         tableNumber: tableNumber,
+        sessionKey: sessionKey,
       );
     } on PostgrestException catch (error) {
       if (!_shouldFallbackToDirectTableWrite(error)) {
@@ -2242,6 +2243,7 @@ class StoreTableService {
       return _readOnlyCloseVerification(
         sellerId: sellerId,
         tableNumber: tableNumber,
+        sessionKey: sessionKey,
       );
     } on TimeoutException {
       debugPrint(
@@ -2250,27 +2252,126 @@ class StoreTableService {
       return _readOnlyCloseVerification(
         sellerId: sellerId,
         tableNumber: tableNumber,
+        sessionKey: sessionKey,
       );
     }
   }
 
+  /// Reads only this table's open rows and this session's history.
+  /// Never inserts, updates, or deletes. An unclear read is not success.
   Future<Map<String, dynamic>> _readOnlyCloseVerification({
     required String sellerId,
     required int tableNumber,
+    String? sessionKey,
   }) async {
-    final stillOpen = await _exactOpenCount(
-      table: 'table_orders',
-      sellerColumn: 'seller_id',
+    final openTableOrders = await _countOpenTableOrdersForTable(
       sellerId: sellerId,
-      tableOrders: true,
+      tableNumber: tableNumber,
     );
-    if (stillOpen == 0) {
-      return const <String, dynamic>{
-        'orders_updated': 0,
-        'verified_read_only': true,
-      };
+    final openCustomerOrders = await _countOpenCustomerOrdersForTable(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+    );
+    final historyMatches = await _sessionHistoryExists(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      sessionKey: sessionKey,
+    );
+    final verdict = judgeTargetTableCloseRead(
+      openTableOrders: openTableOrders,
+      openCustomerOrders: openCustomerOrders,
+      historyMatchesSession: historyMatches,
+    );
+    if (verdict != TargetTableCloseVerdict.confirmed) {
+      throw StateError(closeTableRpcUnverifiedMessage);
     }
-    throw StateError(closeTableRpcUnverifiedMessage);
+    return const <String, dynamic>{
+      'orders_updated': 0,
+      'verified_read_only': true,
+      'writes_forbidden': true,
+    };
+  }
+
+  Future<int?> _countOpenTableOrdersForTable({
+    required String sellerId,
+    required int tableNumber,
+  }) async {
+    try {
+      final count = await _supabase
+          .from('table_orders')
+          .count(CountOption.exact)
+          .eq('seller_id', sellerId)
+          .eq('table_number', tableNumber)
+          .not(
+            'status',
+            'in',
+            OrderStatusConstants.terminalStatuses.toList(),
+          )
+          .timeout(tableOrderTimeout);
+      return count;
+    } catch (error) {
+      debugPrint('[StoreTableService] table_orders read failed: $error');
+      return null;
+    }
+  }
+
+  Future<int?> _countOpenCustomerOrdersForTable({
+    required String sellerId,
+    required int tableNumber,
+  }) async {
+    try {
+      final tableRows = await _supabase
+          .from('store_tables')
+          .select('id')
+          .eq('seller_id', sellerId)
+          .eq('table_number', tableNumber)
+          .timeout(tableOrderTimeout);
+      final tableIds = <String>[];
+      for (final row in (tableRows as List)) {
+        final id = (row as Map)['id']?.toString().trim() ?? '';
+        if (id.isNotEmpty) tableIds.add(id);
+      }
+      if (tableIds.isEmpty) return null;
+      final count = await _supabase
+          .from('orders')
+          .count(CountOption.exact)
+          .eq('restaurant_id', sellerId)
+          .inFilter('table_id', tableIds)
+          .or('order_type.eq.table,delivery_type.eq.table')
+          .not(
+            'status',
+            'in',
+            OrderStatusConstants.terminalStatuses.toList(),
+          )
+          .timeout(tableOrderTimeout);
+      return count;
+    } catch (error) {
+      debugPrint('[StoreTableService] orders read failed: $error');
+      return null;
+    }
+  }
+
+  Future<bool?> _sessionHistoryExists({
+    required String sellerId,
+    required int tableNumber,
+    String? sessionKey,
+  }) async {
+    final session = sessionKey?.trim() ?? '';
+    if (session.isEmpty) return false;
+    try {
+      final rows = await _supabase
+          .from('table_order_history')
+          .select('id')
+          .eq('seller_id', sellerId)
+          .eq('table_number', tableNumber)
+          .eq('session_key', session)
+          .limit(1)
+          .timeout(tableOrderTimeout);
+      return (rows as List).isNotEmpty;
+    } catch (error) {
+      debugPrint('[StoreTableService] history read failed: $error');
+      return null;
+    }
   }
 
   /// Ensures a just-closed table session is queryable from `table_order_history`

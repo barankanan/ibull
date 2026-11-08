@@ -70,6 +70,58 @@ CloseTableRpcDecision decideCloseTableRpc({
   return CloseTableRpcDecision.accept;
 }
 
+enum TargetTableCloseVerdict { confirmed, notConfirmed }
+
+/// Success requires this table's open `table_orders` and `orders` to be zero
+/// and a history row for this session. A failed read, a missing session, or
+/// a still-open target is not success. Other tables are not inputs.
+TargetTableCloseVerdict judgeTargetTableCloseRead({
+  required int? openTableOrders,
+  required int? openCustomerOrders,
+  required bool? historyMatchesSession,
+}) {
+  if (openTableOrders == null ||
+      openCustomerOrders == null ||
+      historyMatchesSession == null) {
+    return TargetTableCloseVerdict.notConfirmed;
+  }
+  if (openTableOrders != 0 || openCustomerOrders != 0) {
+    return TargetTableCloseVerdict.notConfirmed;
+  }
+  if (!historyMatchesSession) return TargetTableCloseVerdict.notConfirmed;
+  return TargetTableCloseVerdict.confirmed;
+}
+
+bool rowIsTargetCloseSession({
+  required int targetTableNumber,
+  required String targetSellerId,
+  required int rowTableNumber,
+  required String rowSellerId,
+  String? targetSessionKey,
+  String? rowSessionKey,
+  bool sessionScoped = false,
+}) {
+  if (rowTableNumber != targetTableNumber) return false;
+  if (rowSellerId.trim() != targetSellerId.trim()) return false;
+  if (!sessionScoped) return true;
+  final target = targetSessionKey?.trim() ?? '';
+  final row = rowSessionKey?.trim() ?? '';
+  return target.isNotEmpty && row == target;
+}
+
+bool isCloseWriteForbiddenError(Object error) {
+  final text = error.toString();
+  return text.contains(closeTableRpcUnverifiedMessage) ||
+      text.contains(closeTableRpcBlockedMessage);
+}
+
+bool furtherCloseWritesAllowed({
+  required bool rpcTimedOut,
+  required bool writesForbidden,
+}) {
+  return !rpcTimedOut && !writesForbidden;
+}
+
 bool isCloseTableRpcMissing({
   String? code,
   String? message,
