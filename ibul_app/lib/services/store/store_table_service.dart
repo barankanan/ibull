@@ -1295,6 +1295,7 @@ class StoreTableService {
     required Map<String, dynamic> order,
     required Map<String, dynamic> table,
   }) async {
+    refuseDiagnosticOrderWrite('realign_table_order_number');
     final canonicalTableNumber = _parseTableNumberValue(table['table_number']);
     final storedTableNumber = garsonStoredTableNumber(order);
     if (orderId.trim().isEmpty ||
@@ -1540,6 +1541,7 @@ class StoreTableService {
   }
 
   Future<void> deleteTableOrder(String orderId) async {
+    refuseDiagnosticOrderWrite('delete_table_order');
     try {
       await _supabase
           .from('table_orders')
@@ -1646,6 +1648,7 @@ class StoreTableService {
     required String sellerId,
     required int tableNumber,
   }) async {
+    refuseDiagnosticOrderWrite('close_restaurant_orders_for_table');
     if (sellerId.trim().isEmpty || tableNumber <= 0) {
       debugPrint(
         '[StoreTableService.closeRestaurantOrdersForTable] '
@@ -2525,6 +2528,7 @@ class StoreTableService {
     String? tableLabel,
     DateTime? closedAt,
   }) async {
+    refuseDiagnosticOrderWrite('ensure_table_history_recorded');
     if (tableNumber <= 0 || closedOrders.isEmpty) return false;
 
     final resolvedSellerId = _resolveSellerId(sellerId);

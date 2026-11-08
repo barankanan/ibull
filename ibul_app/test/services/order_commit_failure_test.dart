@@ -445,6 +445,54 @@ void main() {
         tables.updateTableOrder('order-1', status: 'sent'),
         throwsA(isA<StateError>()),
       );
+      await expectLater(
+        tables.deleteTableOrder('order-1'),
+        throwsA(isA<StateError>()),
+      );
+      await expectLater(
+        tables.realignTableOrderNumber(
+          sellerId: '10000000-0000-0000-0000-000000000001',
+          orderId: 'open-bahce',
+          order: <String, dynamic>{
+            'id': 'open-bahce',
+            'seller_id': '10000000-0000-0000-0000-000000000001',
+            'table_number': 1,
+            '_stored_table_number': 1,
+            'area_name': 'Bahçe',
+            'area_table_number': 1,
+            'display_table_label': 'Bahçe 1',
+            'status': 'sent',
+            '_garson_source_table': 'table_orders',
+          },
+          table: <String, dynamic>{
+            'id': 'bahce',
+            'seller_id': '10000000-0000-0000-0000-000000000001',
+            'table_number': 11,
+            'area_name': 'Bahçe',
+            'area_table_number': 1,
+            'display_label': 'Bahçe 1',
+          },
+        ),
+        throwsA(isA<StateError>()),
+      );
+      await expectLater(
+        tables.closeRestaurantOrdersForTable(
+          sellerId: '10000000-0000-0000-0000-000000000001',
+          tableNumber: 11,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      await expectLater(
+        tables.ensureTableHistoryRecorded(
+          sellerId: '10000000-0000-0000-0000-000000000001',
+          tableNumber: 11,
+          closedOrders: <Map<String, dynamic>>[
+            <String, dynamic>{'id': 'open-bahce', 'total': 10},
+          ],
+          paymentMethod: 'cash',
+        ),
+        throwsA(isA<StateError>()),
+      );
       expect(requests, isEmpty);
 
       debugOrderWritesForbiddenOverride = false;

@@ -38,6 +38,8 @@ bool get ibulOrderWritesForbidden {
   );
 }
 
+const String diagnosticWriteRefusedMessage = 'Tanılama modu yazmayı reddetti.';
+
 /// Stops an order, print, payment, close, or transfer write.
 void refuseDiagnosticOrderWrite(String operation) {
   if (!ibulOrderWritesForbidden) return;
@@ -45,7 +47,7 @@ void refuseDiagnosticOrderWrite(String operation) {
     'operation': operation,
     'writes': 0,
   });
-  throw StateError('Tanılama modu yazmayı reddetti.');
+  throw StateError(diagnosticWriteRefusedMessage);
 }
 
 /// Non-reversible tag so two drafts can be compared without logging items.

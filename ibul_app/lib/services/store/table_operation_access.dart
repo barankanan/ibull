@@ -1,3 +1,5 @@
+import '../order_send_access.dart';
+
 /// Decides whether a failed table close or transfer may fall back to a
 /// direct write.
 ///
@@ -112,7 +114,8 @@ bool rowIsTargetCloseSession({
 bool isCloseWriteForbiddenError(Object error) {
   final text = error.toString();
   return text.contains(closeTableRpcUnverifiedMessage) ||
-      text.contains(closeTableRpcBlockedMessage);
+      text.contains(closeTableRpcBlockedMessage) ||
+      text.contains(diagnosticWriteRefusedMessage);
 }
 
 bool furtherCloseWritesAllowed({

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ibul_app/services/order_send_access.dart';
 import 'package:ibul_app/services/store/table_operation_access.dart';
 
 void main() {
@@ -223,6 +224,10 @@ void main() {
     );
     expect(
       isCloseWriteForbiddenError(StateError(closeTableRpcBlockedMessage)),
+      isTrue,
+    );
+    expect(
+      isCloseWriteForbiddenError(StateError(diagnosticWriteRefusedMessage)),
       isTrue,
     );
     expect(isCloseWriteForbiddenError(Exception('network reset')), isFalse);
