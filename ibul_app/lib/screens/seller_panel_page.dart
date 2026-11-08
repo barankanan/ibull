@@ -30,6 +30,7 @@ import '../core/app_motion.dart';
 import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/web_seo.dart';
+import '../services/store/close_table_workflow.dart';
 import '../services/store/table_operation_access.dart';
 import '../services/store_service.dart';
 import '../services/store/table_transfer_plan.dart';
@@ -14437,6 +14438,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       // 0 across the board is the silent-failure signature for the reopen
       // bug — surface it to the user.
       var ordersClosedTotal = 0;
+      var bulkCloseCommitted = false;
 
       // ── 4. Archive to table_order_history then remove active orders.
       // Revenue (Genel Bakış / Finans) reads ONLY from table_order_history
@@ -14451,6 +14453,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           waiterId: currentUser?.id,
           waiterName: _sellerPrintJobService.safeUserDisplayName(currentUser),
         );
+        bulkCloseCommitted = true;
         final reportedClosed = closeResult['orders_updated'];
         if (reportedClosed is num) {
           ordersClosedTotal += reportedClosed.toInt();
@@ -14538,9 +14541,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         }
       }
 
-      // Orders are closed inside close_table_with_history. A second update
-      // here can time out after the visit is already archived.
-
       // ── 6. ID-based verification — confirms every targeted row is gone or
       //       marked closed. A filter-based re-query (seller_id + table_number)
       //       would silently "succeed" when orders were never in table_orders or
@@ -14567,6 +14567,23 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           );
         }
       }
+
+      // A committed close_table_with_history already mirrored `orders`.
+      // A timeout throws first, and the per-order loop above only touches
+      // `table_orders`. Mirror customer orders before fallback history,
+      // because history's closed_at hides still-open rows from the snapshot.
+      ordersClosedTotal += await mirrorRestaurantOrdersBeforeFallbackHistory(
+        bulkCloseCommitted: bulkCloseCommitted,
+        mirrorRestaurantOrders: () =>
+            _storeService.closeRestaurantOrdersForTable(
+              sellerId: sellerId,
+              tableNumber: tableNumber,
+            ),
+        readOpenOrders: () => _storeService.getTableOrdersSnapshot(
+          sellerId,
+          tableNumber: tableNumber,
+        ),
+      );
 
       final currentUser = _authService.currentUser;
       final closeCompletedAt = DateTime.now();

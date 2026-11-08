@@ -330,4 +330,96 @@ void main() {
       expect(caught.activeIds, containsAll(['id-A', 'id-B']));
     });
   });
+
+  // ── Timed-out close_table_with_history ────────────────────────────────────
+  //
+  // A client timeout throws before `orders` is updated. The per-order
+  // fallback only deletes `table_orders`. Writing `table_order_history`
+  // with closed_at=now then hides the still-open customer row, because
+  // its activity is not after that close. The mirror must run, and history
+  // must not be reached while those rows are still visible.
+
+  group('timed-out close_table_with_history', () {
+    test('requires a restaurant-order mirror before fallback history', () {
+      expect(
+        mustMirrorRestaurantOrdersBeforeHistory(bulkCloseCommitted: false),
+        isTrue,
+      );
+      expect(
+        mustMirrorRestaurantOrdersBeforeHistory(bulkCloseCommitted: true),
+        isFalse,
+      );
+    });
+
+    test('fallback history hides an older still-open customer order', () {
+      expect(
+        openRestaurantOrderHiddenByLatestClose(
+          orderActivityAt: DateTime.utc(2026, 11, 8, 5, 0),
+          latestClosedAt: DateTime.utc(2026, 11, 8, 5, 12),
+        ),
+        isTrue,
+      );
+      expect(
+        openRestaurantOrderHiddenByLatestClose(
+          orderActivityAt: DateTime.utc(2026, 11, 8, 5, 13),
+          latestClosedAt: DateTime.utc(2026, 11, 8, 5, 12),
+        ),
+        isFalse,
+      );
+    });
+
+    test('timeout mirrors customer orders and stops when they stay open', () async {
+      var mirrorCalls = 0;
+
+      await expectLater(
+        mirrorRestaurantOrdersBeforeFallbackHistory(
+          bulkCloseCommitted: false,
+          mirrorRestaurantOrders: () async {
+            mirrorCalls++;
+            return 0;
+          },
+          readOpenOrders: () async => <Map<String, dynamic>>[
+            {'id': 'customer-1', '_garson_source_table': 'orders'},
+          ],
+        ),
+        throwsA(
+          isA<Exception>().having(
+            (error) => error.toString(),
+            'message',
+            contains('Müşteri siparişleri hâlâ açık'),
+          ),
+        ),
+      );
+      expect(mirrorCalls, 1);
+    });
+
+    test('timeout records a cleared visit and a committed close does not mirror', () async {
+      final calls = <String>[];
+      final closed = await mirrorRestaurantOrdersBeforeFallbackHistory(
+        bulkCloseCommitted: false,
+        mirrorRestaurantOrders: () async {
+          calls.add('mirror');
+          return 2;
+        },
+        readOpenOrders: () async {
+          calls.add('read');
+          return const <Map<String, dynamic>>[];
+        },
+      );
+      expect(closed, 2);
+      expect(calls, ['mirror', 'read']);
+
+      var mirroredAgain = 0;
+      final skipped = await mirrorRestaurantOrdersBeforeFallbackHistory(
+        bulkCloseCommitted: true,
+        mirrorRestaurantOrders: () async {
+          mirroredAgain++;
+          return 9;
+        },
+        readOpenOrders: () async => throw StateError('must not read'),
+      );
+      expect(skipped, 0);
+      expect(mirroredAgain, 0);
+    });
+  });
 }
