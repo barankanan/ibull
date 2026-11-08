@@ -590,6 +590,15 @@ GarsonTableProof garsonTableProof({
     return GarsonTableProof.none;
   }
   if (table == null) return GarsonTableProof.none;
+  // A bill whose stored number is another physical table was transferred.
+  // Bahçe 1 stored as its area index (1) while canonical is 11 is not a move.
+  if (_storedTableNumberBelongsToAnotherTable(
+    table: table,
+    canonicalTableNumber: canonicalTableNumber,
+    order: order,
+  )) {
+    return GarsonTableProof.none;
+  }
   final tableId = _t(table['id']);
   final orderTableId = _t(order['table_id']);
   final orderStoreTableId = _t(order['store_table_id']);
@@ -660,6 +669,22 @@ bool garsonOrderBelongsToCloseTable({
         sellerId: sellerId,
       ) !=
       GarsonTableProof.none;
+}
+
+bool _storedTableNumberBelongsToAnotherTable({
+  required Map<String, dynamic> table,
+  required int canonicalTableNumber,
+  required Map<String, dynamic> order,
+}) {
+  final stored = garsonStoredTableNumber(order);
+  if (stored <= 0) return false;
+  final canonical = canonicalTableNumber > 0
+      ? canonicalTableNumber
+      : _pi(table['table_number']);
+  if (canonical <= 0 || stored == canonical) return false;
+  final areaNo = _pi(table['area_table_number']);
+  if (areaNo > 0 && stored == areaNo) return false;
+  return true;
 }
 
 int garsonStoredTableNumber(Map<String, dynamic> order) {

@@ -401,6 +401,135 @@ void main() {
     );
   });
 
+  test('a transferred bill is not closed with the source table', () {
+    final source = <String, dynamic>{
+      'id': 'salon-5',
+      'seller_id': 'seller-a',
+      'table_number': 5,
+      'area_name': 'Salon',
+      'area_table_number': 5,
+      'display_label': 'Salon 5',
+    };
+    // Client transfer updates table_number and leaves the old area label.
+    final movedWithStaleArea = <String, dynamic>{
+      'id': 'moved-stale',
+      'seller_id': 'seller-a',
+      'table_number': 8,
+      'area_name': 'Salon',
+      'area_table_number': 5,
+      'display_table_label': 'Salon 5',
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+      '_stored_table_number': 8,
+    };
+    expect(
+      garsonOrderBelongsToCloseTable(
+        table: source,
+        canonicalTableNumber: 5,
+        order: movedWithStaleArea,
+        sellerId: 'seller-a',
+      ),
+      isFalse,
+    );
+    expect(
+      garsonTableOrderNeedsRealign(
+        order: movedWithStaleArea,
+        table: source,
+        canonicalTableNumber: 5,
+        sellerId: 'seller-a',
+      ),
+      isFalse,
+    );
+
+    // Destination area is already correct, but the close path used to copy
+    // the source table id and number onto the row before the membership check.
+    final movedToDestination = <String, dynamic>{
+      'id': 'moved-dest',
+      'seller_id': 'seller-a',
+      'table_number': 8,
+      'area_name': 'Salon',
+      'area_table_number': 8,
+      'display_table_label': 'Salon 8',
+      'status': 'sent',
+      'items': const <Map<String, dynamic>>[],
+      'total': 120,
+    };
+    final stamped = normalizeTableOrderToGarsonBoardOrder(
+      order: movedToDestination,
+      storeTable: source,
+    );
+    expect(stamped, isNotNull);
+    expect(stamped!['table_id'], 'salon-5');
+    expect(stamped['table_number'], 5);
+    expect(
+      garsonOrderBelongsToCloseTable(
+        table: source,
+        canonicalTableNumber: 5,
+        order: stamped,
+        sellerId: 'seller-a',
+      ),
+      isTrue,
+      reason: 'stamping the anchor invents a table id match',
+    );
+    expect(
+      closeSessionTableOrderFromRawRow(
+        row: movedToDestination,
+        anchor: source,
+        canonicalTableNumber: 5,
+        sellerId: 'seller-a',
+      ),
+      isNull,
+    );
+    expect(
+      closeSessionTableOrderFromRawRow(
+        row: movedWithStaleArea,
+        anchor: source,
+        canonicalTableNumber: 5,
+        sellerId: 'seller-a',
+      ),
+      isNull,
+    );
+
+    final bahce = <String, dynamic>{
+      'id': 'bahce',
+      'seller_id': 'seller-a',
+      'table_number': 11,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_label': 'Bahçe 1',
+    };
+    final bahceMisindexed = <String, dynamic>{
+      'id': 'open-bahce',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_table_label': 'Bahçe 1',
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+      'items': const <Map<String, dynamic>>[],
+      'total': 90,
+    };
+    final kept = closeSessionTableOrderFromRawRow(
+      row: bahceMisindexed,
+      anchor: bahce,
+      canonicalTableNumber: 11,
+      sellerId: 'seller-a',
+    );
+    expect(kept, isNotNull);
+    expect(kept!['table_number'], 11);
+    expect(kept['_stored_table_number'], 1);
+    expect(
+      garsonTableOrderNeedsRealign(
+        order: kept,
+        table: bahce,
+        canonicalTableNumber: 11,
+        sellerId: 'seller-a',
+      ),
+      isTrue,
+    );
+  });
+
   test('one pending job has a single winner and an uncertain print is not reprinted', () {
     final job = <String, String>{'status': 'pending'};
     final first = claimPendingJob(job);

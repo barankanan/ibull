@@ -1120,8 +1120,12 @@ class StoreTableService {
         final row = Map<String, dynamic>.from(raw as Map);
         if ((row['seller_id']?.toString() ?? '') != resolvedSellerId) continue;
         take(
-          normalizeTableOrderToGarsonBoardOrder(order: row, storeTable: anchor),
-          storedTableNumber: _parseTableNumberValue(row['table_number']),
+          closeSessionTableOrderFromRawRow(
+            row: row,
+            anchor: anchor,
+            canonicalTableNumber: tableNumber,
+            sellerId: resolvedSellerId,
+          ),
         );
       }
     }
@@ -1175,8 +1179,12 @@ class StoreTableService {
           continue;
         }
         take(
-          normalizeTableOrderToGarsonBoardOrder(order: row, storeTable: anchor),
-          storedTableNumber: _parseTableNumberValue(row['table_number']),
+          closeSessionTableOrderFromRawRow(
+            row: row,
+            anchor: anchor,
+            canonicalTableNumber: tableNumber,
+            sellerId: resolvedSellerId,
+          ),
         );
       }
     }
