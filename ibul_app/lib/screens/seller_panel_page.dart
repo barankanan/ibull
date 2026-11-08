@@ -11671,7 +11671,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             cardBuilder: (tableNumber) {
                               final draftOrder =
                                   _garsonDraftDisplayOrderForTable(tableNumber);
-                              if (draftOrder != null) {
+                              final savedOrders =
+                                  ordersByTable[tableNumber] ??
+                                  const <Map<String, dynamic>>[];
+                              final hasSavedOrder = savedOrders.any(
+                                (order) =>
+                                    (order['status']?.toString() ?? '') !=
+                                    'draft',
+                              );
+                              if (draftOrder != null && !hasSavedOrder) {
                                 return _buildMobileGarsonTableCard(
                                   tableNumber: tableNumber,
                                   order: draftOrder,
@@ -14432,9 +14440,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           source: 'garson_close_verified_empty',
           forceApply: true,
         );
+        final draftLeft =
+            _mobileGarsonDraftItemsByTable[tableNumber]?.isNotEmpty == true;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(garsonCloseTableAlreadyEmptySnackbarText(tableLabel)),
+            content: Text(
+              draftLeft
+                  ? '$tableLabel için sunucuda açık adisyon yok. Taslak duruyor.'
+                  : garsonCloseTableAlreadyEmptySnackbarText(tableLabel),
+            ),
           ),
         );
         return;
@@ -25711,7 +25725,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                     _garsonDraftDisplayOrderForTable(
                                       tableNumber,
                                     );
-                                if (draftOrder != null) {
+                                final savedOrders =
+                                    ordersByTable[tableNumber] ??
+                                    const <Map<String, dynamic>>[];
+                                final hasSavedOrder = savedOrders.any(
+                                  (order) =>
+                                      (order['status']?.toString() ?? '') !=
+                                      'draft',
+                                );
+                                if (draftOrder != null && !hasSavedOrder) {
                                   return _buildWebGarsonTableCard(
                                     tableNumber: tableNumber,
                                     order: draftOrder,
@@ -26117,7 +26139,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                               _garsonDraftDisplayOrderForTable(
                                                 tableNumber,
                                               );
-                                          if (draftOrder != null) {
+                                          final savedOrders =
+                                              ordersByTable[tableNumber] ??
+                                              const <Map<String, dynamic>>[];
+                                          final hasSavedOrder = savedOrders.any(
+                                            (order) =>
+                                                (order['status']
+                                                        ?.toString() ??
+                                                    '') !=
+                                                'draft',
+                                          );
+                                          if (draftOrder != null &&
+                                              !hasSavedOrder) {
                                             return _buildWebGarsonTableCard(
                                               tableNumber: tableNumber,
                                               order: draftOrder,
@@ -38972,11 +39005,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: Text(
-                                          isFinalTableOperationDenialError(
-                                                error,
-                                              )
-                                              ? 'Masa aktarılamadı. Bu restoran için masa işlemi yetkiniz yok.'
-                                              : 'Masa aktarılamadı. Bağlantınızı kontrol edip tekrar deneyin.',
+                                          error
+                                              .toString()
+                                              .replaceFirst('Exception: ', ''),
                                         ),
                                       ),
                                     );

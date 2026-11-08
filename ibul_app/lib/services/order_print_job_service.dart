@@ -1803,8 +1803,15 @@ class OrderPrintJobService {
           .limit(1)
           .maybeSingle()
           .timeout(const Duration(seconds: 5));
-      if (existing == null) return null;
-      final row = Map<String, dynamic>.from(existing);
+      final kind = interpretOrderCommitLookup(
+        requestFailed: false,
+        rowFound: existing != null &&
+            (Map<String, dynamic>.from(existing)['id']?.toString().trim() ??
+                    '')
+                .isNotEmpty,
+      );
+      if (kind == OrderCommitLookupKind.notFound) return null;
+      final row = Map<String, dynamic>.from(existing!);
       final orderId = row['id']?.toString() ?? '';
       if (orderId.isEmpty) return null;
       final jobs = await _client
@@ -1827,9 +1834,31 @@ class OrderPrintJobService {
         },
         'idempotent_replay': true,
       };
+    } on PostgrestException catch (error) {
+      debugPrint(
+        '[OrderCommit] lookup read_failed '
+        'code=${error.code ?? '-'} '
+        'localOrderId=$localOrderId',
+      );
+      throw StateError(
+        'Sipariş kaydı okunamadı (${error.code ?? '-'}). '
+        'Taslak duruyor. Aynı gönderim anahtarı korunuyor.',
+      );
+    } on TimeoutException {
+      debugPrint(
+        '[OrderCommit] lookup read_failed code=timeout '
+        'localOrderId=$localOrderId',
+      );
+      throw StateError(
+        'Sipariş kaydı okunamadı (timeout). '
+        'Taslak duruyor. Aynı gönderim anahtarı korunuyor.',
+      );
     } catch (error) {
-      debugPrint('[OrderCommit] lookup failed: $error');
-      return null;
+      debugPrint('[OrderCommit] lookup read_failed error=$error');
+      throw StateError(
+        'Sipariş kaydı okunamadı. '
+        'Taslak duruyor. Aynı gönderim anahtarı korunuyor.',
+      );
     }
   }
 

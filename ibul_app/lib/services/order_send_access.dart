@@ -157,6 +157,19 @@ Future<dynamic> recoverOrderSaveAfterTimeout({
 /// One conditional `pending → claimed` update.
 /// [won] is the only result that may print. [lost] means another device
 /// owns the job. [uncertain] must not print and must not be queued again.
+enum OrderCommitLookupKind { found, notFound, readFailed }
+
+/// A failed read is not the same as an absent order. Only [notFound] may
+/// decide that the send did not commit.
+OrderCommitLookupKind interpretOrderCommitLookup({
+  required bool requestFailed,
+  required bool rowFound,
+}) {
+  if (requestFailed) return OrderCommitLookupKind.readFailed;
+  if (rowFound) return OrderCommitLookupKind.found;
+  return OrderCommitLookupKind.notFound;
+}
+
 enum PrintClaimResult { won, lost, uncertain }
 
 PrintClaimResult interpretPrintClaim({

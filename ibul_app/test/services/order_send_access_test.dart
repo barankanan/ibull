@@ -804,6 +804,25 @@ void main() {
     expect(withheld, hasLength(1));
   });
 
+  test('a failed order lookup is not treated as an absent order', () {
+    expect(
+      interpretOrderCommitLookup(requestFailed: true, rowFound: false),
+      OrderCommitLookupKind.readFailed,
+    );
+    expect(
+      interpretOrderCommitLookup(requestFailed: false, rowFound: false),
+      OrderCommitLookupKind.notFound,
+    );
+    expect(
+      interpretOrderCommitLookup(requestFailed: false, rowFound: true),
+      OrderCommitLookupKind.found,
+    );
+    expect(
+      interpretOrderCommitLookup(requestFailed: true, rowFound: true),
+      OrderCommitLookupKind.readFailed,
+    );
+  });
+
   test('a different cart does not reuse another send key', () {
     final ledger = OrderSendKeyLedger();
     final first = resolveOrderSendKey(

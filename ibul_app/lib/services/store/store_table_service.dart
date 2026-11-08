@@ -2801,15 +2801,67 @@ class StoreTableService {
     }
 
     try {
+      return await _callTransferRpc(
+        functionName: 'transfer_table_orders_v2',
+        sellerId: resolvedSellerId,
+        fromTable: fromTable,
+        toTable: toTable,
+        transferType: canonical,
+        itemIds: plan.movedLineIds,
+        waiterId: waiterId,
+        waiterName: waiterName,
+        note: note,
+      );
+    } on PostgrestException catch (error) {
+      if (!_isMissingTransferRpc(error)) rethrow;
+      debugPrint(
+        '[StoreTableService] transfer_table_orders_v2 missing '
+        'code=${error.code ?? '-'}. Using transfer_table_orders. '
+        'No client-side write.',
+      );
+    }
+
+    try {
+      return await _callTransferRpc(
+        functionName: 'transfer_table_orders',
+        sellerId: resolvedSellerId,
+        fromTable: fromTable,
+        toTable: toTable,
+        transferType: canonical,
+        itemIds: plan.movedLineIds,
+        waiterId: waiterId,
+        waiterName: waiterName,
+        note: note,
+      );
+    } on PostgrestException catch (error) {
+      throw Exception(
+        'Masa aktarma fonksiyonu sunucuda yok (${error.code ?? '-'}). '
+        'Siparişler yerinde kaldı.',
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _callTransferRpc({
+    required String functionName,
+    required String sellerId,
+    required int fromTable,
+    required int toTable,
+    required String transferType,
+    required List<String> itemIds,
+    String? waiterId,
+    String? waiterName,
+    String? note,
+  }) async {
+    try {
       final result = await _supabase
           .rpc(
-            'transfer_table_orders_v2',
+            functionName,
             params: {
-              'p_seller_id': resolvedSellerId,
+              'p_seller_id': sellerId,
               'p_from_table': fromTable,
               'p_to_table': toTable,
-              'p_transfer_type': canonical,
-              'p_item_ids': plan.movedLineIds,
+              'p_transfer_type': transferType,
+              'p_item_ids': itemIds,
               if (waiterId != null && waiterId.isNotEmpty)
                 'p_waiter_id': waiterId,
               if (waiterName != null && waiterName.isNotEmpty)
@@ -2821,44 +2873,30 @@ class StoreTableService {
       if (result is Map) return Map<String, dynamic>.from(result);
       return <String, dynamic>{
         'success': true,
-        'transfer_type': canonical,
-        'moved_count': plan.movedLineIds.length,
+        'transfer_type': transferType,
+        'moved_count': itemIds.length,
       };
     } on PostgrestException catch (error) {
-      if (!_shouldFallbackToDirectTableWrite(error)) {
-        debugPrint(
-          '[StoreTableService] transferTableOrders denied ($error). '
-          'No client-side move.',
-        );
-        throw _finalTableOperationDenial('Masa aktarımı');
-      }
-      final legacyOwnerOnly = error.code == '42501';
-      if (!_isMissingTransferRpc(error) && !legacyOwnerOnly) {
-        throw _tableOrderException('Masa aktarımı', error);
-      }
       debugPrint(
-        '[StoreTableService] transfer_table_orders_v2 unavailable. '
-        'Applying line-level plan locally. type=$canonical',
+        '[StoreTableService] $functionName denied '
+        'code=${error.code ?? '-'} message=${error.message}',
+      );
+      if (_isMissingTransferRpc(error)) rethrow;
+      final serverText = error.message.trim();
+      final readable = serverText.isNotEmpty &&
+          !serverText.toLowerCase().contains('permission denied');
+      throw Exception(
+        readable
+            ? 'Masa aktarılamadı. $serverText'
+                '${serverText.contains('yerinde') ? '' : ' Siparişler yerinde kaldı.'}'
+            : 'Masa aktarılamadı. Sunucu yetkiyi reddetti '
+                '(${error.code ?? '-'}). Siparişler yerinde kaldı.',
       );
     } on TimeoutException {
-      throw Exception('Masa aktarımı zaman aşımına uğradı. Tekrar deneyin.');
+      throw Exception(
+        'Masa aktarımı zaman aşımına uğradı. Siparişler yerinde kaldı.',
+      );
     }
-
-    await _applyTableTransferPlan(
-      sellerId: resolvedSellerId,
-      fromTable: fromTable,
-      toTable: toTable,
-      plan: plan,
-      waiterId: waiterId,
-      waiterName: waiterName,
-      note: note,
-    );
-    return <String, dynamic>{
-      'success': true,
-      'fallback': true,
-      'transfer_type': canonical,
-      'moved_line_ids': plan.movedLineIds,
-    };
   }
 
   bool _isMissingTransferRpc(PostgrestException error) {
@@ -2872,96 +2910,6 @@ class StoreTableService {
             details.contains('schema cache') ||
             details.contains('does not exist'));
     return error.code == '42883' || error.code == 'PGRST202' || namesFunction;
-  }
-
-  Future<void> _applyTableTransferPlan({
-    required String sellerId,
-    required int fromTable,
-    required int toTable,
-    required TableTransferPlan plan,
-    String? waiterId,
-    String? waiterName,
-    String? note,
-  }) async {
-    for (final mutation in plan.mutations) {
-      final update = <String, dynamic>{
-        'items': mutation.nextItems,
-        if (mutation.nextTableNumber != null)
-          'table_number': mutation.nextTableNumber,
-      };
-      try {
-        await _supabase
-            .from('table_orders')
-            .update(update)
-            .eq('id', mutation.orderId)
-            .eq('seller_id', sellerId)
-            .timeout(tableOrderTimeout);
-      } on PostgrestException catch (error) {
-        throw _tableOrderException('Masa aktarımı', error);
-      } on TimeoutException {
-        throw Exception('Masa aktarımı zaman aşımına uğradı. Tekrar deneyin.');
-      }
-
-      final destinationItems = mutation.destinationItems;
-      if (destinationItems == null || destinationItems.isEmpty) continue;
-      try {
-        await _supabase
-            .from('table_orders')
-            .insert({
-              'seller_id': sellerId,
-              'table_number': toTable,
-              'items': destinationItems,
-              'status': mutation.destinationStatus,
-              'created_at': DateTime.now().toUtc().toIso8601String(),
-            })
-            .timeout(tableOrderTimeout);
-      } catch (error) {
-        try {
-          await _supabase
-              .from('table_orders')
-              .update({
-                'items': mutation.previousItems,
-                'table_number': mutation.previousTableNumber,
-              })
-              .eq('id', mutation.orderId)
-              .eq('seller_id', sellerId)
-              .timeout(tableOrderTimeout);
-        } catch (restoreError) {
-          debugPrint(
-            '[StoreTableService] transfer restore failed '
-            'orderId=${mutation.orderId} error=$restoreError',
-          );
-        }
-        if (error is PostgrestException) {
-          throw _tableOrderException('Masa aktarımı', error);
-        }
-        if (error is TimeoutException) {
-          throw Exception(
-            'Masa aktarımı zaman aşımına uğradı. Tekrar deneyin.',
-          );
-        }
-        rethrow;
-      }
-    }
-
-    try {
-      await _supabase.from('table_transfers_log').insert({
-        'seller_id': sellerId,
-        'from_table': fromTable,
-        'to_table': toTable,
-        'transfer_type': plan.transferType,
-        'transferred_items': plan.movedLineIds,
-        'order_ids': plan.mutations.map((mutation) => mutation.orderId).toList(),
-        if (waiterId != null && waiterId.isNotEmpty) 'waiter_id': waiterId,
-        if (waiterName != null && waiterName.isNotEmpty)
-          'waiter_name': waiterName,
-        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
-      }).timeout(tableOrderTimeout);
-    } catch (error) {
-      debugPrint(
-        '[StoreTableService] table_transfers_log insert skipped: $error',
-      );
-    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
