@@ -14,6 +14,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUp(OrderPrintJobService.debugResetUnsettledOrderSaves);
+
   setUpAll(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     try {
@@ -248,4 +250,97 @@ void main() {
     expect(result.dispatchedJobCount, 0);
     await client.dispose();
   });
+
+  test(
+    'a retry while the first save is still running does not insert again',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final hangingRpc = Completer<http.Response>();
+      http.BaseRequest? rpcRequest;
+      var rpcCount = 0;
+      final client = SupabaseClient(
+        'https://example.supabase.co',
+        'test-key',
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith(
+            '/rpc/create_table_order_with_print_jobs',
+          )) {
+            rpcCount += 1;
+            rpcRequest = request;
+            return hangingRpc.future;
+          }
+          return http.Response(
+            '[]',
+            200,
+            headers: {'content-type': 'application/json'},
+            request: request,
+          );
+        }),
+      );
+      addTearDown(OrderPrintJobService.debugResetUnsettledOrderSaves);
+      final service = OrderPrintJobService(
+        client: client,
+        printerRepository: PrinterRepository(client: client),
+        printOrchestrator: DesktopPrintOrchestrator(
+          printerRepository: PrinterRepository(client: client),
+          printStationService: PrintStationService(client: client),
+        ),
+        orderSaveTimeout: const Duration(milliseconds: 30),
+        orderCommitPollAttempts: 2,
+        orderCommitPollInterval: Duration.zero,
+      );
+
+      send() {
+        return service.dispatchNewOrder(
+          restaurantId: '10000000-0000-0000-0000-000000000001',
+          tableNumber: 1,
+          items: [
+            {'name': 'Soup', 'quantity': 1, 'price': 10},
+          ],
+          idempotencyKey: 'still-running-key',
+        );
+      }
+
+      await expectLater(
+        send(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('Aynı gönderim anahtarı duruyor'),
+          ),
+        ),
+      );
+      await expectLater(
+        send(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('Aynı gönderim anahtarı duruyor'),
+          ),
+        ),
+      );
+
+      expect(rpcCount, 1);
+      hangingRpc.complete(
+        http.Response(
+          jsonEncode({
+            'order_id': 'late-order',
+            'order_number': '1042',
+            'print_job_ids': <String>[],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+          request: rpcRequest,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      final replay = await send();
+      expect(rpcCount, 1);
+      expect(replay.orderId, 'late-order');
+      expect(replay.dispatchedJobCount, 0);
+      await client.dispose();
+    },
+  );
 }

@@ -661,3 +661,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - Production sırası, dosya adına göre: `20261106_transfer_table_orders_v2.sql`, `20261107_bill_item_edit_staff_guard.sql`, `20261107_order_send_staff_guard.sql`, `20261107_record_table_payment_guard.sql`, `20261107_staff_permission_enforcement.sql`, `20261107_table_operation_staff_guard.sql`, `20261107_waiter_request_single_order.sql`, `20261107_order_identity_idempotency.sql`. Bu otomasyon production’a uygulamaz.
 - Yazdırma fonksiyonu restoran sahibini taklit etmez. `ibul.verified_order_seller` yetki vermez. Aynı `p_idempotency_key` ikinci `orders` veya `print_jobs` satırı açmaz.
 - Gönderim anahtarı `ibul.order_send_ledger.v1` ile cihazda durur. Uygulama kapanıp açılınca aynı parmak izi eski anahtarı kullanır. Başarılı gönderim anahtarı siler. Yeni istenen anahtar kayıtlı anahtarın yerine geçmez.
+
+## 2026-11-08
+
+- Garson gönderiminde zaman aşımı sonrası tekrar deneme, süren ilk RPC bitmeden ikinci sipariş ve ikinci mutfak fişi açabiliyordu. Kök neden: `recoverOrderSaveAfterTimeout` yalnız tek denemenin içindeki ikinci insert’i kesiyordu; garson yeniden gönderince `lookupBeforeSend` boş dönünce yeni RPC başlıyordu. Aynı `p_local_order_id` artık süreç içinde tek uçuşta tutulur. İlk kayıt hata ile biterse yeniden gönderim serbesttir. Yeniden katılan deneme başarılı kaydı tekrar basmaz; yalnız `pending` fiş yazdırılır.

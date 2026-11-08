@@ -8,7 +8,8 @@ import 'package:flutter/foundation.dart'
         debugPrintStack,
         defaultTargetPlatform,
         kIsWeb,
-        TargetPlatform;
+        TargetPlatform,
+        visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -202,6 +203,23 @@ class _KitchenPrintDispatchOutcome {
   bool get hasFailures => failureMessages.isNotEmpty;
 }
 
+/// One `create_table_order_with_print_jobs` call that the client has not
+/// seen finish. A timeout does not cancel it, so a retry must wait on this
+/// future instead of inserting again.
+class _UnsettledOrderSave {
+  _UnsettledOrderSave(this.rpc);
+
+  final Future<dynamic> rpc;
+  bool settled = false;
+  dynamic result;
+}
+
+class _ReusedOrderSave {
+  const _ReusedOrderSave(this.result);
+
+  final dynamic result;
+}
+
 class OrderPrintJobService {
   OrderPrintJobService({
     SupabaseClient? client,
@@ -223,6 +241,22 @@ class OrderPrintJobService {
   /// Reads after a timeout. This does not start another insert.
   final int orderCommitPollAttempts;
   final Duration orderCommitPollInterval;
+
+  /// Restaurant id + local order id. Shared by every service instance so a
+  /// second screen cannot start a second insert for the same send.
+  static final Map<String, _UnsettledOrderSave> _unsettledOrderSaves =
+      <String, _UnsettledOrderSave>{};
+
+  /// Clears in-flight save guards left by a test. Production code does not
+  /// call this.
+  @visibleForTesting
+  static void debugResetUnsettledOrderSaves() {
+    _unsettledOrderSaves.clear();
+  }
+
+  static String _orderSaveFlightKey(String restaurantId, String localOrderId) {
+    return '${restaurantId.trim()}|$localOrderId';
+  }
 
   // Lazily resolve Supabase client so preview/widget tests can render without
   // initializing Supabase plugins.
@@ -1330,6 +1364,7 @@ class OrderPrintJobService {
       },
     };
 
+    _releaseUnsettledOrderSave(restaurantId, sendKey);
     _sendKeys.complete(sendFingerprint);
     await _sendKeys.flush();
     return OrderPrintJobDispatchResult(
@@ -1614,37 +1649,138 @@ class OrderPrintJobService {
       idempotencyKey: idempotencyKey,
     );
     final localOrderId = (idempotencyKey ?? '').trim();
-    if (lookupBeforeSend && localOrderId.isNotEmpty) {
-      final existing = await _lookupCommittedOrder(
+    Future<Map<String, dynamic>?> lookup() {
+      if (localOrderId.isEmpty) {
+        return Future<Map<String, dynamic>?>.value(null);
+      }
+      return _lookupCommittedOrder(
         restaurantId: restaurantId,
         localOrderId: localOrderId,
       );
+    }
+
+    final flightKey = localOrderId.isEmpty
+        ? ''
+        : _orderSaveFlightKey(restaurantId, localOrderId);
+    if (flightKey.isNotEmpty && _unsettledOrderSaves.containsKey(flightKey)) {
+      final joined = await _joinUnsettledOrderSave(flightKey, lookup);
+      if (joined != null) return joined.result;
+    }
+    if (lookupBeforeSend && localOrderId.isNotEmpty) {
+      final existing = await lookup();
       if (existing != null) return existing;
+      if (flightKey.isNotEmpty && _unsettledOrderSaves.containsKey(flightKey)) {
+        final joined = await _joinUnsettledOrderSave(flightKey, lookup);
+        if (joined != null) return joined.result;
+      }
+    }
+    if (flightKey.isEmpty) {
+      return _awaitOrderSave(
+        rpc: _client.rpc('create_table_order_with_print_jobs', params: params),
+        lookup: lookup,
+        pollAttempts: 1,
+      );
     }
 
-    Future<dynamic> once() {
-      return _client.rpc('create_table_order_with_print_jobs', params: params);
+    final gate = Completer<dynamic>();
+    final flight = _UnsettledOrderSave(gate.future);
+    final prior = _unsettledOrderSaves[flightKey];
+    if (prior != null) {
+      final joined = await _joinUnsettledOrderSave(flightKey, lookup);
+      if (joined != null) return joined.result;
     }
+    _unsettledOrderSaves[flightKey] = flight;
+    final Future<dynamic> raw;
+    try {
+      raw = _client.rpc('create_table_order_with_print_jobs', params: params);
+    } catch (error, stack) {
+      if (identical(_unsettledOrderSaves[flightKey], flight)) {
+        _unsettledOrderSaves.remove(flightKey);
+      }
+      if (!gate.isCompleted) gate.completeError(error, stack);
+      rethrow;
+    }
+    raw.then(
+      (value) {
+        if (identical(_unsettledOrderSaves[flightKey], flight)) {
+          flight.settled = true;
+          flight.result = value;
+        }
+        if (!gate.isCompleted) gate.complete(value);
+      },
+      onError: (Object error, StackTrace stack) {
+        if (identical(_unsettledOrderSaves[flightKey], flight)) {
+          _unsettledOrderSaves.remove(flightKey);
+        }
+        if (!gate.isCompleted) gate.completeError(error, stack);
+      },
+    );
+    return _awaitOrderSave(
+      rpc: gate.future,
+      lookup: lookup,
+      pollAttempts: orderCommitPollAttempts,
+    );
+  }
 
+  /// Returns the in-flight save when this local order id already has one.
+  /// A settled success is reused as a replay. A settled failure is already
+  /// gone, so the caller may insert again.
+  Future<_ReusedOrderSave?> _joinUnsettledOrderSave(
+    String flightKey,
+    Future<Map<String, dynamic>?> Function() lookup,
+  ) async {
+    final current = _unsettledOrderSaves[flightKey];
+    if (current == null) return null;
+    if (current.settled) {
+      return _ReusedOrderSave(_replayOrderSave(current.result));
+    }
+    final existing = await lookup();
+    if (existing != null) return _ReusedOrderSave(existing);
+    final still = _unsettledOrderSaves[flightKey];
+    if (still == null) return null;
+    if (still.settled) {
+      return _ReusedOrderSave(_replayOrderSave(still.result));
+    }
+    final result = await _awaitOrderSave(
+      rpc: still.rpc,
+      lookup: lookup,
+      pollAttempts: orderCommitPollAttempts,
+    );
+    return _ReusedOrderSave(_replayOrderSave(result));
+  }
+
+  dynamic _replayOrderSave(dynamic result) {
+    if (result is Map) {
+      return <String, dynamic>{
+        ...Map<String, dynamic>.from(result),
+        'idempotent_replay': true,
+      };
+    }
+    return result;
+  }
+
+  Future<dynamic> _awaitOrderSave({
+    required Future<dynamic> rpc,
+    required Future<Map<String, dynamic>?> Function() lookup,
+    required int pollAttempts,
+  }) async {
     try {
       return await recoverOrderSaveAfterTimeout(
-        send: once,
-        lookup: () {
-          if (localOrderId.isEmpty) {
-            return Future<Map<String, dynamic>?>.value(null);
-          }
-          return _lookupCommittedOrder(
-            restaurantId: restaurantId,
-            localOrderId: localOrderId,
-          );
-        },
+        send: () => rpc,
+        lookup: lookup,
         timeout: orderSaveTimeout,
-        pollAttempts: localOrderId.isEmpty ? 1 : orderCommitPollAttempts,
+        pollAttempts: pollAttempts,
         pollInterval: orderCommitPollInterval,
       );
     } on PostgrestException catch (error) {
       throw Exception(_friendlyDispatchRpcError(error));
     }
+  }
+
+  void _releaseUnsettledOrderSave(String restaurantId, String localOrderId) {
+    final key = localOrderId.trim();
+    if (key.isEmpty) return;
+    _unsettledOrderSaves.remove(_orderSaveFlightKey(restaurantId, key));
   }
 
   Future<Map<String, dynamic>?> _lookupCommittedOrder({
