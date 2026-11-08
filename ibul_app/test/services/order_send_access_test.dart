@@ -806,7 +806,7 @@ void main() {
   });
 
   test('partial transfer does not use the legacy RPC and timeout is not retried', () {
-    expect(legacyFullTransferAllowed('full'), isTrue);
+    expect(legacyFullTransferAllowed('full'), isFalse);
     expect(legacyFullTransferAllowed('partial'), isFalse);
     expect(legacyFullTransferAllowed('customer'), isFalse);
     expect(shouldAutoRetryTransferAfterTimeout(), isFalse);

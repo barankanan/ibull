@@ -2,6 +2,28 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
+const String ibulBuildCommit = String.fromEnvironment(
+  'IBUL_GIT_COMMIT',
+  defaultValue: 'unknown',
+);
+
+void ibulSendTrace(
+  String traceId,
+  String stage, [
+  Map<String, Object?> fields = const <String, Object?>{},
+]) {
+  final parts = <String>[
+    'commit=$ibulBuildCommit',
+    'trace=$traceId',
+    'stage=$stage',
+    for (final entry in fields.entries)
+      if (entry.value != null) '${entry.key}=${entry.value}',
+  ];
+  debugPrint('[IBUL_SEND] ${parts.join(' ')}');
+}
+
 /// Stable key for one garson send. A retry of that send reuses the key so
 /// the server returns the original orders and print_jobs rows.
 String newOrderSendIdempotencyKey() {

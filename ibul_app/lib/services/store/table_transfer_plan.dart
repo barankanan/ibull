@@ -3,7 +3,8 @@ import '../../utils/garson_active_orders_fetch.dart';
 /// The live `transfer_table_orders` function is only used for a full move.
 /// Partial and customer moves stay blocked until `transfer_table_orders_v2`
 /// is proven on the server.
-bool legacyFullTransferAllowed(String canonicalType) => canonicalType == 'full';
+bool legacyFullTransferAllowed(String canonicalType) =>
+    canonicalType == 'full' && false;
 
 enum TransferTimeoutRead { sameAsBefore, changed, incomplete }
 

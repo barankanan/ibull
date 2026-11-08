@@ -41,6 +41,7 @@ import '../services/campaign_service.dart';
 import '../services/order_service.dart';
 import '../services/kitchen_print_trace_log.dart';
 import '../services/order_print_job_service.dart';
+import '../services/order_send_access.dart';
 import '../services/desktop_print_orchestrator.dart';
 import '../services/desktop_print_hub.dart';
 import '../services/printer_encoding_profile_store.dart';
@@ -37095,6 +37096,17 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       displayLabel: widget.tableTitleOverride,
       tables: widget.storeTables,
     );
+    final sendTraceId =
+        'send-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
+    ibulSendTrace(sendTraceId, 'button_pressed', {
+      'label': widget.tableTitleOverride ?? '-',
+      'requestedTable': widget.tableNumber,
+    });
+    ibulSendTrace(sendTraceId, 'table_resolved', {
+      'label': widget.tableTitleOverride ?? '-',
+      'requestedTable': widget.tableNumber,
+      'canonicalTable': canonicalTableNumber,
+    });
     setState(() => _isSubmitting = true);
     final pipelineWatch = Stopwatch()..start();
     final isUpdate =
@@ -37366,6 +37378,19 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           itemCount: items.length,
         );
         final orderDispatchWatch = Stopwatch()..start();
+        final draftFingerprint = orderSendActionFingerprint(
+          restaurantId: widget.sellerId,
+          tableNumber: canonicalTableNumber,
+          jobType: 'new_order',
+          items: items,
+        );
+        ibulSendTrace(sendTraceId, 'fingerprint', {
+          'chars': draftFingerprint.length,
+          'canonicalTable': canonicalTableNumber,
+        });
+        ibulSendTrace(sendTraceId, 'resolveGarsonSubmitKey', {
+          'decision': 'absent_on_this_commit',
+        });
         final dispatchResult = await _orderPrintJobService.dispatchNewOrder(
           restaurantId: widget.sellerId,
           tableNumber: canonicalTableNumber,
@@ -37374,6 +37399,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           waiterName: _currentWaiterName(),
           jobType: 'new_order',
           garsonDesktopFastKitchen: canFastKitchen,
+          traceId: sendTraceId,
         );
         kitchenPerfDbSaveMs = orderDispatchWatch.elapsedMilliseconds;
         _orderPrintJobService.debugLogResult(dispatchResult);

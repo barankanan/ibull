@@ -999,8 +999,11 @@ class OrderPrintJobService {
     String jobType = 'new_order',
     bool garsonDesktopFastKitchen = false,
     String? idempotencyKey,
+    String? traceId,
   }) async {
-    final traceId = _generateTraceId();
+    final resolvedTraceId = (traceId ?? '').trim().isEmpty
+        ? _generateTraceId()
+        : traceId!.trim();
     final pipelineStartedAt = DateTime.now().toIso8601String();
     final pipelineWatch = Stopwatch()..start();
     final productMappings = mergedKitchenProductMappingsForRestaurant(
@@ -1024,6 +1027,10 @@ class OrderPrintJobService {
         .toList(growable: false);
 
     if (normalized.isEmpty) {
+      ibulSendTrace(resolvedTraceId, 'rpc_not_started', {
+        'reason': 'empty_items',
+        'table': tableNumber,
+      });
       throw Exception('Print job oluşturmak için sipariş kalemi bulunamadı.');
     }
     final sendFingerprint = orderSendActionFingerprint(
@@ -1034,6 +1041,12 @@ class OrderPrintJobService {
     );
     await _ensureSendKeysLoaded();
     final retryingOpenSend = _sendKeys.snapshot.containsKey(sendFingerprint);
+    ibulSendTrace(resolvedTraceId, 'idempotency_key', {
+      'previous': retryingOpenSend ? 'found' : 'minted',
+      'lookupBeforeSend': retryingOpenSend,
+      'fingerprintChars': sendFingerprint.length,
+      'table': tableNumber,
+    });
     final sendKey = resolveOrderSendKey(
       ledger: _sendKeys,
       fingerprint: sendFingerprint,
@@ -1051,14 +1064,14 @@ class OrderPrintJobService {
     );
 
     debugPrint(
-      '[PrintPipeline] trace=$traceId stage=order_save_started '
+      '[PrintPipeline] trace=$resolvedTraceId stage=order_save_started '
       'at=$pipelineStartedAt '
       'restaurantId=$restaurantId tableNo=$tableNumber',
     );
 
     _logKitchen(
       'Init',
-      'trace=$traceId restaurantId=$restaurantId tableNo=$tableNumber jobType=$jobType '
+      'trace=$resolvedTraceId restaurantId=$restaurantId tableNo=$tableNumber jobType=$jobType '
           'itemCount=${normalized.length} waiterId=${_logValue(waiterId)} '
           'waiterName=${_logValue(waiterName)}',
     );
@@ -1073,13 +1086,27 @@ class OrderPrintJobService {
         waiterId: waiterId,
         waiterName: waiterName,
         notes: notes,
-        traceId: traceId,
+        traceId: resolvedTraceId,
         jobType: jobType,
         idempotencyKey: sendKey,
         lookupBeforeSend: retryingOpenSend,
       );
+    } on PostgrestException catch (error) {
+      ibulSendTrace(resolvedTraceId, 'rpc_result', {
+        'started': true,
+        'http': 'postgrest',
+        'sqlstate': error.code ?? '-',
+        'message': error.message,
+        'details': error.details ?? '-',
+        'hint': error.hint ?? '-',
+      });
+      rethrow;
     } catch (error) {
-      // Keep [sendKey] so the same action retries with the same record.
+      ibulSendTrace(resolvedTraceId, 'rpc_result', {
+        'started': true,
+        'sqlstate': error is TimeoutException ? 'timeout' : 'client',
+        'message': error.runtimeType,
+      });
       rethrow;
     }
     final rpcMs = rpcWatch.elapsedMilliseconds;
@@ -1099,7 +1126,7 @@ class OrderPrintJobService {
     };
     final suppressedPrintJobIds = await _suppressDuplicateKitchenJobs(
       restaurantId: restaurantId,
-      traceId: traceId,
+      traceId: resolvedTraceId,
       tableNumber: tableNumber,
       jobType: jobType,
       printJobIds: printJobIds,
@@ -1127,7 +1154,7 @@ class OrderPrintJobService {
     );
 
     debugPrint(
-      '[PrintPipeline] trace=$traceId stage=print_job_created '
+      '[PrintPipeline] trace=$resolvedTraceId stage=print_job_created '
       'at=$printJobCreatedAt '
       'order_saved_at=$orderSavedAt '
       'orderId=${_logValue(data['order_id'])} '
@@ -1138,7 +1165,7 @@ class OrderPrintJobService {
 
     _logKitchen(
       'Fetch',
-      'trace=$traceId restaurantId=$restaurantId tableNo=$tableNumber '
+      'trace=$resolvedTraceId restaurantId=$restaurantId tableNo=$tableNumber '
           'orderId=${_logValue(data['order_id'])} orderNo=${_logValue(data['order_number'])} '
           'printJobCount=${(data['print_job_count'] as num?)?.toInt() ?? 0} '
           'printJobIds=${printJobIds.isEmpty ? '-' : printJobIds.join(",")} '
@@ -1334,12 +1361,12 @@ class OrderPrintJobService {
       physicallyDispatched: dispatchOutcome.physicallyDispatched,
       reason: dispatchOutcome.dispatchPath,
       itemCount: normalized.length,
-      traceId: traceId,
+      traceId: resolvedTraceId,
     );
     if (dispatchOutcome.handoffToHub) {
       _logKitchen(
         'Dispatch',
-        'trace=$traceId restaurantId=$restaurantId tableNo=$tableNumber '
+        'trace=$resolvedTraceId restaurantId=$restaurantId tableNo=$tableNumber '
             'handoff_to_hub=true printer_not_printed_yet=true '
             'reason=${dispatchOutcome.pendingReason ?? '-'} '
             'pendingJobIds=${dispatchOutcome.pendingForHubJobIds.join(",")}',
@@ -1365,6 +1392,9 @@ class OrderPrintJobService {
     };
 
     final savedOrderId = data['order_id']?.toString().trim() ?? '';
+    ibulSendTrace(resolvedTraceId, 'order_id', {
+      'verified': savedOrderId.isNotEmpty,
+    });
     if (savedOrderId.isEmpty) {
       throw StateError(
         'Sipariş sonucu doğrulanamadı. Aynı gönderim anahtarı duruyor.',
@@ -1383,7 +1413,7 @@ class OrderPrintJobService {
       printJobCreatedAt: printJobCreatedAt,
       dispatchedJobCount: dispatchOutcome.dispatchedJobCount,
       failedJobCount: dispatchOutcome.failedJobCount,
-      traceId: traceId,
+      traceId: resolvedTraceId,
       pipelineStartedAt: pipelineStartedAt,
       printSystemEnabled: printSystemEnabled,
       printSuppressedReason: printSystemEnabled
@@ -1662,6 +1692,7 @@ class OrderPrintJobService {
       return _lookupCommittedOrder(
         restaurantId: restaurantId,
         localOrderId: localOrderId,
+        traceId: traceId,
       );
     }
 
@@ -1672,6 +1703,9 @@ class OrderPrintJobService {
       final joined = await _joinUnsettledOrderSave(flightKey, lookup);
       if (joined != null) return joined.result;
     }
+    ibulSendTrace(traceId, 'lookup_before_send', {
+      'ran': lookupBeforeSend && localOrderId.isNotEmpty,
+    });
     if (lookupBeforeSend && localOrderId.isNotEmpty) {
       final existing = await lookup();
       if (existing != null) return existing;
@@ -1681,6 +1715,10 @@ class OrderPrintJobService {
       }
     }
     if (flightKey.isEmpty) {
+      ibulSendTrace(traceId, 'rpc_starting', {
+        'name': 'create_table_order_with_print_jobs',
+        'table': tableNumber,
+      });
       return _awaitOrderSave(
         rpc: _client.rpc('create_table_order_with_print_jobs', params: params),
         lookup: lookup,
@@ -1698,7 +1736,11 @@ class OrderPrintJobService {
     _unsettledOrderSaves[flightKey] = flight;
     final Future<dynamic> raw;
     try {
-      raw = _client.rpc('create_table_order_with_print_jobs', params: params);
+        ibulSendTrace(traceId, 'rpc_starting', {
+          'name': 'create_table_order_with_print_jobs',
+          'table': tableNumber,
+        });
+        raw = _client.rpc('create_table_order_with_print_jobs', params: params);
     } catch (error, stack) {
       if (identical(_unsettledOrderSaves[flightKey], flight)) {
         _unsettledOrderSaves.remove(flightKey);
@@ -1792,6 +1834,7 @@ class OrderPrintJobService {
   Future<Map<String, dynamic>?> _lookupCommittedOrder({
     required String restaurantId,
     required String localOrderId,
+    String traceId = '-',
   }) async {
     if (restaurantId.trim().isEmpty || localOrderId.isEmpty) return null;
     try {
@@ -1810,6 +1853,7 @@ class OrderPrintJobService {
                     '')
                 .isNotEmpty,
       );
+      ibulSendTrace(traceId, 'lookup_result', {'kind': kind.name});
       if (kind == OrderCommitLookupKind.notFound) return null;
       final row = Map<String, dynamic>.from(existing!);
       final orderId = row['id']?.toString() ?? '';
@@ -1835,6 +1879,13 @@ class OrderPrintJobService {
         'idempotent_replay': true,
       };
     } on PostgrestException catch (error) {
+      ibulSendTrace(traceId, 'lookup_result', {
+        'kind': OrderCommitLookupKind.readFailed.name,
+        'sqlstate': error.code ?? '-',
+        'message': error.message,
+        'details': error.details ?? '-',
+        'hint': error.hint ?? '-',
+      });
       debugPrint(
         '[OrderCommit] lookup read_failed '
         'code=${error.code ?? '-'} '

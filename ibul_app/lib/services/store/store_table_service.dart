@@ -2826,47 +2826,15 @@ class StoreTableService {
       );
     } on PostgrestException catch (error) {
       if (!_isMissingTransferRpc(error)) rethrow;
-      if (!legacyFullTransferAllowed(canonical)) {
-        final kind = canonical == 'customer' ? 'Müşteri bazlı' : 'Kısmi';
-        throw Exception(
-          '$kind masa aktarımı BLOCKED. transfer_table_orders_v2 yok. '
-          'Eski transfer_table_orders çağrılmadı. Siparişler yerinde kaldı.',
-        );
-      }
       debugPrint(
         '[StoreTableService] transfer_table_orders_v2 missing '
-        'code=${error.code ?? '-'}. Full move uses transfer_table_orders. '
-        'No client-side write.',
+        'code=${error.code ?? '-'} message=${error.message} '
+        'details=${error.details ?? '-'} hint=${error.hint ?? '-'}. '
+        'Legacy transfer_table_orders was not called.',
       );
-    } on TimeoutException {
       throw Exception(
-        await _transferTimeoutMessage(
-          sellerId: resolvedSellerId,
-          fromTable: fromTable,
-          toTable: toTable,
-          sourceIdsBefore: sourceIds,
-          sourceCustomerBefore: sourceCustomerBefore,
-          destinationCustomerBefore: destinationCustomerBefore,
-        ),
-      );
-    }
-
-    try {
-      return await _callTransferRpc(
-        functionName: 'transfer_table_orders',
-        sellerId: resolvedSellerId,
-        fromTable: fromTable,
-        toTable: toTable,
-        transferType: canonical,
-        itemIds: plan.movedLineIds,
-        waiterId: waiterId,
-        waiterName: waiterName,
-        note: note,
-      );
-    } on PostgrestException catch (error) {
-      throw Exception(
-        'Masa aktarma fonksiyonu sunucuda yok (${error.code ?? '-'}). '
-        'Siparişler yerinde kaldı.',
+        'Masa aktarımı BLOCKED. transfer_table_orders_v2 yok. '
+        'Eski transfer_table_orders çağrılmadı. Siparişler yerinde kaldı.',
       );
     } on TimeoutException {
       throw Exception(
@@ -2956,16 +2924,25 @@ class StoreTableService {
             },
           )
           .timeout(tableOrderTimeout);
-      if (result is Map) return Map<String, dynamic>.from(result);
-      return <String, dynamic>{
-        'success': true,
-        'transfer_type': transferType,
-        'moved_count': itemIds.length,
-      };
+      if (result is Map) {
+        final mapped = Map<String, dynamic>.from(result);
+        if (mapped['success'] == false) {
+          throw Exception(
+            'Masa aktarımı sunucuda başarısız döndü. '
+            'Siparişler yerinde kaldı.',
+          );
+        }
+        return mapped;
+      }
+      throw Exception(
+        'Masa aktarımı beklenmeyen yanıt döndü. Sonuç belirsiz. '
+        'Otomatik tekrar yapılmadı.',
+      );
     } on PostgrestException catch (error) {
       debugPrint(
         '[StoreTableService] $functionName denied '
-        'code=${error.code ?? '-'} message=${error.message}',
+        'code=${error.code ?? '-'} message=${error.message} '
+        'details=${error.details ?? '-'} hint=${error.hint ?? '-'}',
       );
       if (_isMissingTransferRpc(error)) rethrow;
       final serverText = error.message.trim();
