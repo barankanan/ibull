@@ -152,6 +152,7 @@ Future<dynamic> recoverOrderSaveAfterTimeout({
       'Sipariş sonucu doğrulanamadı. Aynı gönderim anahtarı duruyor.',
     );
   }
+}
 
 /// One conditional `pending → claimed` update.
 /// [won] is the only result that may print. [lost] means another device
