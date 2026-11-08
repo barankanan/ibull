@@ -12,7 +12,6 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
     return FinanceShell(
       key: ValueKey('finance-mobile-$sellerId-$_financeRefreshToken'),
       sellerId: sellerId,
-      optimisticClosedHistory: _dashboardClosedHistory,
     );
   }
 
@@ -27,7 +26,6 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
     return FinanceShell(
       key: ValueKey('finance-$sellerId-$_financeRefreshToken'),
       sellerId: sellerId,
-      optimisticClosedHistory: _dashboardClosedHistory,
     );
   }
 }

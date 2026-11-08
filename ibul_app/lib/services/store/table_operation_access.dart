@@ -1,3 +1,5 @@
+import '../order_send_access.dart';
+
 /// Decides whether a failed table close or transfer may fall back to a
 /// direct write.
 ///
@@ -48,4 +50,93 @@ bool shouldFallbackToDirectTableWrite({
 
 bool isFinalTableOperationDenialError(Object error) {
   return isFinalTableOperationDenial(message: error.toString());
+}
+
+const String closeTableRpcBlockedMessage =
+    'Masa kapatma BLOCKED. close_table_with_history yok. Masa açık kaldı.';
+
+const String closeTableRpcUnverifiedMessage =
+    'Masa kapatma yanıtı belirsiz. Yeni yazma yapılmadı.';
+
+enum CloseTableRpcDecision { accept, readOnly, blocked }
+
+/// A numeric `orders_updated` is the live contract, including zero.
+/// A missing function is blocked. Timeout or any other payload is read-only.
+CloseTableRpcDecision decideCloseTableRpc({
+  required bool functionMissing,
+  required bool timedOut,
+  required Object? ordersUpdated,
+}) {
+  if (functionMissing) return CloseTableRpcDecision.blocked;
+  if (timedOut || ordersUpdated is! num) return CloseTableRpcDecision.readOnly;
+  return CloseTableRpcDecision.accept;
+}
+
+enum TargetTableCloseVerdict { confirmed, notConfirmed }
+
+/// Success requires this table's open `table_orders` and `orders` to be zero
+/// and a history row for this session. A failed read, a missing session, or
+/// a still-open target is not success. Other tables are not inputs.
+TargetTableCloseVerdict judgeTargetTableCloseRead({
+  required int? openTableOrders,
+  required int? openCustomerOrders,
+  required bool? historyMatchesSession,
+}) {
+  if (openTableOrders == null ||
+      openCustomerOrders == null ||
+      historyMatchesSession == null) {
+    return TargetTableCloseVerdict.notConfirmed;
+  }
+  if (openTableOrders != 0 || openCustomerOrders != 0) {
+    return TargetTableCloseVerdict.notConfirmed;
+  }
+  if (!historyMatchesSession) return TargetTableCloseVerdict.notConfirmed;
+  return TargetTableCloseVerdict.confirmed;
+}
+
+bool rowIsTargetCloseSession({
+  required int targetTableNumber,
+  required String targetSellerId,
+  required int rowTableNumber,
+  required String rowSellerId,
+  String? targetSessionKey,
+  String? rowSessionKey,
+  bool sessionScoped = false,
+}) {
+  if (rowTableNumber != targetTableNumber) return false;
+  if (rowSellerId.trim() != targetSellerId.trim()) return false;
+  if (!sessionScoped) return true;
+  final target = targetSessionKey?.trim() ?? '';
+  final row = rowSessionKey?.trim() ?? '';
+  return target.isNotEmpty && row == target;
+}
+
+bool isCloseWriteForbiddenError(Object error) {
+  final text = error.toString();
+  return text.contains(closeTableRpcUnverifiedMessage) ||
+      text.contains(closeTableRpcBlockedMessage) ||
+      text.contains(diagnosticWriteRefusedMessage);
+}
+
+bool furtherCloseWritesAllowed({
+  required bool rpcTimedOut,
+  required bool writesForbidden,
+}) {
+  return !rpcTimedOut && !writesForbidden;
+}
+
+bool isCloseTableRpcMissing({
+  String? code,
+  String? message,
+  String? details,
+  String? hint,
+}) {
+  final text = '${message ?? ''} ${details ?? ''} ${hint ?? ''}'.toLowerCase();
+  return code == 'PGRST202' ||
+      code == '42883' ||
+      text.contains('could not find the function') ||
+      (text.contains('close_table_with_history') &&
+          (text.contains('does not exist') ||
+              text.contains('schema cache') ||
+              text.contains('could not find')));
 }

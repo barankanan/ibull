@@ -10,6 +10,7 @@ import '../models/store_sub_category.dart';
 import '../models/staff_access_policy.dart';
 import '../models/sub_admin.dart';
 import '../utils/product_create_log.dart';
+import '../utils/table_labels.dart';
 import '../utils/product_edit_log.dart';
 import 'store/store_media_service.dart';
 import 'store/store_mapping_helpers.dart';
@@ -1656,7 +1657,39 @@ class StoreService {
     );
   }
 
-  Future<void> closeTableWithHistory({
+  Future<List<Map<String, dynamic>>> getTableCloseSession({
+    required String sellerId,
+    required int tableNumber,
+    Map<String, dynamic>? tableRow,
+    List<String> visibleOrderIds = const <String>[],
+  }) {
+    return _tableService.getTableCloseSession(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      tableRow: tableRow,
+      visibleOrderIds: visibleOrderIds,
+    );
+  }
+
+  Future<bool> realignTableOrderNumber({
+    required String sellerId,
+    required String orderId,
+    required Map<String, dynamic> order,
+    required Map<String, dynamic> table,
+  }) {
+    return _tableService.realignTableOrderNumber(
+      sellerId: sellerId,
+      orderId: orderId,
+      order: order,
+      table: table,
+    );
+  }
+
+  Future<GarsonOpenOrderRead> readVerifiedOpenOrders(String sellerId) {
+    return _tableService.readVerifiedOpenOrders(sellerId);
+  }
+
+  Future<Map<String, dynamic>> closeTableWithHistory({
     required String sellerId,
     required int tableNumber,
     required String paymentMethod,

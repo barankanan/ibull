@@ -31,6 +31,7 @@ import 'package:ibul_app/screens/seller/desktop_printer_setup_page.dart';
 import 'package:ibul_app/screens/seller_login_page.dart';
 import 'package:ibul_app/screens/seller_panel_page.dart';
 import 'package:ibul_app/services/auth_service.dart';
+import 'package:ibul_app/services/order_send_access.dart';
 import 'package:ibul_app/services/bridge_manager.dart';
 import 'package:ibul_app/services/desktop_print_hub.dart';
 import 'package:ibul_app/utils/desktop_printer_status_policy.dart';
@@ -79,6 +80,10 @@ String _resolveDesktopRestaurantId(LoginRouteResolution resolution) {
 void main() async {
   final sw = Stopwatch()..start();
   WidgetsFlutterBinding.ensureInitialized();
+  debugPrint(
+    '[IBUL_BUILD] commit=$ibulBuildCommit target=lib/main_seller.dart '
+    'diagnostic=${ibulOrderWritesForbidden ? 'on' : 'off'}',
+  );
 
   configureAppDiagnostics(
     startupMessage: 'İbul Satıcı — desktop startup',

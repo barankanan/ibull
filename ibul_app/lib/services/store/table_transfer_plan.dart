@@ -1,5 +1,56 @@
 import '../../utils/garson_active_orders_fetch.dart';
 
+/// The live `transfer_table_orders` function is only used for a full move.
+/// Partial and customer moves stay blocked until `transfer_table_orders_v2`
+/// is proven on the server.
+bool legacyFullTransferAllowed(String canonicalType) =>
+    canonicalType == 'full' && false;
+
+enum TransferTimeoutRead { sameAsBefore, changed, incomplete }
+
+/// A timed-out transfer is never retried. The read only describes what is
+/// visible now; it does not prove the server call failed.
+TransferTimeoutRead classifyTransferTimeoutRead({
+  required Set<String> sourceIdsBefore,
+  required Set<String> sourceIdsAfter,
+  required Set<String> destinationIdsAfter,
+  required int? sourceCustomerBefore,
+  required int? destinationCustomerBefore,
+  required int? sourceCustomerAfter,
+  required int? destinationCustomerAfter,
+}) {
+  if (sourceCustomerBefore == null ||
+      destinationCustomerBefore == null ||
+      sourceCustomerAfter == null ||
+      destinationCustomerAfter == null) {
+    return TransferTimeoutRead.incomplete;
+  }
+  final idsSame = sourceIdsBefore.length == sourceIdsAfter.length &&
+      sourceIdsBefore.containsAll(sourceIdsAfter);
+  final movedIds = sourceIdsBefore.intersection(destinationIdsAfter);
+  final customersSame = sourceCustomerBefore == sourceCustomerAfter &&
+      destinationCustomerBefore == destinationCustomerAfter;
+  if (idsSame && movedIds.isEmpty && customersSame) {
+    return TransferTimeoutRead.sameAsBefore;
+  }
+  return TransferTimeoutRead.changed;
+}
+
+bool shouldAutoRetryTransferAfterTimeout() => false;
+
+String transferTimeoutUserMessage(TransferTimeoutRead read) {
+  final observation = switch (read) {
+    TransferTimeoutRead.sameAsBefore =>
+      'Yeniden okumada açık kayıtlar aktarım öncesiyle aynı görünüyor.',
+    TransferTimeoutRead.changed =>
+      'Yeniden okumada kaynak veya hedef değişmiş görünüyor.',
+    TransferTimeoutRead.incomplete =>
+      'Kaynak ve hedef masa yeniden okunamadı.',
+  };
+  return 'Masa aktarımı yanıtı zaman aşımına uğradı. Sonuç belirsiz. '
+      'Otomatik tekrar yapılmadı. $observation';
+}
+
 /// Canonical transfer type stored in `table_transfers_log`.
 ///
 /// The UI enum name `customerBased` is not a valid log value. Callers may
@@ -185,6 +236,71 @@ TableTransferPlan planTableTransfer({
     movedLineIds: movedLineIds,
   );
 }
+
+class FullTransferDestinationStamp {
+  const FullTransferDestinationStamp({
+    required this.row,
+    required this.applied,
+  });
+
+  final Map<String, dynamic> row;
+
+  /// False leaves [row] unchanged. The destination label is missing, or
+  /// `table_number` already equals the destination and a later label write
+  /// would be a separate update.
+  final bool applied;
+}
+
+/// Area name, area index, and display label that a full move writes together
+/// with the destination `table_number`.
+///
+/// This is the single-statement result. It does not patch a row whose number
+/// already changed. That second write can fail and leave the source label
+/// on the destination table.
+FullTransferDestinationStamp stampFullTransferDestination({
+  required Map<String, dynamic> order,
+  required Map<String, dynamic> destinationTable,
+}) {
+  final unchanged = FullTransferDestinationStamp(
+    row: Map<String, dynamic>.from(order),
+    applied: false,
+  );
+  final area = _labelText(destinationTable['area_name']);
+  final areaNo = _tableNumber(destinationTable['area_table_number']);
+  final label = _destinationDisplayLabel(destinationTable);
+  final toTable = _tableNumber(destinationTable['table_number']);
+  final current = _tableNumber(order['table_number']);
+  final stored = _tableNumber(order['_stored_table_number']);
+  if (area.isEmpty ||
+      areaNo <= 0 ||
+      label.isEmpty ||
+      toTable <= 0 ||
+      current <= 0 ||
+      current == toTable ||
+      stored == toTable) {
+    return unchanged;
+  }
+  final next = Map<String, dynamic>.from(order);
+  next['table_number'] = toTable;
+  next['area_name'] = area;
+  next['table_area_name'] = area;
+  next['area_table_number'] = areaNo;
+  next['display_table_label'] = label;
+  next['table_display_name'] = label;
+  next['table_name'] = label;
+  if (order.containsKey('_stored_table_number')) {
+    next['_stored_table_number'] = toTable;
+  }
+  return FullTransferDestinationStamp(row: next, applied: true);
+}
+
+String _destinationDisplayLabel(Map<String, dynamic> table) {
+  final display = _labelText(table['display_label']);
+  if (display.isNotEmpty) return display;
+  return _labelText(table['table_name']);
+}
+
+String _labelText(dynamic raw) => raw?.toString().trim() ?? '';
 
 List<Map<String, dynamic>> _stampItems(String orderId, dynamic rawItems) {
   if (rawItems is! List) return const <Map<String, dynamic>>[];

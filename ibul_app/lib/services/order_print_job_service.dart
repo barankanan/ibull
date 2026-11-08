@@ -8,7 +8,8 @@ import 'package:flutter/foundation.dart'
         debugPrintStack,
         defaultTargetPlatform,
         kIsWeb,
-        TargetPlatform;
+        TargetPlatform,
+        visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -202,16 +203,60 @@ class _KitchenPrintDispatchOutcome {
   bool get hasFailures => failureMessages.isNotEmpty;
 }
 
+/// One `create_table_order_with_print_jobs` call that the client has not
+/// seen finish. A timeout does not cancel it, so a retry must wait on this
+/// future instead of inserting again.
+class _UnsettledOrderSave {
+  _UnsettledOrderSave(this.rpc);
+
+  final Future<dynamic> rpc;
+  bool settled = false;
+  dynamic result;
+}
+
+class _ReusedOrderSave {
+  const _ReusedOrderSave(this.result);
+
+  final dynamic result;
+}
+
 class OrderPrintJobService {
   OrderPrintJobService({
     SupabaseClient? client,
     KitchenRoutingService? routingService,
     PrinterRepository? printerRepository,
     DesktopPrintOrchestrator? printOrchestrator,
+    this.orderSaveTimeout = const Duration(seconds: 12),
+    this.orderCommitPollAttempts = 4,
+    this.orderCommitPollInterval = const Duration(milliseconds: 400),
   }) : _clientOverride = client,
        _routingService = routingService ?? const KitchenRoutingService(),
        _printerRepositoryInstance = printerRepository,
        _printOrchestratorInstance = printOrchestrator;
+
+  /// How long one save RPC may run before the client stops waiting.
+  /// The request itself is not cancelled.
+  final Duration orderSaveTimeout;
+
+  /// Reads after a timeout. This does not start another insert.
+  final int orderCommitPollAttempts;
+  final Duration orderCommitPollInterval;
+
+  /// Restaurant id + local order id. Shared by every service instance so a
+  /// second screen cannot start a second insert for the same send.
+  static final Map<String, _UnsettledOrderSave> _unsettledOrderSaves =
+      <String, _UnsettledOrderSave>{};
+
+  /// Clears in-flight save guards left by a test. Production code does not
+  /// call this.
+  @visibleForTesting
+  static void debugResetUnsettledOrderSaves() {
+    _unsettledOrderSaves.clear();
+  }
+
+  static String _orderSaveFlightKey(String restaurantId, String localOrderId) {
+    return '${restaurantId.trim()}|$localOrderId';
+  }
 
   // Lazily resolve Supabase client so preview/widget tests can render without
   // initializing Supabase plugins.
@@ -944,20 +989,10 @@ class OrderPrintJobService {
     }
   }
 
-  Future<OrderPrintJobDispatchResult> dispatchNewOrder({
+  List<Map<String, dynamic>> _normalizedSendItems({
     required String restaurantId,
-    required int tableNumber,
     required List<Map<String, dynamic>> items,
-    String? waiterId,
-    String? waiterName,
-    String? notes,
-    String jobType = 'new_order',
-    bool garsonDesktopFastKitchen = false,
-    String? idempotencyKey,
-  }) async {
-    final traceId = _generateTraceId();
-    final pipelineStartedAt = DateTime.now().toIso8601String();
-    final pipelineWatch = Stopwatch()..start();
+  }) {
     final productMappings = mergedKitchenProductMappingsForRestaurant(
       restaurantId,
     );
@@ -973,12 +1008,88 @@ class OrderPrintJobService {
           productStationByProductId: productMappings,
           restaurantId: restaurantId,
         );
-    final normalized = _routingService
+    return _routingService
         .normalizeItems(enrichedItems)
         .map((item) => item.toPayloadMap())
         .toList(growable: false);
+  }
+
+  /// Reads the saved send key. Does not mint a key, flush the ledger, or
+  /// call the order RPC.
+  Future<OrderSendDiagnosticDecision> inspectSendDecision({
+    required String restaurantId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> items,
+    String jobType = 'new_order',
+  }) async {
+    final normalized = _normalizedSendItems(
+      restaurantId: restaurantId,
+      items: items,
+    );
+    if (normalized.isEmpty) {
+      return decideOrderSendDiagnostic(
+        itemCount: 0,
+        fingerprint: '',
+        savedKeyPresent: false,
+      );
+    }
+    final fingerprint = orderSendActionFingerprint(
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+      jobType: jobType,
+      items: normalized,
+    );
+    await _ensureSendKeysLoaded();
+    return decideOrderSendDiagnostic(
+      itemCount: normalized.length,
+      fingerprint: fingerprint,
+      savedKeyPresent: _sendKeys.snapshot.containsKey(fingerprint),
+    );
+  }
+
+  @visibleForTesting
+  Future<String> debugNormalizedSendFingerprint({
+    required String restaurantId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> items,
+    String jobType = 'new_order',
+  }) async {
+    return orderSendActionFingerprint(
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+      jobType: jobType,
+      items: _normalizedSendItems(restaurantId: restaurantId, items: items),
+    );
+  }
+
+  Future<OrderPrintJobDispatchResult> dispatchNewOrder({
+    required String restaurantId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> items,
+    String? waiterId,
+    String? waiterName,
+    String? notes,
+    String jobType = 'new_order',
+    bool garsonDesktopFastKitchen = false,
+    String? idempotencyKey,
+    String? traceId,
+  }) async {
+    refuseDiagnosticOrderWrite('create_table_order_with_print_jobs');
+    final resolvedTraceId = (traceId ?? '').trim().isEmpty
+        ? _generateTraceId()
+        : traceId!.trim();
+    final pipelineStartedAt = DateTime.now().toIso8601String();
+    final pipelineWatch = Stopwatch()..start();
+    final normalized = _normalizedSendItems(
+      restaurantId: restaurantId,
+      items: items,
+    );
 
     if (normalized.isEmpty) {
+      ibulSendTrace(resolvedTraceId, 'rpc_not_started', {
+        'reason': 'empty_items',
+        'table': tableNumber,
+      });
       throw Exception('Print job oluşturmak için sipariş kalemi bulunamadı.');
     }
     final sendFingerprint = orderSendActionFingerprint(
@@ -988,6 +1099,13 @@ class OrderPrintJobService {
       items: normalized,
     );
     await _ensureSendKeysLoaded();
+    final retryingOpenSend = _sendKeys.snapshot.containsKey(sendFingerprint);
+    ibulSendTrace(resolvedTraceId, 'idempotency_key', {
+      'previous': retryingOpenSend ? 'found' : 'minted',
+      'lookupBeforeSend': retryingOpenSend,
+      'fingerprintChars': sendFingerprint.length,
+      'table': tableNumber,
+    });
     final sendKey = resolveOrderSendKey(
       ledger: _sendKeys,
       fingerprint: sendFingerprint,
@@ -1005,14 +1123,14 @@ class OrderPrintJobService {
     );
 
     debugPrint(
-      '[PrintPipeline] trace=$traceId stage=order_save_started '
+      '[PrintPipeline] trace=$resolvedTraceId stage=order_save_started '
       'at=$pipelineStartedAt '
       'restaurantId=$restaurantId tableNo=$tableNumber',
     );
 
     _logKitchen(
       'Init',
-      'trace=$traceId restaurantId=$restaurantId tableNo=$tableNumber jobType=$jobType '
+      'trace=$resolvedTraceId restaurantId=$restaurantId tableNo=$tableNumber jobType=$jobType '
           'itemCount=${normalized.length} waiterId=${_logValue(waiterId)} '
           'waiterName=${_logValue(waiterName)}',
     );
@@ -1021,18 +1139,33 @@ class OrderPrintJobService {
     late final dynamic response;
     try {
       response = await _runCreateTableOrderWithPrintJobsRpc(
-      restaurantId: restaurantId,
-      tableNumber: tableNumber,
-      normalized: normalized,
-      waiterId: waiterId,
-      waiterName: waiterName,
-      notes: notes,
-      traceId: traceId,
-      jobType: jobType,
-      idempotencyKey: sendKey,
-    );
+        restaurantId: restaurantId,
+        tableNumber: tableNumber,
+        normalized: normalized,
+        waiterId: waiterId,
+        waiterName: waiterName,
+        notes: notes,
+        traceId: resolvedTraceId,
+        jobType: jobType,
+        idempotencyKey: sendKey,
+        lookupBeforeSend: retryingOpenSend,
+      );
+    } on PostgrestException catch (error) {
+      ibulSendTrace(resolvedTraceId, 'rpc_result', {
+        'started': true,
+        'http': 'postgrest',
+        'sqlstate': error.code ?? '-',
+        'message': error.message,
+        'details': error.details ?? '-',
+        'hint': error.hint ?? '-',
+      });
+      rethrow;
     } catch (error) {
-      // Keep [sendKey] so the same action retries with the same record.
+      ibulSendTrace(resolvedTraceId, 'rpc_result', {
+        'started': true,
+        'sqlstate': error is TimeoutException ? 'timeout' : 'client',
+        'message': error.runtimeType,
+      });
       rethrow;
     }
     final rpcMs = rpcWatch.elapsedMilliseconds;
@@ -1050,13 +1183,25 @@ class OrderPrintJobService {
       for (final job in jobsForEventLog)
         _textValue(job['id'], fallback: ''): Map<String, dynamic>.from(job),
     };
-    final filteredPrintJobIds = await _suppressDuplicateKitchenJobs(
+    final suppressedPrintJobIds = await _suppressDuplicateKitchenJobs(
       restaurantId: restaurantId,
-      traceId: traceId,
+      traceId: resolvedTraceId,
       tableNumber: tableNumber,
       jobType: jobType,
       printJobIds: printJobIds,
       jobsById: jobsById,
+    );
+    final statusById = <String, String>{
+      for (final entry in jobsById.entries)
+        entry.key: entry.value['status']?.toString() ?? '',
+      if (data['print_job_statuses'] is Map)
+        for (final entry in (data['print_job_statuses'] as Map).entries)
+          entry.key.toString(): entry.value?.toString() ?? '',
+    };
+    final filteredPrintJobIds = printJobIdsSafeForReplay(
+      printJobIds: suppressedPrintJobIds,
+      statusById: statusById,
+      replay: data['idempotent_replay'] == true,
     );
     final orderSavedAt = _textValue(
       data['order_saved_at'],
@@ -1068,7 +1213,7 @@ class OrderPrintJobService {
     );
 
     debugPrint(
-      '[PrintPipeline] trace=$traceId stage=print_job_created '
+      '[PrintPipeline] trace=$resolvedTraceId stage=print_job_created '
       'at=$printJobCreatedAt '
       'order_saved_at=$orderSavedAt '
       'orderId=${_logValue(data['order_id'])} '
@@ -1079,7 +1224,7 @@ class OrderPrintJobService {
 
     _logKitchen(
       'Fetch',
-      'trace=$traceId restaurantId=$restaurantId tableNo=$tableNumber '
+      'trace=$resolvedTraceId restaurantId=$restaurantId tableNo=$tableNumber '
           'orderId=${_logValue(data['order_id'])} orderNo=${_logValue(data['order_number'])} '
           'printJobCount=${(data['print_job_count'] as num?)?.toInt() ?? 0} '
           'printJobIds=${printJobIds.isEmpty ? '-' : printJobIds.join(",")} '
@@ -1275,12 +1420,12 @@ class OrderPrintJobService {
       physicallyDispatched: dispatchOutcome.physicallyDispatched,
       reason: dispatchOutcome.dispatchPath,
       itemCount: normalized.length,
-      traceId: traceId,
+      traceId: resolvedTraceId,
     );
     if (dispatchOutcome.handoffToHub) {
       _logKitchen(
         'Dispatch',
-        'trace=$traceId restaurantId=$restaurantId tableNo=$tableNumber '
+        'trace=$resolvedTraceId restaurantId=$restaurantId tableNo=$tableNumber '
             'handoff_to_hub=true printer_not_printed_yet=true '
             'reason=${dispatchOutcome.pendingReason ?? '-'} '
             'pendingJobIds=${dispatchOutcome.pendingForHubJobIds.join(",")}',
@@ -1305,10 +1450,20 @@ class OrderPrintJobService {
       },
     };
 
+    final savedOrderId = data['order_id']?.toString().trim() ?? '';
+    ibulSendTrace(resolvedTraceId, 'order_id', {
+      'verified': savedOrderId.isNotEmpty,
+    });
+    if (savedOrderId.isEmpty) {
+      throw StateError(
+        'Sipariş sonucu doğrulanamadı. Aynı gönderim anahtarı duruyor.',
+      );
+    }
+    _releaseUnsettledOrderSave(restaurantId, sendKey);
     _sendKeys.complete(sendFingerprint);
     await _sendKeys.flush();
     return OrderPrintJobDispatchResult(
-      orderId: data['order_id']?.toString(),
+      orderId: savedOrderId,
       orderNumber: data['order_number']?.toString(),
       printJobCount: (data['print_job_count'] as num?)?.toInt() ?? 0,
       printJobIds: printJobIds,
@@ -1317,7 +1472,7 @@ class OrderPrintJobService {
       printJobCreatedAt: printJobCreatedAt,
       dispatchedJobCount: dispatchOutcome.dispatchedJobCount,
       failedJobCount: dispatchOutcome.failedJobCount,
-      traceId: traceId,
+      traceId: resolvedTraceId,
       pipelineStartedAt: pipelineStartedAt,
       printSystemEnabled: printSystemEnabled,
       printSuppressedReason: printSystemEnabled
@@ -1428,6 +1583,7 @@ class OrderPrintJobService {
     required String restaurantId,
     required String printJobId,
   }) async {
+    refuseDiagnosticOrderWrite('retry_print_job');
     await _client
         .from('print_jobs')
         .update({'status': 'pending', 'last_error': null, 'printed_at': null})
@@ -1448,6 +1604,7 @@ class OrderPrintJobService {
     required String tableOrderId,
     String? waiterName,
   }) async {
+    refuseDiagnosticOrderWrite('create_table_order_with_print_jobs');
     final row = await _client
         .from('table_orders')
         .select('id, seller_id, table_number, items')
@@ -1574,7 +1731,9 @@ class OrderPrintJobService {
     required String traceId,
     required String jobType,
     String? idempotencyKey,
+    bool lookupBeforeSend = false,
   }) async {
+    refuseDiagnosticOrderWrite('create_table_order_with_print_jobs');
     final noteText =
         '$traceId${notes != null && notes.isNotEmpty ? ' $notes' : ''}';
     final params = buildCreateTableOrderRpcParams(
@@ -1587,13 +1746,232 @@ class OrderPrintJobService {
       jobType: jobType,
       idempotencyKey: idempotencyKey,
     );
+    final localOrderId = (idempotencyKey ?? '').trim();
+    Future<Map<String, dynamic>?> lookup() {
+      if (localOrderId.isEmpty) {
+        return Future<Map<String, dynamic>?>.value(null);
+      }
+      return _lookupCommittedOrder(
+        restaurantId: restaurantId,
+        localOrderId: localOrderId,
+        traceId: traceId,
+      );
+    }
+
+    final flightKey = localOrderId.isEmpty
+        ? ''
+        : _orderSaveFlightKey(restaurantId, localOrderId);
+    if (flightKey.isNotEmpty && _unsettledOrderSaves.containsKey(flightKey)) {
+      final joined = await _joinUnsettledOrderSave(flightKey, lookup);
+      if (joined != null) return joined.result;
+    }
+    ibulSendTrace(traceId, 'lookup_before_send', {
+      'ran': lookupBeforeSend && localOrderId.isNotEmpty,
+    });
+    if (lookupBeforeSend && localOrderId.isNotEmpty) {
+      final existing = await lookup();
+      if (existing != null) return existing;
+      if (flightKey.isNotEmpty && _unsettledOrderSaves.containsKey(flightKey)) {
+        final joined = await _joinUnsettledOrderSave(flightKey, lookup);
+        if (joined != null) return joined.result;
+      }
+    }
+    if (flightKey.isEmpty) {
+      ibulSendTrace(traceId, 'rpc_starting', {
+        'name': 'create_table_order_with_print_jobs',
+        'table': tableNumber,
+      });
+      return _awaitOrderSave(
+        rpc: _client.rpc('create_table_order_with_print_jobs', params: params),
+        lookup: lookup,
+        pollAttempts: 1,
+      );
+    }
+
+    final gate = Completer<dynamic>();
+    final flight = _UnsettledOrderSave(gate.future);
+    final prior = _unsettledOrderSaves[flightKey];
+    if (prior != null) {
+      final joined = await _joinUnsettledOrderSave(flightKey, lookup);
+      if (joined != null) return joined.result;
+    }
+    _unsettledOrderSaves[flightKey] = flight;
+    final Future<dynamic> raw;
     try {
-      return await _client.rpc(
-        'send_table_order_idempotent',
-        params: params,
+        ibulSendTrace(traceId, 'rpc_starting', {
+          'name': 'create_table_order_with_print_jobs',
+          'table': tableNumber,
+        });
+        raw = _client.rpc('create_table_order_with_print_jobs', params: params);
+    } catch (error, stack) {
+      if (identical(_unsettledOrderSaves[flightKey], flight)) {
+        _unsettledOrderSaves.remove(flightKey);
+      }
+      if (!gate.isCompleted) gate.completeError(error, stack);
+      rethrow;
+    }
+    raw.then(
+      (value) {
+        if (identical(_unsettledOrderSaves[flightKey], flight)) {
+          flight.settled = true;
+          flight.result = value;
+        }
+        if (!gate.isCompleted) gate.complete(value);
+      },
+      onError: (Object error, StackTrace stack) {
+        if (identical(_unsettledOrderSaves[flightKey], flight)) {
+          _unsettledOrderSaves.remove(flightKey);
+        }
+        if (!gate.isCompleted) gate.completeError(error, stack);
+      },
+    );
+    return _awaitOrderSave(
+      rpc: gate.future,
+      lookup: lookup,
+      pollAttempts: orderCommitPollAttempts,
+    );
+  }
+
+  /// Returns the in-flight save when this local order id already has one.
+  /// A settled success is reused as a replay. A settled failure is already
+  /// gone, so the caller may insert again.
+  Future<_ReusedOrderSave?> _joinUnsettledOrderSave(
+    String flightKey,
+    Future<Map<String, dynamic>?> Function() lookup,
+  ) async {
+    final current = _unsettledOrderSaves[flightKey];
+    if (current == null) return null;
+    if (current.settled) {
+      return _ReusedOrderSave(_replayOrderSave(current.result));
+    }
+    final existing = await lookup();
+    if (existing != null) return _ReusedOrderSave(existing);
+    final still = _unsettledOrderSaves[flightKey];
+    if (still == null) return null;
+    if (still.settled) {
+      return _ReusedOrderSave(_replayOrderSave(still.result));
+    }
+    final result = await _awaitOrderSave(
+      rpc: still.rpc,
+      lookup: lookup,
+      pollAttempts: orderCommitPollAttempts,
+    );
+    return _ReusedOrderSave(_replayOrderSave(result));
+  }
+
+  dynamic _replayOrderSave(dynamic result) {
+    if (result is Map) {
+      return <String, dynamic>{
+        ...Map<String, dynamic>.from(result),
+        'idempotent_replay': true,
+      };
+    }
+    return result;
+  }
+
+  Future<dynamic> _awaitOrderSave({
+    required Future<dynamic> rpc,
+    required Future<Map<String, dynamic>?> Function() lookup,
+    required int pollAttempts,
+  }) async {
+    try {
+      return await recoverOrderSaveAfterTimeout(
+        send: () => rpc,
+        lookup: lookup,
+        timeout: orderSaveTimeout,
+        pollAttempts: pollAttempts,
+        pollInterval: orderCommitPollInterval,
       );
     } on PostgrestException catch (error) {
       throw Exception(_friendlyDispatchRpcError(error));
+    }
+  }
+
+  void _releaseUnsettledOrderSave(String restaurantId, String localOrderId) {
+    final key = localOrderId.trim();
+    if (key.isEmpty) return;
+    _unsettledOrderSaves.remove(_orderSaveFlightKey(restaurantId, key));
+  }
+
+  Future<Map<String, dynamic>?> _lookupCommittedOrder({
+    required String restaurantId,
+    required String localOrderId,
+    String traceId = '-',
+  }) async {
+    if (restaurantId.trim().isEmpty || localOrderId.isEmpty) return null;
+    try {
+      final existing = await _client
+          .from('orders')
+          .select('id, order_number')
+          .eq('restaurant_id', restaurantId)
+          .eq('local_order_id', localOrderId)
+          .limit(1)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 5));
+      final kind = interpretOrderCommitLookup(
+        requestFailed: false,
+        rowFound: existing != null &&
+            (Map<String, dynamic>.from(existing)['id']?.toString().trim() ??
+                    '')
+                .isNotEmpty,
+      );
+      ibulSendTrace(traceId, 'lookup_result', {'kind': kind.name});
+      if (kind == OrderCommitLookupKind.notFound) return null;
+      final row = Map<String, dynamic>.from(existing!);
+      final orderId = row['id']?.toString() ?? '';
+      if (orderId.isEmpty) return null;
+      final jobs = await _client
+          .from('print_jobs')
+          .select('id, status')
+          .eq('order_id', orderId)
+          .limit(40)
+          .timeout(const Duration(seconds: 5));
+      return <String, dynamic>{
+        'order_id': orderId,
+        'order_number': row['order_number'],
+        'print_job_ids': (jobs as List)
+            .map((job) => (job as Map)['id'])
+            .where((id) => id != null)
+            .toList(growable: false),
+        'print_job_statuses': <String, String>{
+          for (final job in jobs as List)
+            if ((job as Map)['id'] != null)
+              job['id'].toString(): job['status']?.toString() ?? '',
+        },
+        'idempotent_replay': true,
+      };
+    } on PostgrestException catch (error) {
+      ibulSendTrace(traceId, 'lookup_result', {
+        'kind': OrderCommitLookupKind.readFailed.name,
+        'sqlstate': error.code ?? '-',
+        'message': error.message,
+        'details': error.details ?? '-',
+        'hint': error.hint ?? '-',
+      });
+      debugPrint(
+        '[OrderCommit] lookup read_failed '
+        'code=${error.code ?? '-'} '
+        'localOrderId=$localOrderId',
+      );
+      throw StateError(
+        'Sipariş kaydı okunamadı (${error.code ?? '-'}). '
+        'Taslak duruyor. Aynı gönderim anahtarı korunuyor.',
+      );
+    } on TimeoutException {
+      debugPrint(
+        '[OrderCommit] lookup read_failed code=timeout '
+        'localOrderId=$localOrderId',
+      );
+      throw StateError(
+        'Sipariş kaydı okunamadı (timeout). '
+        'Taslak duruyor. Aynı gönderim anahtarı korunuyor.',
+      );
+    } catch (error) {
+      debugPrint('[OrderCommit] lookup read_failed error=$error');
+      throw StateError(
+        'Sipariş kaydı okunamadı. '
+        'Taslak duruyor. Aynı gönderim anahtarı korunuyor.',
+      );
     }
   }
 
@@ -2430,11 +2808,16 @@ class OrderPrintJobService {
                   },
                 )
                 .ignore();
-            await _resetPrintJobToPending(
-              printJobId,
-              requestUrl: requestUrl,
-              error: failureMessage,
-            );
+            if (shouldAutomaticallyRequeuePrint(
+              claim: PrintClaimResult.won,
+              dispatch: classifyPrintDispatchFailure(failureMessage),
+            )) {
+              await _resetPrintJobToPending(
+                printJobId,
+                requestUrl: requestUrl,
+                error: failureMessage,
+              );
+            }
             dispatchedJobCount += 1;
             _logKitchen(
               'Dispatch',
@@ -2575,11 +2958,16 @@ class OrderPrintJobService {
           // Bridge unreachable from this device (e.g. garson on a tablet,
           // bridge running on the restaurant’s desktop). Reset to 'pending'
           // so DesktopPrintHub can dispatch it when the UPDATE listener fires.
-          await _resetPrintJobToPending(
-            printJobId,
-            requestUrl: requestUrl,
-            error: failureMessage,
-          );
+          if (shouldAutomaticallyRequeuePrint(
+            claim: PrintClaimResult.won,
+            dispatch: classifyPrintDispatchFailure(failureMessage),
+          )) {
+            await _resetPrintJobToPending(
+              printJobId,
+              requestUrl: requestUrl,
+              error: failureMessage,
+            );
+          }
           dispatchedJobCount += 1; // pending for hub retry — not a hard failure
           _logKitchen(
             'Dispatch',

@@ -550,3 +550,372 @@ String garsonCloseTableSnackbarText(String label) => '$label kapatıldı.';
 
 String garsonCloseTableAlreadyEmptySnackbarText(String label) =>
     '$label zaten boş.';
+
+bool garsonCloseStatusIsTerminal(String? raw) {
+  final normalized = (raw ?? '').trim().toLowerCase();
+  return normalized == 'closed' ||
+      normalized == 'paid' ||
+      normalized == 'cancelled' ||
+      normalized == 'canceled' ||
+      normalized == 'completed' ||
+      normalized == 'complete' ||
+      normalized == 'completed_payment' ||
+      normalized == 'payment_completed' ||
+      normalized == 'archived' ||
+      normalized == 'print_anchor';
+}
+
+/// How a row was tied to one physical table.
+///
+/// [tableId] and [areaLabel] are strong enough to move `table_number`.
+/// [canonicalNumber] only means the row is already stored on that number.
+enum GarsonTableProof { tableId, areaLabel, canonicalNumber, none }
+
+GarsonTableProof garsonTableProof({
+  required Map<String, dynamic>? table,
+  required int canonicalTableNumber,
+  required Map<String, dynamic> order,
+  String? sellerId,
+}) {
+  if (garsonCloseStatusIsTerminal(order['status']?.toString())) {
+    return GarsonTableProof.none;
+  }
+  final source = _t(order['_garson_source_table']);
+  if (source == 'table_order_history') return GarsonTableProof.none;
+  final orderSeller = _t(order['seller_id'] ?? order['restaurant_id']);
+  final expectedSeller = _t(sellerId ?? table?['seller_id']);
+  if (orderSeller.isNotEmpty &&
+      expectedSeller.isNotEmpty &&
+      orderSeller != expectedSeller) {
+    return GarsonTableProof.none;
+  }
+  if (table == null) return GarsonTableProof.none;
+  // A bill whose stored number is another physical table was transferred.
+  // Bahçe 1 stored as its area index (1) while canonical is 11 is not a move.
+  if (_storedTableNumberBelongsToAnotherTable(
+    table: table,
+    canonicalTableNumber: canonicalTableNumber,
+    order: order,
+  )) {
+    return GarsonTableProof.none;
+  }
+
+  final tableArea = _t(table['area_name']).toLowerCase();
+  final orderArea = _t(
+    order['area_name'] ?? order['table_area_name'] ?? order['table_area'],
+  ).toLowerCase();
+  final tableAreaNo = _pi(table['area_table_number']);
+  final orderAreaNo = _firstPositiveInt(<dynamic>[
+    order['area_table_number'],
+    order['table_area_number'],
+    order['area_table_no'],
+  ]);
+  final tableLabel = _t(table['display_label'] ?? table['table_name']);
+  final orderLabel = _t(
+    order['display_table_label'] ??
+        order['table_display_name'] ??
+        order['display_label'] ??
+        order['table_name'],
+  );
+  final areaComplete = tableArea.isNotEmpty &&
+      orderArea.isNotEmpty &&
+      tableArea == orderArea &&
+      tableAreaNo > 0 &&
+      orderAreaNo > 0 &&
+      tableAreaNo == orderAreaNo &&
+      tableLabel.isNotEmpty &&
+      orderLabel.isNotEmpty &&
+      tableLabel.toLowerCase() == orderLabel.toLowerCase();
+  // A full move can leave the source id on a row whose area name, area
+  // index, and display label already name the destination. That stamp is
+  // not this table. The area-index exception above stays for a row whose
+  // area name is still this table.
+  if (_completeStampNamesAnotherArea(
+    tableArea: tableArea,
+    orderArea: orderArea,
+    orderAreaNo: orderAreaNo,
+    orderLabel: orderLabel,
+  )) {
+    return GarsonTableProof.none;
+  }
+
+  final tableId = _t(table['id']);
+  final orderTableId = _t(order['table_id']);
+  final orderStoreTableId = _t(order['store_table_id']);
+  final idsPresent = tableId.isNotEmpty &&
+      (orderTableId.isNotEmpty || orderStoreTableId.isNotEmpty);
+  final idMatches = idsPresent &&
+      (orderTableId == tableId || orderStoreTableId == tableId);
+  if (idMatches) return GarsonTableProof.tableId;
+  if (idsPresent) {
+    // The id still names the source table. A complete destination stamp
+    // whose stored number is already canonical belongs to this table.
+    final stored = garsonStoredTableNumber(order);
+    if (areaComplete &&
+        canonicalTableNumber > 0 &&
+        stored == canonicalTableNumber) {
+      return GarsonTableProof.areaLabel;
+    }
+    return GarsonTableProof.none;
+  }
+
+  if (areaComplete) return GarsonTableProof.areaLabel;
+
+  final orderHasPartialArea = orderArea.isNotEmpty || orderAreaNo > 0;
+  if (orderHasPartialArea) return GarsonTableProof.none;
+
+  final tableNumber = _pi(table['table_number']);
+  final orderNumber = _pi(order['table_number']);
+  if (canonicalTableNumber > 0 &&
+      tableNumber == canonicalTableNumber &&
+      orderNumber == canonicalTableNumber &&
+      (orderLabel.isEmpty ||
+          tableLabel.isEmpty ||
+          orderLabel.toLowerCase() == tableLabel.toLowerCase())) {
+    return GarsonTableProof.canonicalNumber;
+  }
+  return GarsonTableProof.none;
+}
+
+/// Bahçe 1 is store table 11 and area index 1. A row is not chosen from
+/// `table_number` alone when area data is missing or only partly filled.
+bool garsonOrderBelongsToCloseTable({
+  required Map<String, dynamic>? table,
+  required int canonicalTableNumber,
+  required Map<String, dynamic> order,
+  String? sellerId,
+}) {
+  return garsonTableProof(
+        table: table,
+        canonicalTableNumber: canonicalTableNumber,
+        order: order,
+        sellerId: sellerId,
+      ) !=
+      GarsonTableProof.none;
+}
+
+bool _completeStampNamesAnotherArea({
+  required String tableArea,
+  required String orderArea,
+  required int orderAreaNo,
+  required String orderLabel,
+}) {
+  return tableArea.isNotEmpty &&
+      orderArea.isNotEmpty &&
+      orderArea != tableArea &&
+      orderAreaNo > 0 &&
+      orderLabel.isNotEmpty;
+}
+
+bool _storedTableNumberBelongsToAnotherTable({
+  required Map<String, dynamic> table,
+  required int canonicalTableNumber,
+  required Map<String, dynamic> order,
+}) {
+  final stored = garsonStoredTableNumber(order);
+  if (stored <= 0) return false;
+  final canonical = canonicalTableNumber > 0
+      ? canonicalTableNumber
+      : _pi(table['table_number']);
+  if (canonical <= 0 || stored == canonical) return false;
+  final areaNo = _pi(table['area_table_number']);
+  // Bahçe 1 is stored as its area index. A row that still has the Bahçe
+  // label after table_number becomes 1 matches this table. Keep the
+  // exception for that unstamped row. A full move that stored a different
+  // area name is rejected before a stale table id can count as proof.
+  if (areaNo > 0 && stored == areaNo) return false;
+  return true;
+}
+
+int garsonStoredTableNumber(Map<String, dynamic> order) {
+  final stored = _pi(order['_stored_table_number']);
+  if (stored > 0) return stored;
+  return _pi(order['table_number']);
+}
+
+bool garsonTableOrderNeedsRealign({
+  required Map<String, dynamic> order,
+  required Map<String, dynamic> table,
+  required int canonicalTableNumber,
+  required String sellerId,
+}) {
+  if ((order['_garson_source_table'] ?? '').toString() != 'table_orders') {
+    return false;
+  }
+  final proof = garsonTableProof(
+    table: table,
+    canonicalTableNumber: canonicalTableNumber,
+    order: order,
+    sellerId: sellerId,
+  );
+  if (proof != GarsonTableProof.tableId &&
+      proof != GarsonTableProof.areaLabel) {
+    return false;
+  }
+  final stored = garsonStoredTableNumber(order);
+  return stored > 0 &&
+      canonicalTableNumber > 0 &&
+      stored != canonicalTableNumber;
+}
+
+List<Map<String, dynamic>> garsonRowsForTableClose({
+  required Map<String, dynamic>? table,
+  required int canonicalTableNumber,
+  required String sellerId,
+  required List<Map<String, dynamic>> candidates,
+}) {
+  return <Map<String, dynamic>>[
+    for (final order in candidates)
+      if (garsonOrderBelongsToCloseTable(
+        table: table,
+        canonicalTableNumber: canonicalTableNumber,
+        order: order,
+        sellerId: sellerId,
+      ))
+        order,
+  ];
+}
+
+/// Bahçe 1 is canonical table 11. A card titled Bahçe 1 must not use Salon 1.
+int canonicalStoreTableNumber({
+  required int requestedNumber,
+  required String? displayLabel,
+  required List<Map<String, dynamic>> tables,
+}) {
+  final label = displayLabel?.trim() ?? '';
+  if (label.isNotEmpty) {
+    for (final row in tables) {
+      final stored = (row['display_label'] ?? row['display_table_label'] ?? '')
+          .toString()
+          .trim();
+      if (stored != label) continue;
+      final number = _firstPositiveInt(<dynamic>[row['table_number']]);
+      if (number > 0) return number;
+    }
+  }
+  return requestedNumber > 0 ? requestedNumber : 0;
+}
+
+/// Completeness needs a successful fetch, a count under the cap, and the
+/// raw row count equal to the server count. Rows removed by normalization
+/// or filtering are counted apart and do not replace that comparison.
+bool openOrderReadIsComplete({
+  required bool tableFetchFailed,
+  required bool restaurantFetchFailed,
+  required int? openTableOrders,
+  required int? openCustomerOrders,
+  required int? rawTableOrders,
+  required int? rawCustomerOrders,
+  int removedByNormalization = 0,
+  int removedByFilter = 0,
+  int restaurantFetchCap = 200,
+  int tableFetchCap = 1000,
+}) {
+  if (tableFetchFailed || restaurantFetchFailed) return false;
+  if (openTableOrders == null ||
+      openCustomerOrders == null ||
+      rawTableOrders == null ||
+      rawCustomerOrders == null) {
+    return false;
+  }
+  if (openTableOrders >= tableFetchCap ||
+      openCustomerOrders >= restaurantFetchCap) {
+    return false;
+  }
+  if (rawTableOrders != openTableOrders ||
+      rawCustomerOrders != openCustomerOrders) {
+    return false;
+  }
+  if (removedByNormalization < 0 || removedByFilter < 0) return false;
+  if (removedByNormalization + removedByFilter >
+      rawTableOrders + rawCustomerOrders) {
+    return false;
+  }
+  return true;
+}
+
+/// An empty close list is trustworthy only after every target-table read
+/// succeeded and the physical table id is known.
+bool closeSessionMayTreatAsEmpty({
+  required bool snapshotFailed,
+  required bool areaReadFailed,
+  required bool ordersReadFailed,
+  required bool visibleIdsReadFailed,
+  required bool tableIdentityKnown,
+  required bool tableIdKnown,
+}) {
+  if (!tableIdentityKnown || !tableIdKnown) return false;
+  if (snapshotFailed ||
+      areaReadFailed ||
+      ordersReadFailed ||
+      visibleIdsReadFailed) {
+    return false;
+  }
+  return true;
+}
+
+class GarsonVisibleTableCard {
+  const GarsonVisibleTableCard({
+    required this.orders,
+    required this.draftItems,
+  });
+
+  final List<Map<String, dynamic>> orders;
+  final List<Map<String, dynamic>> draftItems;
+}
+
+/// A failed or incomplete server read leaves the card and its draft in place.
+GarsonVisibleTableCard garsonCardAfterServerRead({
+  required GarsonVisibleTableCard current,
+  required bool readSucceeded,
+  required bool readComplete,
+  required bool verifiedEmptyClose,
+}) {
+  if (!readSucceeded || !readComplete || !verifiedEmptyClose) return current;
+  return GarsonVisibleTableCard(
+    orders: const <Map<String, dynamic>>[],
+    draftItems: current.draftItems,
+  );
+}
+
+class GarsonOpenOrderRead {
+  const GarsonOpenOrderRead({
+    required this.orders,
+    required this.succeeded,
+    required this.complete,
+    this.withheldServerIds = const <String>{},
+  });
+
+  final List<Map<String, dynamic>> orders;
+  final bool succeeded;
+  final bool complete;
+
+  /// Server rows removed by normalization or filtering. They are still open.
+  final Set<String> withheldServerIds;
+}
+
+/// Cache is cleared only after a successful read whose row count matched
+/// the server count. A short list is not treated as complete by itself.
+List<Map<String, dynamic>> dropCachedBillsMissingFromOpenSnapshot({
+  required List<Map<String, dynamic>> visibleOrders,
+  required GarsonOpenOrderRead serverRead,
+}) {
+  if (!serverRead.succeeded || !serverRead.complete) return visibleOrders;
+  final openIds = <String>{
+    for (final order in serverRead.orders)
+      if (_t(order['id']).isNotEmpty) _t(order['id']),
+    ...serverRead.withheldServerIds,
+  };
+  return <Map<String, dynamic>>[
+    for (final order in visibleOrders)
+      if (_cachedBillStillOpen(order, openIds)) order,
+  ];
+}
+
+bool _cachedBillStillOpen(Map<String, dynamic> order, Set<String> openIds) {
+  final status = _t(order['status']).toLowerCase();
+  if (status == 'draft') return true;
+  final id = _t(order['id']);
+  if (id.isEmpty) return false;
+  return openIds.contains(id);
+}

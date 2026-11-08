@@ -202,6 +202,55 @@ class CloseTableWorkflowEvent {
       'orderId=$orderId, remainingActive=$remainingActiveCount)';
 }
 
+/// A committed `close_table_with_history` already closed customer `orders`
+/// (or reported that none were open). Repeating that update can time out
+/// after the visit is archived.
+///
+/// A timeout throws before that confirmation. The per-order fallback only
+/// touches `table_orders`, so the customer rows still need a mirror before
+/// any fallback history row is inserted.
+bool mustMirrorRestaurantOrdersBeforeHistory({
+  required bool bulkCloseCommitted,
+}) {
+  return !bulkCloseCommitted;
+}
+
+/// The garson reopen guard hides a customer `orders` row whose activity is
+/// not after the latest `table_order_history.closed_at`. Fallback history
+/// written while that row is still open makes the close look successful.
+bool openRestaurantOrderHiddenByLatestClose({
+  required DateTime orderActivityAt,
+  required DateTime latestClosedAt,
+}) {
+  return !orderActivityAt.toLocal().isAfter(latestClosedAt.toLocal());
+}
+
+/// Closes customer `orders` only when the bulk close did not commit, then
+/// reads them back. Still-open rows abort the close so fallback history
+/// cannot hide them. A committed bulk close returns 0 and does not call
+/// either callback.
+Future<int> mirrorRestaurantOrdersBeforeFallbackHistory({
+  required bool bulkCloseCommitted,
+  required Future<int> Function() mirrorRestaurantOrders,
+  required Future<List<Map<String, dynamic>>> Function() readOpenOrders,
+}) async {
+  if (!mustMirrorRestaurantOrdersBeforeHistory(
+    bulkCloseCommitted: bulkCloseCommitted,
+  )) {
+    return 0;
+  }
+  final closed = await mirrorRestaurantOrders();
+  final stillOpen = await readOpenOrders();
+  if (stillOpen.isNotEmpty) {
+    throw Exception(
+      'Masa kapatma tamamlanamadı. Müşteri siparişleri hâlâ açık görünüyor. '
+      'Supabase migration dosyası eksik olabilir: '
+      'ibul_app/supabase/migrations/20260609_close_table_waiter_access.sql',
+    );
+  }
+  return closed;
+}
+
 class CloseTableVerificationException implements Exception {
   const CloseTableVerificationException(
     this.message, {

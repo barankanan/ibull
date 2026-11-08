@@ -7,18 +7,40 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config/runtime_config.dart';
 import '../../models/garson_operation_rules.dart';
-import '../../models/mixed_service_order.dart';
 import '../../models/staff_access_policy.dart';
 import '../../utils/garson_active_orders_fetch.dart';
 import '../../utils/order_status_constants.dart';
 import '../../utils/table_labels.dart';
 import '../bill_edit_access.dart';
-import 'close_table_workflow.dart';
+import '../order_send_access.dart';
 import 'table_close_history_fallback.dart';
 import 'table_operation_access.dart';
 import 'table_order_history_utils.dart';
 import 'table_payment_guard.dart';
 import 'table_transfer_plan.dart';
+
+class _GarsonOrderFetch {
+  const _GarsonOrderFetch({
+    required this.visible,
+    required this.rawCount,
+    required this.withheldIds,
+    required this.removedByNormalization,
+    required this.removedByFilter,
+  });
+
+  const _GarsonOrderFetch.empty()
+    : visible = const <Map<String, dynamic>>[],
+      rawCount = 0,
+      withheldIds = const <String>{},
+      removedByNormalization = 0,
+      removedByFilter = 0;
+
+  final List<Map<String, dynamic>> visible;
+  final int rawCount;
+  final Set<String> withheldIds;
+  final int removedByNormalization;
+  final int removedByFilter;
+}
 
 class StoreTableService {
   StoreTableService({
@@ -669,6 +691,7 @@ class StoreTableService {
   Future<List<Map<String, dynamic>>> getTableOrdersSnapshot(
     String sellerId, {
     int? tableNumber,
+    bool surfaceErrors = false,
   }) async {
     final resolvedSellerId = sellerId.trim();
     if (resolvedSellerId.isEmpty) {
@@ -700,10 +723,10 @@ class StoreTableService {
     );
     List<Map<String, dynamic>> tableOrders = const <Map<String, dynamic>>[];
     try {
-      tableOrders = await _fetchTableOrdersForGarson(
+      tableOrders = (await _fetchTableOrdersForGarson(
         sellerId: resolvedSellerId,
         tableNumber: tableNumber,
-      );
+      )).visible;
       logGarsonActiveOrdersFetchResult(
         restaurantId: resolvedSellerId,
         source: 'table_orders',
@@ -716,6 +739,7 @@ class StoreTableService {
         error: error,
         stack: stack,
       );
+      if (surfaceErrors) rethrow;
     } on TimeoutException catch (error, stack) {
       logGarsonActiveOrdersFetchError(
         restaurantId: resolvedSellerId,
@@ -723,6 +747,7 @@ class StoreTableService {
         error: error,
         stack: stack,
       );
+      if (surfaceErrors) rethrow;
     } catch (error, stack) {
       logGarsonActiveOrdersFetchError(
         restaurantId: resolvedSellerId,
@@ -730,6 +755,7 @@ class StoreTableService {
         error: error,
         stack: stack,
       );
+      if (surfaceErrors) rethrow;
     }
 
     final restaurantOrdersQuery =
@@ -744,10 +770,10 @@ class StoreTableService {
     List<Map<String, dynamic>> restaurantOrders =
         const <Map<String, dynamic>>[];
     try {
-      restaurantOrders = await _fetchRestaurantOrdersForGarson(
+      restaurantOrders = (await _fetchRestaurantOrdersForGarson(
         restaurantId: resolvedSellerId,
         tableNumber: tableNumber,
-      );
+      )).visible;
       logGarsonActiveOrdersFetchResult(
         restaurantId: resolvedSellerId,
         source: 'orders',
@@ -760,6 +786,7 @@ class StoreTableService {
         error: error,
         stack: stack,
       );
+      if (surfaceErrors) rethrow;
     }
 
     final merged = mergeGarsonActiveOrderSources(
@@ -775,7 +802,7 @@ class StoreTableService {
     return merged;
   }
 
-  Future<List<Map<String, dynamic>>> _fetchTableOrdersForGarson({
+  Future<_GarsonOrderFetch> _fetchTableOrdersForGarson({
     required String sellerId,
     int? tableNumber,
   }) async {
@@ -794,7 +821,7 @@ class StoreTableService {
         .order('created_at', ascending: false)
         .timeout(tableOrderTimeout);
     final rawOrders = List<Map<String, dynamic>>.from(rows as List);
-    if (rawOrders.isEmpty) return const <Map<String, dynamic>>[];
+    if (rawOrders.isEmpty) return const _GarsonOrderFetch.empty();
 
     final tableIds = rawOrders
         .map(
@@ -819,6 +846,8 @@ class StoreTableService {
     );
 
     final normalized = <Map<String, dynamic>>[];
+    final withheldIds = <String>{};
+    var removedByNormalization = 0;
     for (final raw in rawOrders) {
       final tableId =
           raw['table_id']?.toString().trim() ??
@@ -832,13 +861,24 @@ class StoreTableService {
         order: raw,
         storeTable: storeTable,
       );
-      if (mapped == null) continue;
+      if (mapped == null) {
+        final id = raw['id']?.toString().trim() ?? '';
+        if (id.isNotEmpty) withheldIds.add(id);
+        removedByNormalization++;
+        continue;
+      }
       normalized.add(mapped);
     }
-    return normalized;
+    return _GarsonOrderFetch(
+      visible: normalized,
+      rawCount: rawOrders.length,
+      withheldIds: withheldIds,
+      removedByNormalization: removedByNormalization,
+      removedByFilter: 0,
+    );
   }
 
-  Future<List<Map<String, dynamic>>> _fetchRestaurantOrdersForGarson({
+  Future<_GarsonOrderFetch> _fetchRestaurantOrdersForGarson({
     required String restaurantId,
     int? tableNumber,
   }) async {
@@ -871,10 +911,10 @@ class StoreTableService {
         .or('order_type.eq.table,delivery_type.eq.table')
         .not('status', 'in', OrderStatusConstants.terminalStatuses.toList())
         .order('created_at', ascending: false)
-        .limit(50)
+        .limit(200)
         .timeout(tableOrderTimeout);
     final rawOrders = List<Map<String, dynamic>>.from(rows as List);
-    if (rawOrders.isEmpty) return const <Map<String, dynamic>>[];
+    if (rawOrders.isEmpty) return const _GarsonOrderFetch.empty();
 
     final tableIds = rawOrders
         .map((order) => order['table_id']?.toString().trim() ?? '')
@@ -899,8 +939,24 @@ class StoreTableService {
     );
 
     final normalized = <Map<String, dynamic>>[];
+    final withheldIds = <String>{};
+    var removedByNormalization = 0;
+    var removedByFilter = 0;
+    void withhold(Map<String, dynamic> raw, {required bool normalization}) {
+      final id = raw['id']?.toString().trim() ?? '';
+      if (id.isNotEmpty) withheldIds.add(id);
+      if (normalization) {
+        removedByNormalization++;
+      } else {
+        removedByFilter++;
+      }
+    }
+
     for (final raw in rawOrders) {
-      if (!isGarsonRestaurantTableOrderRow(raw)) continue;
+      if (!isGarsonRestaurantTableOrderRow(raw)) {
+        withhold(raw, normalization: false);
+        continue;
+      }
       final tableId = raw['table_id']?.toString().trim() ?? '';
       final storeTable = tableId.isEmpty ? null : storeTablesById[tableId];
       final rawItems = raw['order_items'] is List
@@ -912,7 +968,10 @@ class StoreTableService {
         items: items,
         storeTable: storeTable,
       );
-      if (mapped == null) continue;
+      if (mapped == null) {
+        withhold(raw, normalization: true);
+        continue;
+      }
       final mappedTableNumber = _parseTableNumberValue(mapped['table_number']);
       final latestClosedAt = latestClosedByTable[mappedTableNumber];
       final activityAt = DateTime.tryParse(
@@ -930,14 +989,35 @@ class StoreTableService {
           'latest_closed_at=${latestClosedAt.toIso8601String()} '
           'action=suppress_stale_orders_row',
         );
+        withhold(raw, normalization: false);
         continue;
       }
       normalized.add(mapped);
     }
 
-    return filterGarsonActiveOrdersByTableNumber(
+    final filtered = filterGarsonActiveOrdersByTableNumber(
       orders: normalized,
       tableNumber: tableNumber ?? 0,
+    );
+    if (filtered.length != normalized.length) {
+      final keptIds = <String>{
+        for (final order in filtered)
+          if ((order['id']?.toString().trim() ?? '').isNotEmpty)
+            order['id'].toString().trim(),
+      };
+      for (final order in normalized) {
+        final id = order['id']?.toString().trim() ?? '';
+        if (id.isEmpty || keptIds.contains(id)) continue;
+        withheldIds.add(id);
+        removedByFilter++;
+      }
+    }
+    return _GarsonOrderFetch(
+      visible: filtered,
+      rawCount: rawOrders.length,
+      withheldIds: withheldIds,
+      removedByNormalization: removedByNormalization,
+      removedByFilter: removedByFilter,
     );
   }
 
@@ -987,6 +1067,25 @@ class StoreTableService {
     } catch (_) {
       return const <String, Map<String, dynamic>>{};
     }
+  }
+
+  Future<Map<String, dynamic>?> _loadStoreTableForClose({
+    required String sellerId,
+    required int tableNumber,
+  }) async {
+    final rows = await _supabase
+        .from('store_tables')
+        .select(
+          'id, seller_id, table_number, area_name, area_table_number, '
+          'display_label, table_name',
+        )
+        .eq('seller_id', sellerId)
+        .eq('table_number', tableNumber)
+        .limit(1)
+        .timeout(tableOrderTimeout);
+    final list = rows as List;
+    if (list.isEmpty) return null;
+    return Map<String, dynamic>.from(list.first as Map);
   }
 
   Future<Map<int, Map<String, dynamic>>> _loadStoreTablesByNumber({
@@ -1056,6 +1155,259 @@ class StoreTableService {
     }
   }
 
+  Future<List<Map<String, dynamic>>> getTableCloseSession({
+    required String sellerId,
+    required int tableNumber,
+    Map<String, dynamic>? tableRow,
+    List<String> visibleOrderIds = const <String>[],
+  }) async {
+    final resolvedSellerId = sellerId.trim();
+    if (resolvedSellerId.isEmpty || tableNumber <= 0) {
+      throw StateError(closeTableRpcUnverifiedMessage);
+    }
+    final anchor = tableRow ??
+        await _loadStoreTableForClose(
+          sellerId: resolvedSellerId,
+          tableNumber: tableNumber,
+        );
+    final tableId = anchor?['id']?.toString().trim() ?? '';
+    if (anchor == null || tableId.isEmpty) {
+      throw StateError(closeTableRpcUnverifiedMessage);
+    }
+    final byId = <String, Map<String, dynamic>>{};
+    void take(Map<String, dynamic>? order, {int? storedTableNumber}) {
+      if (order == null) return;
+      if (!garsonOrderBelongsToCloseTable(
+        table: anchor,
+        canonicalTableNumber: tableNumber,
+        order: order,
+        sellerId: resolvedSellerId,
+      )) {
+        return;
+      }
+      final id = order['id']?.toString().trim() ?? '';
+      if (id.isEmpty || byId.containsKey(id)) return;
+      final copy = Map<String, dynamic>.from(order);
+      if (storedTableNumber != null && storedTableNumber > 0) {
+        copy['_stored_table_number'] = storedTableNumber;
+      }
+      byId[id] = copy;
+    }
+
+    for (final order in await getTableOrdersSnapshot(
+      resolvedSellerId,
+      tableNumber: tableNumber,
+      surfaceErrors: true,
+    )) {
+      take(
+        order,
+        storedTableNumber: _parseTableNumberValue(order['table_number']),
+      );
+    }
+
+    final areaName = anchor['area_name']?.toString().trim() ?? '';
+    final areaNo = _parseTableNumberValue(anchor['area_table_number']);
+    if (areaName.isNotEmpty && areaNo > 0) {
+      final rows = await _supabase
+          .from('table_orders')
+          .select()
+          .eq('seller_id', resolvedSellerId)
+          .eq('area_name', areaName)
+          .eq('area_table_number', areaNo)
+          .not('status', 'in', OrderStatusConstants.terminalStatuses.toList())
+          .limit(40)
+          .timeout(tableOrderTimeout);
+      for (final raw in rows as List) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        if ((row['seller_id']?.toString() ?? '') != resolvedSellerId) continue;
+        take(
+          closeSessionTableOrderFromRawRow(
+            row: row,
+            anchor: anchor,
+            canonicalTableNumber: tableNumber,
+            sellerId: resolvedSellerId,
+          ),
+        );
+      }
+    }
+
+    final rows = await _supabase
+          .from('orders')
+          .select(
+            'id, restaurant_id, table_id, order_status, status, order_type, '
+            'delivery_type, total_amount, created_at, updated_at, '
+            'order_items(id, product_id, product_name, quantity, unit_price, '
+            'line_total, item_note, station_id, attributes)',
+          )
+          .eq('restaurant_id', resolvedSellerId)
+          .eq('table_id', tableId)
+          .or('order_type.eq.table,delivery_type.eq.table')
+          .not('status', 'in', OrderStatusConstants.terminalStatuses.toList())
+          .limit(40)
+          .timeout(tableOrderTimeout);
+      for (final raw in rows as List) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        if (!isGarsonRestaurantTableOrderRow(row)) continue;
+        final rawItems = row['order_items'] is List
+            ? List<dynamic>.from(row['order_items'] as List)
+            : const <dynamic>[];
+        take(
+          normalizeRestaurantOrderToGarsonTableOrder(
+            order: row,
+            items: normalizeRestaurantOrderItems(rawItems),
+            storeTable: anchor,
+          ),
+        );
+    }
+
+    final missingIds = visibleOrderIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty && !byId.containsKey(id))
+        .toList(growable: false);
+    if (missingIds.isNotEmpty) {
+      final rows = await _supabase
+          .from('table_orders')
+          .select()
+          .inFilter('id', missingIds)
+          .eq('seller_id', resolvedSellerId)
+          .timeout(tableOrderTimeout);
+      for (final raw in rows as List) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        if (OrderStatusConstants.isTerminalStatus(row['status']?.toString())) {
+          continue;
+        }
+        take(
+          closeSessionTableOrderFromRawRow(
+            row: row,
+            anchor: anchor,
+            canonicalTableNumber: tableNumber,
+            sellerId: resolvedSellerId,
+          ),
+        );
+      }
+    }
+    return byId.values.toList(growable: false);
+  }
+
+  Future<bool> realignTableOrderNumber({
+    required String sellerId,
+    required String orderId,
+    required Map<String, dynamic> order,
+    required Map<String, dynamic> table,
+  }) async {
+    refuseDiagnosticOrderWrite('realign_table_order_number');
+    final canonicalTableNumber = _parseTableNumberValue(table['table_number']);
+    final storedTableNumber = garsonStoredTableNumber(order);
+    if (orderId.trim().isEmpty ||
+        order['id']?.toString().trim() != orderId.trim() ||
+        !garsonTableOrderNeedsRealign(
+          order: order,
+          table: table,
+          canonicalTableNumber: canonicalTableNumber,
+          sellerId: sellerId,
+        )) {
+      return false;
+    }
+    await _supabase
+        .from('table_orders')
+        .update(<String, dynamic>{
+          'table_number': canonicalTableNumber,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', orderId)
+        .eq('seller_id', sellerId)
+        .eq('table_number', storedTableNumber)
+        .timeout(tableOrderTimeout);
+    return true;
+  }
+
+  Future<GarsonOpenOrderRead> readVerifiedOpenOrders(String sellerId) async {
+    final resolved = sellerId.trim();
+    if (resolved.isEmpty) {
+      return const GarsonOpenOrderRead(
+        orders: <Map<String, dynamic>>[],
+        succeeded: false,
+        complete: false,
+      );
+    }
+    try {
+      final tableFetch = await _fetchTableOrdersForGarson(sellerId: resolved);
+      final restaurantFetch = await _fetchRestaurantOrdersForGarson(
+        restaurantId: resolved,
+      );
+      final tableCount = await _exactOpenCount(
+        table: 'table_orders',
+        sellerColumn: 'seller_id',
+        sellerId: resolved,
+        tableOrders: true,
+      );
+      final restaurantCount = await _exactOpenCount(
+        table: 'orders',
+        sellerColumn: 'restaurant_id',
+        sellerId: resolved,
+        tableOrders: false,
+      );
+      final complete = openOrderReadIsComplete(
+        tableFetchFailed: false,
+        restaurantFetchFailed: false,
+        openTableOrders: tableCount,
+        openCustomerOrders: restaurantCount,
+        rawTableOrders: tableFetch.rawCount,
+        rawCustomerOrders: restaurantFetch.rawCount,
+        removedByNormalization: tableFetch.removedByNormalization +
+            restaurantFetch.removedByNormalization,
+        removedByFilter:
+            tableFetch.removedByFilter + restaurantFetch.removedByFilter,
+      );
+      return GarsonOpenOrderRead(
+        orders: mergeGarsonActiveOrderSources(
+          tableOrders: tableFetch.visible,
+          restaurantOrders: restaurantFetch.visible,
+        ),
+        succeeded: true,
+        complete: complete,
+        withheldServerIds: <String>{
+          ...tableFetch.withheldIds,
+          ...restaurantFetch.withheldIds,
+        },
+      );
+    } catch (error) {
+      debugPrint('[StoreTableService.readVerifiedOpenOrders] $error');
+      return const GarsonOpenOrderRead(
+        orders: <Map<String, dynamic>>[],
+        succeeded: false,
+        complete: false,
+      );
+    }
+  }
+
+  Future<int?> _exactOpenCount({
+    required String table,
+    required String sellerColumn,
+    required String sellerId,
+    required bool tableOrders,
+  }) async {
+    try {
+      var query = _supabase.from(table).count(CountOption.exact).eq(
+            sellerColumn,
+            sellerId,
+          );
+      query = query.not(
+        'status',
+        'in',
+        OrderStatusConstants.terminalStatuses.toList(),
+      );
+      if (!tableOrders) {
+        query = query.or('order_type.eq.table,delivery_type.eq.table');
+      }
+      final count = await query;
+      return count;
+    } catch (error) {
+      debugPrint('[StoreTableService._exactOpenCount] $table $error');
+      return null;
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getTableOrdersByTable({
     required String sellerId,
     required int tableNumber,
@@ -1086,6 +1438,7 @@ class StoreTableService {
     Map<String, dynamic>? lastEditSummary,
     String? lastEditNote,
   }) async {
+    refuseDiagnosticOrderWrite('update_table_order');
     final updateData = <String, dynamic>{};
     if (status != null) {
       updateData['status'] = status;
@@ -1188,6 +1541,7 @@ class StoreTableService {
   }
 
   Future<void> deleteTableOrder(String orderId) async {
+    refuseDiagnosticOrderWrite('delete_table_order');
     try {
       await _supabase
           .from('table_orders')
@@ -1294,6 +1648,7 @@ class StoreTableService {
     required String sellerId,
     required int tableNumber,
   }) async {
+    refuseDiagnosticOrderWrite('close_restaurant_orders_for_table');
     if (sellerId.trim().isEmpty || tableNumber <= 0) {
       debugPrint(
         '[StoreTableService.closeRestaurantOrdersForTable] '
@@ -1503,6 +1858,7 @@ class StoreTableService {
     required String sellerId,
     required int tableNumber,
   }) async {
+    refuseDiagnosticOrderWrite('close_table_orders');
     // ── Strategy: try RPC first (SECURITY DEFINER — bypasses RLS and the
     // broken DELETE trigger), fall back to direct DELETE only if RPC is
     // unavailable.  The RPC uses UPDATE status='archived' internally so it
@@ -1651,6 +2007,7 @@ class StoreTableService {
     String? note,
     String? idempotencyKey,
   }) async {
+    refuseDiagnosticOrderWrite('record_table_payment');
     final resolvedSellerId = _resolveSellerId(sellerId);
     final resolvedSession = sessionKey.trim();
     final resolvedMethod = method.trim();
@@ -1732,7 +2089,7 @@ class StoreTableService {
           'p_session_key': resolvedSession,
           'p_amount': amountToStore,
           'p_method': resolvedMethod,
-          'p_idempotency_key': resolvedKey,
+          'p_client_request_id': resolvedKey,
           'p_is_closing': isClosing,
           if (paidBy != null && paidBy.trim().isNotEmpty)
             'p_paid_by': paidBy.trim(),
@@ -1945,7 +2302,7 @@ class StoreTableService {
   ///
   /// On [PostgrestException] (e.g. migration not yet applied), falls back
   /// to [_closeTableClientSide] which replays the same guarantee in Dart.
-  Future<void> closeTableWithHistory({
+  Future<Map<String, dynamic>> closeTableWithHistory({
     required String sellerId,
     required int tableNumber,
     required String paymentMethod,
@@ -1954,8 +2311,9 @@ class StoreTableService {
     String? waiterName,
     String? sessionKey,
   }) async {
+    refuseDiagnosticOrderWrite('close_table_with_history');
     try {
-      await _supabase
+      final raw = await _supabase
           .rpc(
             'close_table_with_history',
             params: {
@@ -1973,13 +2331,19 @@ class StoreTableService {
             },
           )
           .timeout(tableOrderTimeout);
-      // BUG-FIX (Reopen Bug): the RPC only clears `table_orders`; mirror the
-      // close into the customer-facing `orders` table here as well.  Without
-      // this, customer-placed orders survive and the table re-appears active
-      // on the next refresh.
-      await closeRestaurantOrdersForTable(
+      final result = raw is Map
+          ? Map<String, dynamic>.from(raw)
+          : <String, dynamic>{};
+      final decision = decideCloseTableRpc(
+        functionMissing: false,
+        timedOut: false,
+        ordersUpdated: result['orders_updated'],
+      );
+      if (decision == CloseTableRpcDecision.accept) return result;
+      return _readOnlyCloseVerification(
         sellerId: sellerId,
         tableNumber: tableNumber,
+        sessionKey: sessionKey,
       );
     } on PostgrestException catch (error) {
       if (!_shouldFallbackToDirectTableWrite(error)) {
@@ -1989,21 +2353,161 @@ class StoreTableService {
         );
         throw _finalTableOperationDenial('Masa kapatma');
       }
-      // Fall back to client-side archive + delete if RPC unavailable (older DB)
+      if (isCloseTableRpcMissing(
+        code: error.code,
+        message: error.message,
+        details: error.details?.toString(),
+        hint: error.hint,
+      )) {
+        debugPrint(
+          '[StoreTableService] closeTableWithHistory missing ($error). BLOCKED.',
+        );
+        await _closeTableClientSide(
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+          paymentMethod: paymentMethod,
+          paymentNote: paymentNote,
+          waiterId: waiterId,
+          waiterName: waiterName,
+          sessionKey: sessionKey,
+        );
+        return const <String, dynamic>{};
+      }
       debugPrint(
-        '[StoreTableService] closeTableWithHistory RPC failed ($error). Falling back to client-side archive.',
+        '[StoreTableService] closeTableWithHistory failed ($error). '
+        'No client-side archive.',
       );
-      await _closeTableClientSide(
+      return _readOnlyCloseVerification(
         sellerId: sellerId,
         tableNumber: tableNumber,
-        paymentMethod: paymentMethod,
-        paymentNote: paymentNote,
-        waiterId: waiterId,
-        waiterName: waiterName,
         sessionKey: sessionKey,
       );
     } on TimeoutException {
-      throw Exception('Masa kapatma zaman aşımına uğradı. Tekrar deneyin.');
+      debugPrint(
+        '[StoreTableService] closeTableWithHistory timeout. Read-only check.',
+      );
+      return _readOnlyCloseVerification(
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+        sessionKey: sessionKey,
+      );
+    }
+  }
+
+  /// Reads only this table's open rows and this session's history.
+  /// Never inserts, updates, or deletes. An unclear read is not success.
+  Future<Map<String, dynamic>> _readOnlyCloseVerification({
+    required String sellerId,
+    required int tableNumber,
+    String? sessionKey,
+  }) async {
+    final openTableOrders = await _countOpenTableOrdersForTable(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+    );
+    final openCustomerOrders = await _countOpenCustomerOrdersForTable(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+    );
+    final historyMatches = await _sessionHistoryExists(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      sessionKey: sessionKey,
+    );
+    final verdict = judgeTargetTableCloseRead(
+      openTableOrders: openTableOrders,
+      openCustomerOrders: openCustomerOrders,
+      historyMatchesSession: historyMatches,
+    );
+    if (verdict != TargetTableCloseVerdict.confirmed) {
+      throw StateError(closeTableRpcUnverifiedMessage);
+    }
+    return const <String, dynamic>{
+      'orders_updated': 0,
+      'verified_read_only': true,
+      'writes_forbidden': true,
+    };
+  }
+
+  Future<int?> _countOpenTableOrdersForTable({
+    required String sellerId,
+    required int tableNumber,
+  }) async {
+    try {
+      final count = await _supabase
+          .from('table_orders')
+          .count(CountOption.exact)
+          .eq('seller_id', sellerId)
+          .eq('table_number', tableNumber)
+          .not(
+            'status',
+            'in',
+            OrderStatusConstants.terminalStatuses.toList(),
+          )
+          .timeout(tableOrderTimeout);
+      return count;
+    } catch (error) {
+      debugPrint('[StoreTableService] table_orders read failed: $error');
+      return null;
+    }
+  }
+
+  Future<int?> _countOpenCustomerOrdersForTable({
+    required String sellerId,
+    required int tableNumber,
+  }) async {
+    try {
+      final tableRows = await _supabase
+          .from('store_tables')
+          .select('id')
+          .eq('seller_id', sellerId)
+          .eq('table_number', tableNumber)
+          .timeout(tableOrderTimeout);
+      final tableIds = <String>[];
+      for (final row in (tableRows as List)) {
+        final id = (row as Map)['id']?.toString().trim() ?? '';
+        if (id.isNotEmpty) tableIds.add(id);
+      }
+      if (tableIds.isEmpty) return null;
+      final count = await _supabase
+          .from('orders')
+          .count(CountOption.exact)
+          .eq('restaurant_id', sellerId)
+          .inFilter('table_id', tableIds)
+          .or('order_type.eq.table,delivery_type.eq.table')
+          .not(
+            'status',
+            'in',
+            OrderStatusConstants.terminalStatuses.toList(),
+          )
+          .timeout(tableOrderTimeout);
+      return count;
+    } catch (error) {
+      debugPrint('[StoreTableService] orders read failed: $error');
+      return null;
+    }
+  }
+
+  Future<bool?> _sessionHistoryExists({
+    required String sellerId,
+    required int tableNumber,
+    String? sessionKey,
+  }) async {
+    final session = sessionKey?.trim() ?? '';
+    if (session.isEmpty) return false;
+    try {
+      final rows = await _supabase
+          .from('table_order_history')
+          .select('id')
+          .eq('seller_id', sellerId)
+          .eq('table_number', tableNumber)
+          .eq('session_key', session)
+          .limit(1)
+          .timeout(tableOrderTimeout);
+      return (rows as List).isNotEmpty;
+    } catch (error) {
+      debugPrint('[StoreTableService] history read failed: $error');
+      return null;
     }
   }
 
@@ -2024,6 +2528,7 @@ class StoreTableService {
     String? tableLabel,
     DateTime? closedAt,
   }) async {
+    refuseDiagnosticOrderWrite('ensure_table_history_recorded');
     if (tableNumber <= 0 || closedOrders.isEmpty) return false;
 
     final resolvedSellerId = _resolveSellerId(sellerId);
@@ -2152,21 +2657,7 @@ class StoreTableService {
   // TABLE HISTORY (CLOSED ORDERS)
   // ─────────────────────────────────────────────────────────────────────────────
 
-  /// **Fallback** for [closeTableWithHistory] when the RPC is unavailable or
-  /// fails (e.g. an internal DB trigger blocks the server-side DELETE).
-  ///
-  /// Strategy:
-  ///   1. Fetch active orders by (sellerId, tableNumber).
-  ///   2. Archive each to [table_order_history] — **best-effort**: a failed
-  ///      INSERT is logged but does NOT abort the close. Closing without a
-  ///      history record is preferred over leaving a table permanently stuck.
-  ///   3. Attempt a bulk DELETE via [closeTableOrders].
-  ///      If the DELETE fails (e.g. a DB trigger raises P0001), fall back to
-  ///      per-order UPDATE status = 'closed'. Both outcomes make the orders
-  ///      invisible on the Garson board because [normalizeTableOrderToGarsonBoardOrder]
-  ///      filters out any terminal-status row.
-  ///   4. Verify by primary-key that every targeted order is either deleted or
-  ///      carries a terminal status. Throws on any remaining active orders.
+  /// Critical close never archives from the client. A missing RPC stays blocked.
   Future<void> _closeTableClientSide({
     required String sellerId,
     required int tableNumber,
@@ -2176,173 +2667,13 @@ class StoreTableService {
     String? waiterName,
     String? sessionKey,
   }) async {
-    // ── 1. Fetch active orders — propagate on error (no silent empty fallback).
-    List<Map<String, dynamic>> activeOrders;
-    try {
-      final rows = await _supabase
-          .from('table_orders')
-          .select()
-          .eq('seller_id', sellerId)
-          .eq('table_number', tableNumber)
-          .timeout(tableOrderTimeout);
-      activeOrders = List<Map<String, dynamic>>.from(rows as List);
-    } on PostgrestException catch (error) {
-      debugPrint(
-        '[StoreTableService._closeTableClientSide] '
-        'fetch_active_orders failed: $error',
-      );
-      throw _tableOrderException(
-        'Masa siparişlerini alma (kapatma öncesi)',
-        error,
-      );
-    } on TimeoutException {
-      throw Exception(
-        'Masa siparişleri alınamadı (zaman aşımı). '
-        'Bağlantıyı kontrol edip tekrar deneyin.',
-      );
-    }
-
-    if (activeOrders.isEmpty) return; // nothing to close
-
-    // Record IDs for ID-based verification at the end.
-    final targetIds = activeOrders
-        .map((o) => o['id']?.toString() ?? '')
-        .where((id) => id.isNotEmpty)
-        .toList(growable: false);
-
-    // ── 2. Archive — best-effort. A failed history INSERT must NOT block close.
-    final session =
-        sessionKey ??
-        'session_${sellerId}_${tableNumber}_${DateTime.now().millisecondsSinceEpoch}';
-    final archivedAt = DateTime.now().toUtc().toIso8601String();
-    var grandTotalAll = 0.0;
-    for (final order in activeOrders) {
-      for (final item in TableOrderHistoryUtils.parseJsonList(order['items'])) {
-        final normalized = MixedServiceOrder.normalizeOrderItem(item);
-        grandTotalAll += MixedServiceOrder.itemLineTotal(normalized);
-      }
-    }
-
-    var historyArchived = false;
-    try {
-      await _runWithTableOrderHistorySchemaFallback(
-        operation: (includeArchivedAt) {
-          return _supabase
-              .from('table_order_history')
-              .insert({
-                'seller_id': sellerId,
-                'table_number': tableNumber,
-                'session_key': session,
-                'payment_method': paymentMethod,
-                if (paymentNote != null && paymentNote.isNotEmpty)
-                  'payment_note': paymentNote,
-                if (waiterId != null && waiterId.isNotEmpty)
-                  'waiter_id': waiterId,
-                if (waiterName != null && waiterName.isNotEmpty)
-                  'waiter_name': waiterName,
-                'grand_total': grandTotalAll,
-                'archived_orders': activeOrders,
-                'status': 'closed',
-                'closed_at': archivedAt,
-                if (includeArchivedAt) 'archived_at': archivedAt,
-              })
-              .timeout(tableOrderTimeout);
-        },
-      );
-      historyArchived = true;
-      debugPrint(
-        '[StoreTableService._closeTableClientSide] '
-        'history_insert=ok_hotfix table=$tableNumber total=$grandTotalAll',
-      );
-    } catch (hotfixErr) {
-      debugPrint(
-        '[StoreTableService._closeTableClientSide] '
-        'history_insert=hotfix_failed table=$tableNumber error=$hotfixErr',
-      );
-    }
-
-    if (!historyArchived) {
-      for (final order in activeOrders) {
-        final items = order['items'] ?? [];
-        var grandTotal = 0.0;
-        for (final item in TableOrderHistoryUtils.parseJsonList(items)) {
-          final normalized = MixedServiceOrder.normalizeOrderItem(item);
-          grandTotal += MixedServiceOrder.itemLineTotal(normalized);
-        }
-        try {
-          await _supabase
-              .from('table_order_history')
-              .insert({
-                'original_order_id': order['id']?.toString(),
-                'seller_id': sellerId,
-                'table_number': tableNumber,
-                'items': order['items'] ?? '[]',
-                'status': 'closed',
-                'revision': order['revision'] ?? 1,
-                'last_edit_summary': order['last_edit_summary'] ?? {},
-                'last_edit_note': order['last_edit_note'],
-                'payment_method': paymentMethod,
-                'payment_note': paymentNote,
-                'waiter_id': waiterId,
-                'waiter_name': waiterName,
-                'grand_total': grandTotal,
-                'session_key': session,
-                'opened_at': order['created_at'],
-                'closed_at': archivedAt,
-                'created_at': order['created_at'] ?? archivedAt,
-              })
-              .timeout(tableOrderTimeout);
-          debugPrint(
-            '[StoreTableService._closeTableClientSide] '
-            'history_insert=ok orderId=${order['id']}',
-          );
-        } catch (archiveErr) {
-          debugPrint(
-            '[StoreTableService._closeTableClientSide] '
-            'history_insert=failed (best-effort, continuing close) '
-            'orderId=${order['id']} error=$archiveErr',
-          );
-        }
-      }
-    }
-
-    // ── Steps 3 & 4: delegated to the pure [runCloseTableFallbackWorkflow].
-    // This separation keeps the fallback algorithm testable without a real
-    // Supabase client — tests inject simple lambda mocks instead.
-    await runCloseTableFallbackWorkflow(
-      orderIds: targetIds,
-      bulkDelete: () =>
-          closeTableOrders(sellerId: sellerId, tableNumber: tableNumber),
-      deleteById: (id) => deleteTableOrder(id),
-      markClosed: (id) async {
-        await _supabase
-            .from('table_orders')
-            .update({
-              'status': 'closed',
-              'updated_at': DateTime.now().toUtc().toIso8601String(),
-            })
-            .eq('id', id)
-            .timeout(tableOrderTimeout);
-      },
-      verifyByIds: (ids) => getTableOrdersByIds(ids),
-      onEvent: (event) {
-        debugPrint(
-          '[StoreTableService._closeTableClientSide] '
-          'table=$tableNumber $event',
-        );
-      },
+    debugPrint(
+      '[StoreTableService._closeTableClientSide] blocked '
+      'seller=$sellerId table=$tableNumber method=$paymentMethod '
+      'note=${paymentNote ?? ''} waiter=${waiterId ?? ''} '
+      'name=${waiterName ?? ''} session=${sessionKey ?? ''}',
     );
-
-    // BUG-FIX (Reopen Bug): also close any matching customer-side `orders`
-    // rows.  Note that `closeTableOrders` above already calls this on its
-    // happy path; this extra call covers the failure-and-retry case where
-    // we land in the per-order fallback loop without ever hitting the
-    // happy-path mirror update.  It is idempotent because the filter excludes
-    // already-terminal rows.
-    await closeRestaurantOrdersForTable(
-      sellerId: sellerId,
-      tableNumber: tableNumber,
-    );
+    throw StateError(closeTableRpcBlockedMessage);
   }
 
   /// Returns paginated historical (closed) orders for a seller.
@@ -2447,6 +2778,7 @@ class StoreTableService {
     String? waiterName,
     String? note,
   }) async {
+    refuseDiagnosticOrderWrite('transfer_table_orders');
     if (fromTable <= 0 || toTable <= 0) {
       throw Exception('Geçersiz masa numarası.');
     }
@@ -2477,17 +2809,126 @@ class StoreTableService {
             : 'Seçilen ürünler bu masada bulunamadı. Masa olduğu gibi bırakıldı.',
       );
     }
+    final sourceIds = sourceOrders
+        .map((order) => order['id']?.toString().trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final sourceCustomerBefore = await _countOpenCustomerOrdersForTable(
+      sellerId: resolvedSellerId,
+      tableNumber: fromTable,
+    );
+    final destinationCustomerBefore = await _countOpenCustomerOrdersForTable(
+      sellerId: resolvedSellerId,
+      tableNumber: toTable,
+    );
 
+    try {
+      // A full move stores the destination area name, area index, and
+      // display label in the same `transfer_table_orders_v2` update as
+      // `table_number`. Do not patch those columns after this call.
+      return await _callTransferRpc(
+        functionName: 'transfer_table_orders_v2',
+        sellerId: resolvedSellerId,
+        fromTable: fromTable,
+        toTable: toTable,
+        transferType: canonical,
+        itemIds: plan.movedLineIds,
+        waiterId: waiterId,
+        waiterName: waiterName,
+        note: note,
+      );
+    } on PostgrestException catch (error) {
+      if (!_isMissingTransferRpc(error)) rethrow;
+      debugPrint(
+        '[StoreTableService] transfer_table_orders_v2 missing '
+        'code=${error.code ?? '-'} message=${error.message} '
+        'details=${error.details ?? '-'} hint=${error.hint ?? '-'}. '
+        'Legacy transfer_table_orders was not called.',
+      );
+      throw Exception(
+        'Masa aktarımı BLOCKED. transfer_table_orders_v2 yok. '
+        'Eski transfer_table_orders çağrılmadı. Siparişler yerinde kaldı.',
+      );
+    } on TimeoutException {
+      throw Exception(
+        await _transferTimeoutMessage(
+          sellerId: resolvedSellerId,
+          fromTable: fromTable,
+          toTable: toTable,
+          sourceIdsBefore: sourceIds,
+          sourceCustomerBefore: sourceCustomerBefore,
+          destinationCustomerBefore: destinationCustomerBefore,
+        ),
+      );
+    }
+  }
+
+  Future<String> _transferTimeoutMessage({
+    required String sellerId,
+    required int fromTable,
+    required int toTable,
+    required Set<String> sourceIdsBefore,
+    required int? sourceCustomerBefore,
+    required int? destinationCustomerBefore,
+  }) async {
+    try {
+      final sourceNow = await getTableOrdersByTable(
+        sellerId: sellerId,
+        tableNumber: fromTable,
+      );
+      final destinationNow = await getTableOrdersByTable(
+        sellerId: sellerId,
+        tableNumber: toTable,
+      );
+      final read = classifyTransferTimeoutRead(
+        sourceIdsBefore: sourceIdsBefore,
+        sourceIdsAfter: sourceNow
+            .map((order) => order['id']?.toString().trim() ?? '')
+            .where((id) => id.isNotEmpty)
+            .toSet(),
+        destinationIdsAfter: destinationNow
+            .map((order) => order['id']?.toString().trim() ?? '')
+            .where((id) => id.isNotEmpty)
+            .toSet(),
+        sourceCustomerBefore: sourceCustomerBefore,
+        destinationCustomerBefore: destinationCustomerBefore,
+        sourceCustomerAfter: await _countOpenCustomerOrdersForTable(
+          sellerId: sellerId,
+          tableNumber: fromTable,
+        ),
+        destinationCustomerAfter: await _countOpenCustomerOrdersForTable(
+          sellerId: sellerId,
+          tableNumber: toTable,
+        ),
+      );
+      return transferTimeoutUserMessage(read);
+    } catch (error) {
+      debugPrint('[StoreTableService] transfer timeout reread failed: $error');
+      return transferTimeoutUserMessage(TransferTimeoutRead.incomplete);
+    }
+  }
+
+  Future<Map<String, dynamic>> _callTransferRpc({
+    required String functionName,
+    required String sellerId,
+    required int fromTable,
+    required int toTable,
+    required String transferType,
+    required List<String> itemIds,
+    String? waiterId,
+    String? waiterName,
+    String? note,
+  }) async {
     try {
       final result = await _supabase
           .rpc(
-            'transfer_table_orders_v2',
+            functionName,
             params: {
-              'p_seller_id': resolvedSellerId,
+              'p_seller_id': sellerId,
               'p_from_table': fromTable,
               'p_to_table': toTable,
-              'p_transfer_type': canonical,
-              'p_item_ids': plan.movedLineIds,
+              'p_transfer_type': transferType,
+              'p_item_ids': itemIds,
               if (waiterId != null && waiterId.isNotEmpty)
                 'p_waiter_id': waiterId,
               if (waiterName != null && waiterName.isNotEmpty)
@@ -2496,47 +2937,40 @@ class StoreTableService {
             },
           )
           .timeout(tableOrderTimeout);
-      if (result is Map) return Map<String, dynamic>.from(result);
-      return <String, dynamic>{
-        'success': true,
-        'transfer_type': canonical,
-        'moved_count': plan.movedLineIds.length,
-      };
+      if (result is Map) {
+        final mapped = Map<String, dynamic>.from(result);
+        if (mapped['success'] == false) {
+          throw Exception(
+            'Masa aktarımı sunucuda başarısız döndü. '
+            'Siparişler yerinde kaldı.',
+          );
+        }
+        return mapped;
+      }
+      throw Exception(
+        'Masa aktarımı beklenmeyen yanıt döndü. Sonuç belirsiz. '
+        'Otomatik tekrar yapılmadı.',
+      );
     } on PostgrestException catch (error) {
-      if (!_shouldFallbackToDirectTableWrite(error)) {
-        debugPrint(
-          '[StoreTableService] transferTableOrders denied ($error). '
-          'No client-side move.',
-        );
-        throw _finalTableOperationDenial('Masa aktarımı');
-      }
-      final legacyOwnerOnly = error.code == '42501';
-      if (!_isMissingTransferRpc(error) && !legacyOwnerOnly) {
-        throw _tableOrderException('Masa aktarımı', error);
-      }
       debugPrint(
-        '[StoreTableService] transfer_table_orders_v2 unavailable. '
-        'Applying line-level plan locally. type=$canonical',
+        '[StoreTableService] $functionName denied '
+        'code=${error.code ?? '-'} message=${error.message} '
+        'details=${error.details ?? '-'} hint=${error.hint ?? '-'}',
+      );
+      if (_isMissingTransferRpc(error)) rethrow;
+      final serverText = error.message.trim();
+      final readable = serverText.isNotEmpty &&
+          !serverText.toLowerCase().contains('permission denied');
+      throw Exception(
+        readable
+            ? 'Masa aktarılamadı. $serverText'
+                '${serverText.contains('yerinde') ? '' : ' Siparişler yerinde kaldı.'}'
+            : 'Masa aktarılamadı. Sunucu yetkiyi reddetti '
+                '(${error.code ?? '-'}). Siparişler yerinde kaldı.',
       );
     } on TimeoutException {
-      throw Exception('Masa aktarımı zaman aşımına uğradı. Tekrar deneyin.');
+      rethrow;
     }
-
-    await _applyTableTransferPlan(
-      sellerId: resolvedSellerId,
-      fromTable: fromTable,
-      toTable: toTable,
-      plan: plan,
-      waiterId: waiterId,
-      waiterName: waiterName,
-      note: note,
-    );
-    return <String, dynamic>{
-      'success': true,
-      'fallback': true,
-      'transfer_type': canonical,
-      'moved_line_ids': plan.movedLineIds,
-    };
   }
 
   bool _isMissingTransferRpc(PostgrestException error) {
@@ -2550,96 +2984,6 @@ class StoreTableService {
             details.contains('schema cache') ||
             details.contains('does not exist'));
     return error.code == '42883' || error.code == 'PGRST202' || namesFunction;
-  }
-
-  Future<void> _applyTableTransferPlan({
-    required String sellerId,
-    required int fromTable,
-    required int toTable,
-    required TableTransferPlan plan,
-    String? waiterId,
-    String? waiterName,
-    String? note,
-  }) async {
-    for (final mutation in plan.mutations) {
-      final update = <String, dynamic>{
-        'items': mutation.nextItems,
-        if (mutation.nextTableNumber != null)
-          'table_number': mutation.nextTableNumber,
-      };
-      try {
-        await _supabase
-            .from('table_orders')
-            .update(update)
-            .eq('id', mutation.orderId)
-            .eq('seller_id', sellerId)
-            .timeout(tableOrderTimeout);
-      } on PostgrestException catch (error) {
-        throw _tableOrderException('Masa aktarımı', error);
-      } on TimeoutException {
-        throw Exception('Masa aktarımı zaman aşımına uğradı. Tekrar deneyin.');
-      }
-
-      final destinationItems = mutation.destinationItems;
-      if (destinationItems == null || destinationItems.isEmpty) continue;
-      try {
-        await _supabase
-            .from('table_orders')
-            .insert({
-              'seller_id': sellerId,
-              'table_number': toTable,
-              'items': destinationItems,
-              'status': mutation.destinationStatus,
-              'created_at': DateTime.now().toUtc().toIso8601String(),
-            })
-            .timeout(tableOrderTimeout);
-      } catch (error) {
-        try {
-          await _supabase
-              .from('table_orders')
-              .update({
-                'items': mutation.previousItems,
-                'table_number': mutation.previousTableNumber,
-              })
-              .eq('id', mutation.orderId)
-              .eq('seller_id', sellerId)
-              .timeout(tableOrderTimeout);
-        } catch (restoreError) {
-          debugPrint(
-            '[StoreTableService] transfer restore failed '
-            'orderId=${mutation.orderId} error=$restoreError',
-          );
-        }
-        if (error is PostgrestException) {
-          throw _tableOrderException('Masa aktarımı', error);
-        }
-        if (error is TimeoutException) {
-          throw Exception(
-            'Masa aktarımı zaman aşımına uğradı. Tekrar deneyin.',
-          );
-        }
-        rethrow;
-      }
-    }
-
-    try {
-      await _supabase.from('table_transfers_log').insert({
-        'seller_id': sellerId,
-        'from_table': fromTable,
-        'to_table': toTable,
-        'transfer_type': plan.transferType,
-        'transferred_items': plan.movedLineIds,
-        'order_ids': plan.mutations.map((mutation) => mutation.orderId).toList(),
-        if (waiterId != null && waiterId.isNotEmpty) 'waiter_id': waiterId,
-        if (waiterName != null && waiterName.isNotEmpty)
-          'waiter_name': waiterName,
-        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
-      }).timeout(tableOrderTimeout);
-    } catch (error) {
-      debugPrint(
-        '[StoreTableService] table_transfers_log insert skipped: $error',
-      );
-    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

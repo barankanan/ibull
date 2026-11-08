@@ -1,20 +1,19 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/services/order_send_access.dart';
+import 'package:ibul_app/services/store/table_transfer_plan.dart';
 import 'package:ibul_app/utils/garson_active_orders_fetch.dart';
+import 'package:ibul_app/utils/table_labels.dart';
 import 'package:ibul_app/utils/order_status_constants.dart';
 
 void main() {
   test('the same action keeps one key until it succeeds', () {
     final ledger = OrderSendKeyLedger();
     const fingerprint = 'rest|4|new_order|soup';
-    final first = resolveOrderSendKey(
-      ledger: ledger,
-      fingerprint: fingerprint,
-    );
-    final retry = resolveOrderSendKey(
-      ledger: ledger,
-      fingerprint: fingerprint,
-    );
+    final first = resolveOrderSendKey(ledger: ledger, fingerprint: fingerprint);
+    final retry = resolveOrderSendKey(ledger: ledger, fingerprint: fingerprint);
     expect(retry, first);
     ledger.complete(fingerprint);
     final nextOrder = resolveOrderSendKey(
@@ -62,10 +61,7 @@ void main() {
       fingerprint: 'action',
       requestedKey: 'send-stable',
     );
-    expect(
-      resolveOrderSendKey(ledger: ledger, fingerprint: 'action'),
-      key,
-    );
+    expect(resolveOrderSendKey(ledger: ledger, fingerprint: 'action'), key);
   });
 
   test('missing idempotent RPC is a hard stop', () {
@@ -99,8 +95,10 @@ void main() {
       notes: 'trace note',
       idempotencyKey: 'send-1',
     );
-    expect(withKey['p_idempotency_key'], 'send-1');
+    expect(withKey['p_local_order_id'], 'send-1');
+    expect(withKey.containsKey('p_idempotency_key'), isFalse);
     expect(withKey['p_order_type'], 'table');
+    expect(withKey.keys, hasLength(9));
 
     final withoutKey = buildCreateTableOrderRpcParams(
       restaurantId: 'rest',
@@ -110,7 +108,722 @@ void main() {
       ],
       idempotencyKey: '   ',
     );
+    expect(withoutKey.containsKey('p_local_order_id'), isFalse);
     expect(withoutKey.containsKey('p_idempotency_key'), isFalse);
+  });
+
+  test('a timed out save does not start a second insert', () async {
+    var sends = 0;
+    final hung = Completer<Map<String, dynamic>>();
+    await expectLater(
+      recoverOrderSaveAfterTimeout(
+        timeout: const Duration(milliseconds: 20),
+        pollAttempts: 2,
+        pollInterval: Duration.zero,
+        send: () {
+          sends += 1;
+          return hung.future;
+        },
+        lookup: () async => null,
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('Aynı gönderim anahtarı duruyor'),
+        ),
+      ),
+    );
+    expect(sends, 1);
+  });
+
+  test(
+    'a timed out save returns the committed order without another insert',
+    () async {
+      var sends = 0;
+      var lookups = 0;
+      final result = await recoverOrderSaveAfterTimeout(
+        timeout: const Duration(milliseconds: 20),
+        pollAttempts: 3,
+        pollInterval: Duration.zero,
+        send: () {
+          sends += 1;
+          return Completer<Map<String, dynamic>>().future;
+        },
+        lookup: () async {
+          lookups += 1;
+          if (lookups < 2) return null;
+          return <String, dynamic>{
+            'order_id': 'committed',
+            'idempotent_replay': true,
+          };
+        },
+      );
+      expect(sends, 1);
+      expect(lookups, 2);
+      expect(result, isA<Map<String, dynamic>>());
+      expect((result as Map<String, dynamic>)['order_id'], 'committed');
+    },
+  );
+
+  test('a completed save does not look the order up again', () async {
+    var lookups = 0;
+    final result = await recoverOrderSaveAfterTimeout(
+      send: () async => <String, dynamic>{'order_id': 'fresh'},
+      lookup: () async {
+        lookups += 1;
+        return <String, dynamic>{'order_id': 'other'};
+      },
+    );
+    expect(lookups, 0);
+    expect((result as Map<String, dynamic>)['order_id'], 'fresh');
+  });
+
+  test('replay prints only a pending ticket', () {
+    const ids = <String>['pending-job', 'done-job', 'unknown-job'];
+    expect(
+      printJobIdsSafeForReplay(
+        printJobIds: ids,
+        statusById: const <String, String>{
+          'pending-job': 'pending',
+          'done-job': 'completed',
+          'unknown-job': 'printing',
+        },
+        replay: true,
+      ),
+      <String>['pending-job'],
+    );
+    expect(
+      printJobIdsSafeForReplay(
+        printJobIds: ids,
+        statusById: const <String, String>{'done-job': 'completed'},
+        replay: false,
+      ),
+      ids,
+    );
+  });
+
+  test('Bahçe 1 does not take Salon 1, another seller, or history', () {
+    final bahce = <String, dynamic>{
+      'id': 'bahce',
+      'seller_id': 'seller-a',
+      'table_number': 11,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_label': 'Bahçe 1',
+    };
+    final salon = <String, dynamic>{
+      'id': 'salon',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'area_name': 'Salon',
+      'area_table_number': 1,
+      'display_label': 'Salon 1',
+    };
+    final bahceBill = <String, dynamic>{
+      'id': 'open-bahce',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_table_label': 'Bahçe 1',
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+      '_stored_table_number': 1,
+      'total': 2490,
+    };
+    final salonBill = <String, dynamic>{
+      'id': 'open-salon',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'area_name': 'Salon',
+      'area_table_number': 1,
+      'status': 'sent',
+    };
+    final otherSeller = <String, dynamic>{
+      ...bahceBill,
+      'id': 'other',
+      'seller_id': 'seller-b',
+    };
+    final history = <String, dynamic>{
+      ...bahceBill,
+      'id': 'history',
+      'status': 'closed',
+    };
+
+    final rows = garsonRowsForTableClose(
+      table: bahce,
+      canonicalTableNumber: 11,
+      sellerId: 'seller-a',
+      candidates: <Map<String, dynamic>>[
+        bahceBill,
+        salonBill,
+        otherSeller,
+        history,
+      ],
+    );
+    expect(rows.map((row) => row['id']), ['open-bahce']);
+    expect(
+      garsonOrderBelongsToCloseTable(
+        table: salon,
+        canonicalTableNumber: 1,
+        order: bahceBill,
+        sellerId: 'seller-a',
+      ),
+      isFalse,
+    );
+    expect(
+      garsonTableOrderNeedsRealign(
+        order: bahceBill,
+        table: bahce,
+        canonicalTableNumber: 11,
+        sellerId: 'seller-a',
+      ),
+      isTrue,
+    );
+    expect(
+      garsonTableOrderNeedsRealign(
+        order: salonBill,
+        table: salon,
+        canonicalTableNumber: 1,
+        sellerId: 'seller-a',
+      ),
+      isFalse,
+    );
+
+    final visible = dropCachedBillsMissingFromOpenSnapshot(
+      visibleOrders: <Map<String, dynamic>>[
+        bahceBill,
+        <String, dynamic>{'id': 'draft', 'status': 'draft', 'total': 2490},
+      ],
+      serverRead: const GarsonOpenOrderRead(
+        orders: <Map<String, dynamic>>[],
+        succeeded: true,
+        complete: true,
+      ),
+    );
+    expect(visible.map((row) => row['id']), ['draft']);
+  });
+
+  test('missing area, old visit and another seller do not move a table', () {
+    final bahce = <String, dynamic>{
+      'id': 'bahce',
+      'seller_id': 'seller-a',
+      'table_number': 11,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_label': 'Bahçe 1',
+    };
+    final numberOnly = <String, dynamic>{
+      'id': 'number-only',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+    };
+    final partialArea = <String, dynamic>{
+      'id': 'partial',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'area_name': 'Bahçe',
+      'status': 'sent',
+      'display_table_label': 'Bahçe 1',
+      '_garson_source_table': 'table_orders',
+    };
+    final salonIdOnBahceLabel = <String, dynamic>{
+      'id': 'salon-id',
+      'seller_id': 'seller-a',
+      'table_id': 'salon',
+      'table_number': 1,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_table_label': 'Bahçe 1',
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+    };
+    final oldVisit = <String, dynamic>{
+      'id': 'old',
+      'seller_id': 'seller-a',
+      'table_number': 11,
+      'status': 'closed',
+      '_garson_source_table': 'table_order_history',
+    };
+    final otherSeller = <String, dynamic>{
+      'id': 'other-shop',
+      'seller_id': 'seller-b',
+      'table_id': 'bahce',
+      'table_number': 1,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_table_label': 'Bahçe 1',
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+    };
+    for (final order in [numberOnly, partialArea, salonIdOnBahceLabel, oldVisit, otherSeller]) {
+      expect(
+        garsonOrderBelongsToCloseTable(
+          table: bahce,
+          canonicalTableNumber: 11,
+          order: order,
+          sellerId: 'seller-a',
+        ),
+        isFalse,
+        reason: order['id'].toString(),
+      );
+      expect(
+        garsonTableOrderNeedsRealign(
+          order: order,
+          table: bahce,
+          canonicalTableNumber: 11,
+          sellerId: 'seller-a',
+        ),
+        isFalse,
+        reason: order['id'].toString(),
+      );
+    }
+    final cached = dropCachedBillsMissingFromOpenSnapshot(
+      visibleOrders: <Map<String, dynamic>>[numberOnly],
+      serverRead: const GarsonOpenOrderRead(
+        orders: <Map<String, dynamic>>[],
+        succeeded: true,
+        complete: false,
+      ),
+    );
+    expect(cached, hasLength(1));
+    expect(
+      dropCachedBillsMissingFromOpenSnapshot(
+        visibleOrders: <Map<String, dynamic>>[numberOnly],
+        serverRead: const GarsonOpenOrderRead(
+          orders: <Map<String, dynamic>>[],
+          succeeded: false,
+          complete: true,
+        ),
+      ),
+      hasLength(1),
+    );
+  });
+
+  test('a transferred bill is not closed with the source table', () {
+    final source = <String, dynamic>{
+      'id': 'salon-5',
+      'seller_id': 'seller-a',
+      'table_number': 5,
+      'area_name': 'Salon',
+      'area_table_number': 5,
+      'display_label': 'Salon 5',
+    };
+    // Client transfer updates table_number and leaves the old area label.
+    final movedWithStaleArea = <String, dynamic>{
+      'id': 'moved-stale',
+      'seller_id': 'seller-a',
+      'table_number': 8,
+      'area_name': 'Salon',
+      'area_table_number': 5,
+      'display_table_label': 'Salon 5',
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+      '_stored_table_number': 8,
+    };
+    expect(
+      garsonOrderBelongsToCloseTable(
+        table: source,
+        canonicalTableNumber: 5,
+        order: movedWithStaleArea,
+        sellerId: 'seller-a',
+      ),
+      isFalse,
+    );
+    expect(
+      garsonTableOrderNeedsRealign(
+        order: movedWithStaleArea,
+        table: source,
+        canonicalTableNumber: 5,
+        sellerId: 'seller-a',
+      ),
+      isFalse,
+    );
+
+    // Destination area is already correct, but the close path used to copy
+    // the source table id and number onto the row before the membership check.
+    final movedToDestination = <String, dynamic>{
+      'id': 'moved-dest',
+      'seller_id': 'seller-a',
+      'table_number': 8,
+      'area_name': 'Salon',
+      'area_table_number': 8,
+      'display_table_label': 'Salon 8',
+      'status': 'sent',
+      'items': const <Map<String, dynamic>>[],
+      'total': 120,
+    };
+    final stamped = normalizeTableOrderToGarsonBoardOrder(
+      order: movedToDestination,
+      storeTable: source,
+    );
+    expect(stamped, isNotNull);
+    expect(stamped!['table_id'], 'salon-5');
+    expect(stamped['table_number'], 5);
+    expect(
+      garsonOrderBelongsToCloseTable(
+        table: source,
+        canonicalTableNumber: 5,
+        order: stamped,
+        sellerId: 'seller-a',
+      ),
+      isTrue,
+      reason: 'stamping the anchor invents a table id match',
+    );
+    expect(
+      closeSessionTableOrderFromRawRow(
+        row: movedToDestination,
+        anchor: source,
+        canonicalTableNumber: 5,
+        sellerId: 'seller-a',
+      ),
+      isNull,
+    );
+    expect(
+      closeSessionTableOrderFromRawRow(
+        row: movedWithStaleArea,
+        anchor: source,
+        canonicalTableNumber: 5,
+        sellerId: 'seller-a',
+      ),
+      isNull,
+    );
+
+    final bahce = <String, dynamic>{
+      'id': 'bahce',
+      'seller_id': 'seller-a',
+      'table_number': 11,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_label': 'Bahçe 1',
+    };
+    final bahceMisindexed = <String, dynamic>{
+      'id': 'open-bahce',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_table_label': 'Bahçe 1',
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+      'items': const <Map<String, dynamic>>[],
+      'total': 90,
+    };
+    final kept = closeSessionTableOrderFromRawRow(
+      row: bahceMisindexed,
+      anchor: bahce,
+      canonicalTableNumber: 11,
+      sellerId: 'seller-a',
+    );
+    expect(kept, isNotNull);
+    expect(kept!['table_number'], 11);
+    expect(kept['_stored_table_number'], 1);
+    expect(
+      garsonTableOrderNeedsRealign(
+        order: kept,
+        table: bahce,
+        canonicalTableNumber: 11,
+        sellerId: 'seller-a',
+      ),
+      isTrue,
+    );
+  });
+
+  test(
+    'a stamped Salon 1 move stays out of Bahçe close and an unstamped Bahçe 1 still closes',
+    () {
+      final bahce = <String, dynamic>{
+        'id': 'bahce',
+        'seller_id': 'seller-a',
+        'table_number': 11,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_label': 'Bahçe 1',
+      };
+      final salon = <String, dynamic>{
+        'id': 'salon',
+        'seller_id': 'seller-a',
+        'table_number': 1,
+        'area_name': 'Salon',
+        'area_table_number': 1,
+        'display_label': 'Salon 1',
+      };
+      final source = <String, dynamic>{
+        'id': 'open-bahce',
+        'seller_id': 'seller-a',
+        'table_number': 11,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_table_label': 'Bahçe 1',
+        'status': 'sent',
+        '_garson_source_table': 'table_orders',
+        'items': const <Map<String, dynamic>>[],
+        'total': 90,
+      };
+      final moved = stampFullTransferDestination(
+        order: source,
+        destinationTable: salon,
+      );
+      expect(moved.applied, isTrue);
+      expect(moved.row['table_number'], 1);
+      expect(moved.row['area_name'], 'Salon');
+      expect(moved.row['table_area_name'], 'Salon');
+      expect(moved.row['area_table_number'], 1);
+      expect(moved.row['display_table_label'], 'Salon 1');
+      expect(
+        closeSessionTableOrderFromRawRow(
+          row: moved.row,
+          anchor: bahce,
+          canonicalTableNumber: 11,
+          sellerId: 'seller-a',
+        ),
+        isNull,
+      );
+      expect(source['table_number'], 11);
+      expect(source['area_name'], 'Bahçe');
+
+      final misindexed = <String, dynamic>{
+        'id': 'misindexed-bahce',
+        'seller_id': 'seller-a',
+        'table_number': 1,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_table_label': 'Bahçe 1',
+        'status': 'sent',
+        '_garson_source_table': 'table_orders',
+        'items': const <Map<String, dynamic>>[],
+        'total': 90,
+      };
+      final kept = closeSessionTableOrderFromRawRow(
+        row: misindexed,
+        anchor: bahce,
+        canonicalTableNumber: 11,
+        sellerId: 'seller-a',
+      );
+      expect(kept, isNotNull);
+      expect(kept!['table_number'], 11);
+      expect(kept['_stored_table_number'], 1);
+
+      final incomplete = stampFullTransferDestination(
+        order: source,
+        destinationTable: <String, dynamic>{
+          'table_number': 1,
+          'area_name': 'Salon',
+        },
+      );
+      expect(incomplete.applied, isFalse);
+      expect(incomplete.row['table_number'], 11);
+      expect(incomplete.row['area_name'], 'Bahçe');
+      expect(incomplete.row['display_table_label'], 'Bahçe 1');
+
+      final alreadyMoved = Map<String, dynamic>.from(source);
+      alreadyMoved['table_number'] = 1;
+      final secondWrite = stampFullTransferDestination(
+        order: alreadyMoved,
+        destinationTable: salon,
+      );
+      expect(secondWrite.applied, isFalse);
+      expect(secondWrite.row['table_number'], 1);
+      expect(secondWrite.row['area_name'], 'Bahçe');
+      expect(secondWrite.row['display_table_label'], 'Bahçe 1');
+      final stillBahce = closeSessionTableOrderFromRawRow(
+        row: secondWrite.row,
+        anchor: bahce,
+        canonicalTableNumber: 11,
+        sellerId: 'seller-a',
+      );
+      expect(stillBahce, isNotNull);
+      expect(stillBahce!['table_number'], 11);
+    },
+  );
+
+  test(
+    'a stamped Salon row that still carries the Bahçe table id is not closed as Bahçe',
+    () {
+      final bahce = <String, dynamic>{
+        'id': 'bahce',
+        'seller_id': 'seller-a',
+        'table_number': 11,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_label': 'Bahçe 1',
+      };
+      final salon = <String, dynamic>{
+        'id': 'salon',
+        'seller_id': 'seller-a',
+        'table_number': 1,
+        'area_name': 'Salon',
+        'area_table_number': 1,
+        'display_label': 'Salon 1',
+      };
+      final source = <String, dynamic>{
+        'id': 'open-bahce',
+        'seller_id': 'seller-a',
+        'table_id': 'bahce',
+        'store_table_id': 'bahce',
+        'table_number': 11,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_table_label': 'Bahçe 1',
+        'status': 'sent',
+        '_garson_source_table': 'table_orders',
+        'items': const <Map<String, dynamic>>[],
+        'total': 90,
+      };
+      final moved = stampFullTransferDestination(
+        order: source,
+        destinationTable: salon,
+      );
+      expect(moved.applied, isTrue);
+      expect(moved.row['table_number'], 1);
+      expect(moved.row['area_name'], 'Salon');
+      expect(moved.row['area_table_number'], 1);
+      expect(moved.row['display_table_label'], 'Salon 1');
+      expect(moved.row['table_id'], 'bahce');
+      expect(moved.row['store_table_id'], 'bahce');
+      expect(
+        garsonTableProof(
+          table: bahce,
+          canonicalTableNumber: 11,
+          order: moved.row,
+          sellerId: 'seller-a',
+        ),
+        GarsonTableProof.none,
+      );
+      expect(
+        closeSessionTableOrderFromRawRow(
+          row: moved.row,
+          anchor: bahce,
+          canonicalTableNumber: 11,
+          sellerId: 'seller-a',
+        ),
+        isNull,
+      );
+      expect(
+        garsonTableOrderNeedsRealign(
+          order: moved.row,
+          table: bahce,
+          canonicalTableNumber: 11,
+          sellerId: 'seller-a',
+        ),
+        isFalse,
+      );
+      expect(
+        garsonTableProof(
+          table: salon,
+          canonicalTableNumber: 1,
+          order: moved.row,
+          sellerId: 'seller-a',
+        ),
+        GarsonTableProof.areaLabel,
+      );
+      final salonBill = closeSessionTableOrderFromRawRow(
+        row: moved.row,
+        anchor: salon,
+        canonicalTableNumber: 1,
+        sellerId: 'seller-a',
+      );
+      expect(salonBill, isNotNull);
+      expect(
+        garsonTableOrderNeedsRealign(
+          order: salonBill!,
+          table: salon,
+          canonicalTableNumber: 1,
+          sellerId: 'seller-a',
+        ),
+        isFalse,
+      );
+
+      final storeIdOnly = Map<String, dynamic>.from(moved.row)..remove('table_id');
+      expect(storeIdOnly['store_table_id'], 'bahce');
+      expect(
+        garsonTableProof(
+          table: bahce,
+          canonicalTableNumber: 11,
+          order: storeIdOnly,
+          sellerId: 'seller-a',
+        ),
+        GarsonTableProof.none,
+      );
+      expect(
+        garsonTableProof(
+          table: salon,
+          canonicalTableNumber: 1,
+          order: storeIdOnly,
+          sellerId: 'seller-a',
+        ),
+        GarsonTableProof.areaLabel,
+      );
+
+      final unstamped = <String, dynamic>{
+        'id': 'misindexed-bahce',
+        'seller_id': 'seller-a',
+        'table_id': 'bahce',
+        'table_number': 1,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_table_label': 'Bahçe 1',
+        'status': 'sent',
+        '_garson_source_table': 'table_orders',
+        'items': const <Map<String, dynamic>>[],
+        'total': 90,
+      };
+      expect(
+        garsonTableProof(
+          table: bahce,
+          canonicalTableNumber: 11,
+          order: unstamped,
+          sellerId: 'seller-a',
+        ),
+        GarsonTableProof.tableId,
+      );
+      expect(
+        garsonTableOrderNeedsRealign(
+          order: unstamped,
+          table: bahce,
+          canonicalTableNumber: 11,
+          sellerId: 'seller-a',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test('one pending job has a single winner and an uncertain print is not reprinted', () {
+    final job = <String, String>{'status': 'pending'};
+    final first = claimPendingJob(job);
+    final second = claimPendingJob(job);
+    expect(first, PrintClaimResult.won);
+    expect(second, PrintClaimResult.lost);
+    expect(job['status'], 'claimed');
+    expect(
+      interpretPrintClaim(requestFailed: true, updatedRowCount: 1),
+      PrintClaimResult.uncertain,
+    );
+    expect(
+      shouldAutomaticallyRequeuePrint(
+        claim: PrintClaimResult.won,
+        dispatch: classifyPrintDispatchFailure('TimeoutException: timed out'),
+      ),
+      isFalse,
+    );
+    expect(
+      shouldAutomaticallyRequeuePrint(
+        claim: PrintClaimResult.lost,
+        dispatch: PrintDispatchVerdict.notSent,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldAutomaticallyRequeuePrint(
+        claim: PrintClaimResult.won,
+        dispatch: classifyPrintDispatchFailure('SocketException: Connection refused'),
+      ),
+      isTrue,
+    );
   });
 
   test('print anchor is terminal and is not a cancellation', () {
@@ -143,8 +856,7 @@ void main() {
     expect(
       friendlyOrderSendRpcMessage(
         code: '42703',
-        message:
-            'column "table_number" of relation "orders" does not exist',
+        message: 'column "table_number" of relation "orders" does not exist',
       ),
       contains('create_table_order_with_print_jobs_impl'),
     );
@@ -168,5 +880,331 @@ void main() {
       ),
       'Sipariş kalemleri boş olamaz.',
     );
+  });
+
+  test('Bahçe 1 uses canonical 11 and Salon 1 stays 1', () {
+    final tables = <Map<String, dynamic>>[
+      {'table_number': 1, 'display_label': 'Salon 1', 'area_name': 'Salon'},
+      {
+        'table_number': 11,
+        'display_label': 'Bahçe 1',
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+      },
+    ];
+    expect(
+      canonicalStoreTableNumber(
+        requestedNumber: 1,
+        displayLabel: 'Bahçe 1',
+        tables: tables,
+      ),
+      11,
+    );
+    expect(
+      canonicalStoreTableNumber(
+        requestedNumber: 11,
+        displayLabel: 'Bahçe 1',
+        tables: tables,
+      ),
+      11,
+    );
+    expect(
+      canonicalStoreTableNumber(
+        requestedNumber: 1,
+        displayLabel: 'Salon 1',
+        tables: tables,
+      ),
+      1,
+    );
+  });
+
+  test('a filtered short read is complete and a capped or failed read is not', () {
+    expect(
+      openOrderReadIsComplete(
+        tableFetchFailed: false,
+        restaurantFetchFailed: false,
+        openTableOrders: 0,
+        openCustomerOrders: 10,
+        rawTableOrders: 0,
+        rawCustomerOrders: 10,
+        removedByFilter: 2,
+      ),
+      isTrue,
+    );
+    expect(
+      openOrderReadIsComplete(
+        tableFetchFailed: false,
+        restaurantFetchFailed: false,
+        openTableOrders: 0,
+        openCustomerOrders: 200,
+        rawTableOrders: 0,
+        rawCustomerOrders: 200,
+      ),
+      isFalse,
+    );
+    expect(
+      openOrderReadIsComplete(
+        tableFetchFailed: true,
+        restaurantFetchFailed: false,
+        openTableOrders: 0,
+        openCustomerOrders: 0,
+        rawTableOrders: 0,
+        rawCustomerOrders: 0,
+      ),
+      isFalse,
+    );
+    expect(
+      openOrderReadIsComplete(
+        tableFetchFailed: false,
+        restaurantFetchFailed: false,
+        openTableOrders: null,
+        openCustomerOrders: 0,
+        rawTableOrders: 0,
+        rawCustomerOrders: 0,
+      ),
+      isFalse,
+    );
+  });
+
+  test('raw rows must match the server count before a card can be cleared', () {
+    expect(
+      openOrderReadIsComplete(
+        tableFetchFailed: false,
+        restaurantFetchFailed: false,
+        openTableOrders: 0,
+        openCustomerOrders: 10,
+        rawTableOrders: 0,
+        rawCustomerOrders: 8,
+      ),
+      isFalse,
+    );
+    expect(
+      closeSessionMayTreatAsEmpty(
+        snapshotFailed: true,
+        areaReadFailed: false,
+        ordersReadFailed: false,
+        visibleIdsReadFailed: false,
+        tableIdentityKnown: true,
+        tableIdKnown: true,
+      ),
+      isFalse,
+    );
+    expect(
+      closeSessionMayTreatAsEmpty(
+        snapshotFailed: false,
+        areaReadFailed: false,
+        ordersReadFailed: true,
+        visibleIdsReadFailed: false,
+        tableIdentityKnown: true,
+        tableIdKnown: true,
+      ),
+      isFalse,
+    );
+    expect(
+      closeSessionMayTreatAsEmpty(
+        snapshotFailed: false,
+        areaReadFailed: false,
+        ordersReadFailed: false,
+        visibleIdsReadFailed: false,
+        tableIdentityKnown: true,
+        tableIdKnown: false,
+      ),
+      isFalse,
+    );
+    expect(
+      closeSessionMayTreatAsEmpty(
+        snapshotFailed: false,
+        areaReadFailed: false,
+        ordersReadFailed: false,
+        visibleIdsReadFailed: false,
+        tableIdentityKnown: true,
+        tableIdKnown: true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('a failed Bahçe 1 read keeps the card and the draft', () {
+    const card = GarsonVisibleTableCard(
+      orders: <Map<String, dynamic>>[
+        {
+          'id': 'bahce-cached',
+          'table_number': 11,
+          'display_label': 'Bahçe 1',
+          'status': 'sent',
+          'items': <Map<String, dynamic>>[
+            {'name': 'Zeytin Salatası', 'quantity': 3, 'line_total': 600},
+            {'name': 'Biber Yoğurtlama', 'quantity': 1, 'line_total': 180},
+          ],
+        },
+      ],
+      draftItems: <Map<String, dynamic>>[
+        {'name': 'Zeytin Salatası', 'quantity': 1, 'line_total': 200},
+        {'name': 'Biber Yoğurtlama', 'quantity': 1, 'line_total': 180},
+      ],
+    );
+    final kept = garsonCardAfterServerRead(
+      current: card,
+      readSucceeded: false,
+      readComplete: false,
+      verifiedEmptyClose: false,
+    );
+    expect(kept.orders, card.orders);
+    expect(kept.draftItems, card.draftItems);
+    expect(kept.orders.single['id'], 'bahce-cached');
+    expect(kept.draftItems, hasLength(2));
+
+    final withheld = dropCachedBillsMissingFromOpenSnapshot(
+      visibleOrders: card.orders,
+      serverRead: const GarsonOpenOrderRead(
+        orders: <Map<String, dynamic>>[],
+        succeeded: true,
+        complete: true,
+        withheldServerIds: <String>{'bahce-cached'},
+      ),
+    );
+    expect(withheld, hasLength(1));
+  });
+
+  test('partial transfer does not use the legacy RPC and timeout is not retried', () {
+    expect(legacyFullTransferAllowed('full'), isFalse);
+    expect(legacyFullTransferAllowed('partial'), isFalse);
+    expect(legacyFullTransferAllowed('customer'), isFalse);
+    expect(shouldAutoRetryTransferAfterTimeout(), isFalse);
+    expect(
+      transferTimeoutUserMessage(TransferTimeoutRead.sameAsBefore),
+      contains('Sonuç belirsiz'),
+    );
+    expect(
+      transferTimeoutUserMessage(TransferTimeoutRead.incomplete),
+      contains('yeniden okunamadı'),
+    );
+    expect(
+      classifyTransferTimeoutRead(
+        sourceIdsBefore: {'a'},
+        sourceIdsAfter: {'a'},
+        destinationIdsAfter: const <String>{},
+        sourceCustomerBefore: 1,
+        destinationCustomerBefore: 0,
+        sourceCustomerAfter: 1,
+        destinationCustomerAfter: 0,
+      ),
+      TransferTimeoutRead.sameAsBefore,
+    );
+    expect(
+      classifyTransferTimeoutRead(
+        sourceIdsBefore: {'a'},
+        sourceIdsAfter: const <String>{},
+        destinationIdsAfter: {'a'},
+        sourceCustomerBefore: 0,
+        destinationCustomerBefore: 0,
+        sourceCustomerAfter: null,
+        destinationCustomerAfter: 0,
+      ),
+      TransferTimeoutRead.incomplete,
+    );
+  });
+
+  test('a failed order lookup is not treated as an absent order', () {
+    expect(
+      interpretOrderCommitLookup(requestFailed: true, rowFound: false),
+      OrderCommitLookupKind.readFailed,
+    );
+    expect(
+      interpretOrderCommitLookup(requestFailed: false, rowFound: false),
+      OrderCommitLookupKind.notFound,
+    );
+    expect(
+      interpretOrderCommitLookup(requestFailed: false, rowFound: true),
+      OrderCommitLookupKind.found,
+    );
+    expect(
+      interpretOrderCommitLookup(requestFailed: true, rowFound: true),
+      OrderCommitLookupKind.readFailed,
+    );
+  });
+
+  test('a different cart does not reuse another send key', () {
+    final ledger = OrderSendKeyLedger();
+    final first = resolveOrderSendKey(
+      ledger: ledger,
+      fingerprint: 'bahce|11|salad-1',
+    );
+    final changed = resolveOrderSendKey(
+      ledger: ledger,
+      fingerprint: 'bahce|11|salad-3',
+    );
+    expect(changed, isNot(first));
+    final retry = resolveOrderSendKey(
+      ledger: ledger,
+      fingerprint: 'bahce|11|salad-1',
+    );
+    expect(retry, first);
+  });
+
+  test('diagnostic writes are refused only in a debug build', () {
+    expect(
+      orderWritesForbidden(debugMode: false, diagnosticRequested: true),
+      isFalse,
+    );
+    expect(
+      orderWritesForbidden(debugMode: true, diagnosticRequested: false),
+      isFalse,
+    );
+    expect(
+      orderWritesForbidden(debugMode: true, diagnosticRequested: true),
+      isTrue,
+    );
+  });
+
+  test('send diagnostic reports the key decision without the draft text', () {
+    const fingerprint = 'restaurant|11|new_order|secret-customer-note';
+    final saved = decideOrderSendDiagnostic(
+      itemCount: 2,
+      fingerprint: fingerprint,
+      savedKeyPresent: true,
+    );
+    expect(saved.savedKey, 'found');
+    expect(saved.lookupBeforeSend, 'would_run');
+    expect(saved.fingerprintTag, isNot(contains('secret-customer-note')));
+    expect(saved.fingerprintTag, orderSendFingerprintTag(fingerprint));
+
+    final missing = decideOrderSendDiagnostic(
+      itemCount: 2,
+      fingerprint: fingerprint,
+      savedKeyPresent: false,
+    );
+    expect(missing.savedKey, 'absent');
+    expect(missing.lookupBeforeSend, 'skipped');
+
+    final empty = decideOrderSendDiagnostic(
+      itemCount: 0,
+      fingerprint: fingerprint,
+      savedKeyPresent: true,
+    );
+    expect(empty.savedKey, 'not_checked');
+    expect(empty.lookupBeforeSend, 'skipped');
+    expect(empty.fingerprintTag, 'skipped');
+  });
+
+  test('the send tap is logged before a blocked return or the order RPC', () {
+    final source = File('lib/screens/seller_panel_page.dart').readAsStringSync();
+    final helperStart = source.indexOf('Future<void> _logOrderSendDiagnostic(');
+    final submitStart = source.indexOf('Future<void> _submitDraft(');
+    final helper = source.substring(helperStart, submitStart);
+    expect(helper.contains('inspectSendDecision'), isTrue);
+    expect(helper.contains('dispatchNewOrder'), isFalse);
+    expect(helper.contains('.rpc('), isFalse);
+
+    final submitEnd = source.indexOf('Widget _buildCategoryChips(', submitStart);
+    final body = source.substring(submitStart, submitEnd);
+    final pressed = body.indexOf("'button_pressed'");
+    final diagnostic = body.indexOf('if (ibulOrderWritesForbidden)');
+    final blocked = body.indexOf('if (blockedReason != null) return;');
+    final dispatch = body.indexOf('dispatchNewOrder(');
+    expect(pressed, greaterThanOrEqualTo(0));
+    expect(pressed, lessThan(diagnostic));
+    expect(diagnostic, lessThan(blocked));
+    expect(blocked, lessThan(dispatch));
   });
 }
