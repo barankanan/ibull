@@ -756,21 +756,86 @@ int canonicalStoreTableNumber({
   return requestedNumber > 0 ? requestedNumber : 0;
 }
 
-/// A short visible list can still be complete. The 200-row cap is not.
-/// A failed fetch is never complete, so a refresh cannot wipe the card.
+/// Completeness needs a successful fetch, a count under the cap, and the
+/// raw row count equal to the server count. Rows removed by normalization
+/// or filtering are counted apart and do not replace that comparison.
 bool openOrderReadIsComplete({
   required bool tableFetchFailed,
   required bool restaurantFetchFailed,
   required int? openTableOrders,
   required int? openCustomerOrders,
+  required int? rawTableOrders,
+  required int? rawCustomerOrders,
+  int removedByNormalization = 0,
+  int removedByFilter = 0,
   int restaurantFetchCap = 200,
   int tableFetchCap = 1000,
 }) {
   if (tableFetchFailed || restaurantFetchFailed) return false;
-  if (openTableOrders == null || openCustomerOrders == null) return false;
-  if (openTableOrders >= tableFetchCap) return false;
-  if (openCustomerOrders >= restaurantFetchCap) return false;
+  if (openTableOrders == null ||
+      openCustomerOrders == null ||
+      rawTableOrders == null ||
+      rawCustomerOrders == null) {
+    return false;
+  }
+  if (openTableOrders >= tableFetchCap ||
+      openCustomerOrders >= restaurantFetchCap) {
+    return false;
+  }
+  if (rawTableOrders != openTableOrders ||
+      rawCustomerOrders != openCustomerOrders) {
+    return false;
+  }
+  if (removedByNormalization < 0 || removedByFilter < 0) return false;
+  if (removedByNormalization + removedByFilter >
+      rawTableOrders + rawCustomerOrders) {
+    return false;
+  }
   return true;
+}
+
+/// An empty close list is trustworthy only after every target-table read
+/// succeeded and the physical table id is known.
+bool closeSessionMayTreatAsEmpty({
+  required bool snapshotFailed,
+  required bool areaReadFailed,
+  required bool ordersReadFailed,
+  required bool visibleIdsReadFailed,
+  required bool tableIdentityKnown,
+  required bool tableIdKnown,
+}) {
+  if (!tableIdentityKnown || !tableIdKnown) return false;
+  if (snapshotFailed ||
+      areaReadFailed ||
+      ordersReadFailed ||
+      visibleIdsReadFailed) {
+    return false;
+  }
+  return true;
+}
+
+class GarsonVisibleTableCard {
+  const GarsonVisibleTableCard({
+    required this.orders,
+    required this.draftItems,
+  });
+
+  final List<Map<String, dynamic>> orders;
+  final List<Map<String, dynamic>> draftItems;
+}
+
+/// A failed or incomplete server read leaves the card and its draft in place.
+GarsonVisibleTableCard garsonCardAfterServerRead({
+  required GarsonVisibleTableCard current,
+  required bool readSucceeded,
+  required bool readComplete,
+  required bool verifiedEmptyClose,
+}) {
+  if (!readSucceeded || !readComplete || !verifiedEmptyClose) return current;
+  return GarsonVisibleTableCard(
+    orders: const <Map<String, dynamic>>[],
+    draftItems: current.draftItems,
+  );
 }
 
 class GarsonOpenOrderRead {
@@ -778,11 +843,15 @@ class GarsonOpenOrderRead {
     required this.orders,
     required this.succeeded,
     required this.complete,
+    this.withheldServerIds = const <String>{},
   });
 
   final List<Map<String, dynamic>> orders;
   final bool succeeded;
   final bool complete;
+
+  /// Server rows removed by normalization or filtering. They are still open.
+  final Set<String> withheldServerIds;
 }
 
 /// Cache is cleared only after a successful read whose row count matched
@@ -795,6 +864,7 @@ List<Map<String, dynamic>> dropCachedBillsMissingFromOpenSnapshot({
   final openIds = <String>{
     for (final order in serverRead.orders)
       if (_t(order['id']).isNotEmpty) _t(order['id']),
+    ...serverRead.withheldServerIds,
   };
   return <Map<String, dynamic>>[
     for (final order in visibleOrders)

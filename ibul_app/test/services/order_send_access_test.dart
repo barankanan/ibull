@@ -663,6 +663,9 @@ void main() {
         restaurantFetchFailed: false,
         openTableOrders: 0,
         openCustomerOrders: 10,
+        rawTableOrders: 0,
+        rawCustomerOrders: 10,
+        removedByFilter: 2,
       ),
       isTrue,
     );
@@ -672,6 +675,8 @@ void main() {
         restaurantFetchFailed: false,
         openTableOrders: 0,
         openCustomerOrders: 200,
+        rawTableOrders: 0,
+        rawCustomerOrders: 200,
       ),
       isFalse,
     );
@@ -681,6 +686,8 @@ void main() {
         restaurantFetchFailed: false,
         openTableOrders: 0,
         openCustomerOrders: 0,
+        rawTableOrders: 0,
+        rawCustomerOrders: 0,
       ),
       isFalse,
     );
@@ -690,9 +697,111 @@ void main() {
         restaurantFetchFailed: false,
         openTableOrders: null,
         openCustomerOrders: 0,
+        rawTableOrders: 0,
+        rawCustomerOrders: 0,
       ),
       isFalse,
     );
+  });
+
+  test('raw rows must match the server count before a card can be cleared', () {
+    expect(
+      openOrderReadIsComplete(
+        tableFetchFailed: false,
+        restaurantFetchFailed: false,
+        openTableOrders: 0,
+        openCustomerOrders: 10,
+        rawTableOrders: 0,
+        rawCustomerOrders: 8,
+      ),
+      isFalse,
+    );
+    expect(
+      closeSessionMayTreatAsEmpty(
+        snapshotFailed: true,
+        areaReadFailed: false,
+        ordersReadFailed: false,
+        visibleIdsReadFailed: false,
+        tableIdentityKnown: true,
+        tableIdKnown: true,
+      ),
+      isFalse,
+    );
+    expect(
+      closeSessionMayTreatAsEmpty(
+        snapshotFailed: false,
+        areaReadFailed: false,
+        ordersReadFailed: true,
+        visibleIdsReadFailed: false,
+        tableIdentityKnown: true,
+        tableIdKnown: true,
+      ),
+      isFalse,
+    );
+    expect(
+      closeSessionMayTreatAsEmpty(
+        snapshotFailed: false,
+        areaReadFailed: false,
+        ordersReadFailed: false,
+        visibleIdsReadFailed: false,
+        tableIdentityKnown: true,
+        tableIdKnown: false,
+      ),
+      isFalse,
+    );
+    expect(
+      closeSessionMayTreatAsEmpty(
+        snapshotFailed: false,
+        areaReadFailed: false,
+        ordersReadFailed: false,
+        visibleIdsReadFailed: false,
+        tableIdentityKnown: true,
+        tableIdKnown: true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('a failed Bahçe 1 read keeps the card and the draft', () {
+    const card = GarsonVisibleTableCard(
+      orders: <Map<String, dynamic>>[
+        {
+          'id': 'bahce-cached',
+          'table_number': 11,
+          'display_label': 'Bahçe 1',
+          'status': 'sent',
+          'items': <Map<String, dynamic>>[
+            {'name': 'Zeytin Salatası', 'quantity': 3, 'line_total': 600},
+            {'name': 'Biber Yoğurtlama', 'quantity': 1, 'line_total': 180},
+          ],
+        },
+      ],
+      draftItems: <Map<String, dynamic>>[
+        {'name': 'Zeytin Salatası', 'quantity': 1, 'line_total': 200},
+        {'name': 'Biber Yoğurtlama', 'quantity': 1, 'line_total': 180},
+      ],
+    );
+    final kept = garsonCardAfterServerRead(
+      current: card,
+      readSucceeded: false,
+      readComplete: false,
+      verifiedEmptyClose: false,
+    );
+    expect(kept.orders, card.orders);
+    expect(kept.draftItems, card.draftItems);
+    expect(kept.orders.single['id'], 'bahce-cached');
+    expect(kept.draftItems, hasLength(2));
+
+    final withheld = dropCachedBillsMissingFromOpenSnapshot(
+      visibleOrders: card.orders,
+      serverRead: const GarsonOpenOrderRead(
+        orders: <Map<String, dynamic>>[],
+        succeeded: true,
+        complete: true,
+        withheldServerIds: <String>{'bahce-cached'},
+      ),
+    );
+    expect(withheld, hasLength(1));
   });
 
   test('a different cart does not reuse another send key', () {

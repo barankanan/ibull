@@ -18,6 +18,29 @@ import 'table_order_history_utils.dart';
 import 'table_payment_guard.dart';
 import 'table_transfer_plan.dart';
 
+class _GarsonOrderFetch {
+  const _GarsonOrderFetch({
+    required this.visible,
+    required this.rawCount,
+    required this.withheldIds,
+    required this.removedByNormalization,
+    required this.removedByFilter,
+  });
+
+  const _GarsonOrderFetch.empty()
+    : visible = const <Map<String, dynamic>>[],
+      rawCount = 0,
+      withheldIds = const <String>{},
+      removedByNormalization = 0,
+      removedByFilter = 0;
+
+  final List<Map<String, dynamic>> visible;
+  final int rawCount;
+  final Set<String> withheldIds;
+  final int removedByNormalization;
+  final int removedByFilter;
+}
+
 class StoreTableService {
   StoreTableService({
     required SupabaseClient supabase,
@@ -699,10 +722,10 @@ class StoreTableService {
     );
     List<Map<String, dynamic>> tableOrders = const <Map<String, dynamic>>[];
     try {
-      tableOrders = await _fetchTableOrdersForGarson(
+      tableOrders = (await _fetchTableOrdersForGarson(
         sellerId: resolvedSellerId,
         tableNumber: tableNumber,
-      );
+      )).visible;
       logGarsonActiveOrdersFetchResult(
         restaurantId: resolvedSellerId,
         source: 'table_orders',
@@ -746,10 +769,10 @@ class StoreTableService {
     List<Map<String, dynamic>> restaurantOrders =
         const <Map<String, dynamic>>[];
     try {
-      restaurantOrders = await _fetchRestaurantOrdersForGarson(
+      restaurantOrders = (await _fetchRestaurantOrdersForGarson(
         restaurantId: resolvedSellerId,
         tableNumber: tableNumber,
-      );
+      )).visible;
       logGarsonActiveOrdersFetchResult(
         restaurantId: resolvedSellerId,
         source: 'orders',
@@ -778,7 +801,7 @@ class StoreTableService {
     return merged;
   }
 
-  Future<List<Map<String, dynamic>>> _fetchTableOrdersForGarson({
+  Future<_GarsonOrderFetch> _fetchTableOrdersForGarson({
     required String sellerId,
     int? tableNumber,
   }) async {
@@ -797,7 +820,7 @@ class StoreTableService {
         .order('created_at', ascending: false)
         .timeout(tableOrderTimeout);
     final rawOrders = List<Map<String, dynamic>>.from(rows as List);
-    if (rawOrders.isEmpty) return const <Map<String, dynamic>>[];
+    if (rawOrders.isEmpty) return const _GarsonOrderFetch.empty();
 
     final tableIds = rawOrders
         .map(
@@ -822,6 +845,8 @@ class StoreTableService {
     );
 
     final normalized = <Map<String, dynamic>>[];
+    final withheldIds = <String>{};
+    var removedByNormalization = 0;
     for (final raw in rawOrders) {
       final tableId =
           raw['table_id']?.toString().trim() ??
@@ -835,13 +860,24 @@ class StoreTableService {
         order: raw,
         storeTable: storeTable,
       );
-      if (mapped == null) continue;
+      if (mapped == null) {
+        final id = raw['id']?.toString().trim() ?? '';
+        if (id.isNotEmpty) withheldIds.add(id);
+        removedByNormalization++;
+        continue;
+      }
       normalized.add(mapped);
     }
-    return normalized;
+    return _GarsonOrderFetch(
+      visible: normalized,
+      rawCount: rawOrders.length,
+      withheldIds: withheldIds,
+      removedByNormalization: removedByNormalization,
+      removedByFilter: 0,
+    );
   }
 
-  Future<List<Map<String, dynamic>>> _fetchRestaurantOrdersForGarson({
+  Future<_GarsonOrderFetch> _fetchRestaurantOrdersForGarson({
     required String restaurantId,
     int? tableNumber,
   }) async {
@@ -877,7 +913,7 @@ class StoreTableService {
         .limit(200)
         .timeout(tableOrderTimeout);
     final rawOrders = List<Map<String, dynamic>>.from(rows as List);
-    if (rawOrders.isEmpty) return const <Map<String, dynamic>>[];
+    if (rawOrders.isEmpty) return const _GarsonOrderFetch.empty();
 
     final tableIds = rawOrders
         .map((order) => order['table_id']?.toString().trim() ?? '')
@@ -902,8 +938,24 @@ class StoreTableService {
     );
 
     final normalized = <Map<String, dynamic>>[];
+    final withheldIds = <String>{};
+    var removedByNormalization = 0;
+    var removedByFilter = 0;
+    void withhold(Map<String, dynamic> raw, {required bool normalization}) {
+      final id = raw['id']?.toString().trim() ?? '';
+      if (id.isNotEmpty) withheldIds.add(id);
+      if (normalization) {
+        removedByNormalization++;
+      } else {
+        removedByFilter++;
+      }
+    }
+
     for (final raw in rawOrders) {
-      if (!isGarsonRestaurantTableOrderRow(raw)) continue;
+      if (!isGarsonRestaurantTableOrderRow(raw)) {
+        withhold(raw, normalization: false);
+        continue;
+      }
       final tableId = raw['table_id']?.toString().trim() ?? '';
       final storeTable = tableId.isEmpty ? null : storeTablesById[tableId];
       final rawItems = raw['order_items'] is List
@@ -915,7 +967,10 @@ class StoreTableService {
         items: items,
         storeTable: storeTable,
       );
-      if (mapped == null) continue;
+      if (mapped == null) {
+        withhold(raw, normalization: true);
+        continue;
+      }
       final mappedTableNumber = _parseTableNumberValue(mapped['table_number']);
       final latestClosedAt = latestClosedByTable[mappedTableNumber];
       final activityAt = DateTime.tryParse(
@@ -933,14 +988,35 @@ class StoreTableService {
           'latest_closed_at=${latestClosedAt.toIso8601String()} '
           'action=suppress_stale_orders_row',
         );
+        withhold(raw, normalization: false);
         continue;
       }
       normalized.add(mapped);
     }
 
-    return filterGarsonActiveOrdersByTableNumber(
+    final filtered = filterGarsonActiveOrdersByTableNumber(
       orders: normalized,
       tableNumber: tableNumber ?? 0,
+    );
+    if (filtered.length != normalized.length) {
+      final keptIds = <String>{
+        for (final order in filtered)
+          if ((order['id']?.toString().trim() ?? '').isNotEmpty)
+            order['id'].toString().trim(),
+      };
+      for (final order in normalized) {
+        final id = order['id']?.toString().trim() ?? '';
+        if (id.isEmpty || keptIds.contains(id)) continue;
+        withheldIds.add(id);
+        removedByFilter++;
+      }
+    }
+    return _GarsonOrderFetch(
+      visible: filtered,
+      rawCount: rawOrders.length,
+      withheldIds: withheldIds,
+      removedByNormalization: removedByNormalization,
+      removedByFilter: removedByFilter,
     );
   }
 
@@ -990,6 +1066,25 @@ class StoreTableService {
     } catch (_) {
       return const <String, Map<String, dynamic>>{};
     }
+  }
+
+  Future<Map<String, dynamic>?> _loadStoreTableForClose({
+    required String sellerId,
+    required int tableNumber,
+  }) async {
+    final rows = await _supabase
+        .from('store_tables')
+        .select(
+          'id, seller_id, table_number, area_name, area_table_number, '
+          'display_label, table_name',
+        )
+        .eq('seller_id', sellerId)
+        .eq('table_number', tableNumber)
+        .limit(1)
+        .timeout(tableOrderTimeout);
+    final list = rows as List;
+    if (list.isEmpty) return null;
+    return Map<String, dynamic>.from(list.first as Map);
   }
 
   Future<Map<int, Map<String, dynamic>>> _loadStoreTablesByNumber({
@@ -1067,13 +1162,17 @@ class StoreTableService {
   }) async {
     final resolvedSellerId = sellerId.trim();
     if (resolvedSellerId.isEmpty || tableNumber <= 0) {
-      return const <Map<String, dynamic>>[];
+      throw StateError(closeTableRpcUnverifiedMessage);
     }
     final anchor = tableRow ??
-        (await _loadStoreTablesByNumber(
+        await _loadStoreTableForClose(
           sellerId: resolvedSellerId,
-          tableNumbers: <int>{tableNumber},
-        ))[tableNumber];
+          tableNumber: tableNumber,
+        );
+    final tableId = anchor?['id']?.toString().trim() ?? '';
+    if (anchor == null || tableId.isEmpty) {
+      throw StateError(closeTableRpcUnverifiedMessage);
+    }
     final byId = <String, Map<String, dynamic>>{};
     void take(Map<String, dynamic>? order, {int? storedTableNumber}) {
       if (order == null) return;
@@ -1097,6 +1196,7 @@ class StoreTableService {
     for (final order in await getTableOrdersSnapshot(
       resolvedSellerId,
       tableNumber: tableNumber,
+      surfaceErrors: true,
     )) {
       take(
         order,
@@ -1104,8 +1204,8 @@ class StoreTableService {
       );
     }
 
-    final areaName = anchor?['area_name']?.toString().trim() ?? '';
-    final areaNo = _parseTableNumberValue(anchor?['area_table_number']);
+    final areaName = anchor['area_name']?.toString().trim() ?? '';
+    final areaNo = _parseTableNumberValue(anchor['area_table_number']);
     if (areaName.isNotEmpty && areaNo > 0) {
       final rows = await _supabase
           .from('table_orders')
@@ -1130,9 +1230,7 @@ class StoreTableService {
       }
     }
 
-    final tableId = anchor?['id']?.toString().trim() ?? '';
-    if (tableId.isNotEmpty) {
-      final rows = await _supabase
+    final rows = await _supabase
           .from('orders')
           .select(
             'id, restaurant_id, table_id, order_status, status, order_type, '
@@ -1159,7 +1257,6 @@ class StoreTableService {
             storeTable: anchor,
           ),
         );
-      }
     }
 
     final missingIds = visibleOrderIds
@@ -1232,9 +1329,9 @@ class StoreTableService {
       );
     }
     try {
-      final orders = await getTableOrdersSnapshot(
-        resolved,
-        surfaceErrors: true,
+      final tableFetch = await _fetchTableOrdersForGarson(sellerId: resolved);
+      final restaurantFetch = await _fetchRestaurantOrdersForGarson(
+        restaurantId: resolved,
       );
       final tableCount = await _exactOpenCount(
         table: 'table_orders',
@@ -1253,11 +1350,24 @@ class StoreTableService {
         restaurantFetchFailed: false,
         openTableOrders: tableCount,
         openCustomerOrders: restaurantCount,
+        rawTableOrders: tableFetch.rawCount,
+        rawCustomerOrders: restaurantFetch.rawCount,
+        removedByNormalization: tableFetch.removedByNormalization +
+            restaurantFetch.removedByNormalization,
+        removedByFilter:
+            tableFetch.removedByFilter + restaurantFetch.removedByFilter,
       );
       return GarsonOpenOrderRead(
-        orders: orders,
+        orders: mergeGarsonActiveOrderSources(
+          tableOrders: tableFetch.visible,
+          restaurantOrders: restaurantFetch.visible,
+        ),
         succeeded: true,
         complete: complete,
+        withheldServerIds: <String>{
+          ...tableFetch.withheldIds,
+          ...restaurantFetch.withheldIds,
+        },
       );
     } catch (error) {
       debugPrint('[StoreTableService.readVerifiedOpenOrders] $error');
