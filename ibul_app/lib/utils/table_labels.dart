@@ -683,6 +683,9 @@ bool _storedTableNumberBelongsToAnotherTable({
       : _pi(table['table_number']);
   if (canonical <= 0 || stored == canonical) return false;
   final areaNo = _pi(table['area_table_number']);
+  // Bahçe 1 is stored as its area index. A full transfer onto Salon 1 writes
+  // only table_number and leaves this area label, so the two rows match.
+  // Keep this exception until a persisted field can tell them apart.
   if (areaNo > 0 && stored == areaNo) return false;
   return true;
 }
