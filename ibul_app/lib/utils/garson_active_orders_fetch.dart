@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import 'table_labels.dart';
+
 /// Active statuses used on live Garson / kitchen flows.
 const Set<String> garsonActiveOrderStatuses = <String>{
   'new',
@@ -408,6 +410,43 @@ Map<String, dynamic>? normalizeTableOrderToGarsonBoardOrder({
     sourceTable: 'table_orders',
     placementSource: order['placement_source']?.toString(),
   );
+}
+
+/// Keeps a raw `table_orders` row on a close only when that row already
+/// belongs to [anchor]. Normalizing with the anchor first copies the anchor
+/// id and number onto a transferred bill, and the membership check then
+/// accepts the copy.
+Map<String, dynamic>? closeSessionTableOrderFromRawRow({
+  required Map<String, dynamic> row,
+  required Map<String, dynamic>? anchor,
+  required int canonicalTableNumber,
+  required String sellerId,
+}) {
+  if (garsonCloseStatusIsTerminal(row['status']?.toString())) return null;
+  final storedTableNumber = _parsePositiveInt(
+    row['_stored_table_number'] ?? row['table_number'],
+  );
+  final raw = Map<String, dynamic>.from(row);
+  if (storedTableNumber > 0) {
+    raw['_stored_table_number'] = storedTableNumber;
+  }
+  if (!garsonOrderBelongsToCloseTable(
+    table: anchor,
+    canonicalTableNumber: canonicalTableNumber,
+    order: raw,
+    sellerId: sellerId,
+  )) {
+    return null;
+  }
+  final normalized = normalizeTableOrderToGarsonBoardOrder(
+    order: row,
+    storeTable: anchor,
+  );
+  if (normalized == null) return null;
+  if (storedTableNumber > 0) {
+    normalized['_stored_table_number'] = storedTableNumber;
+  }
+  return normalized;
 }
 
 Map<String, dynamic>? normalizeRestaurantOrderToGarsonTableOrder({
