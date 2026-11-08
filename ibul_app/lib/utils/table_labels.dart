@@ -599,16 +599,6 @@ GarsonTableProof garsonTableProof({
   )) {
     return GarsonTableProof.none;
   }
-  final tableId = _t(table['id']);
-  final orderTableId = _t(order['table_id']);
-  final orderStoreTableId = _t(order['store_table_id']);
-  if (tableId.isNotEmpty &&
-      (orderTableId.isNotEmpty || orderStoreTableId.isNotEmpty)) {
-    if (orderTableId == tableId || orderStoreTableId == tableId) {
-      return GarsonTableProof.tableId;
-    }
-    return GarsonTableProof.none;
-  }
 
   final tableArea = _t(table['area_name']).toLowerCase();
   final orderArea = _t(
@@ -636,6 +626,39 @@ GarsonTableProof garsonTableProof({
       tableLabel.isNotEmpty &&
       orderLabel.isNotEmpty &&
       tableLabel.toLowerCase() == orderLabel.toLowerCase();
+  // A full move can leave the source id on a row whose area name, area
+  // index, and display label already name the destination. That stamp is
+  // not this table. The area-index exception above stays for a row whose
+  // area name is still this table.
+  if (_completeStampNamesAnotherArea(
+    tableArea: tableArea,
+    orderArea: orderArea,
+    orderAreaNo: orderAreaNo,
+    orderLabel: orderLabel,
+  )) {
+    return GarsonTableProof.none;
+  }
+
+  final tableId = _t(table['id']);
+  final orderTableId = _t(order['table_id']);
+  final orderStoreTableId = _t(order['store_table_id']);
+  final idsPresent = tableId.isNotEmpty &&
+      (orderTableId.isNotEmpty || orderStoreTableId.isNotEmpty);
+  final idMatches = idsPresent &&
+      (orderTableId == tableId || orderStoreTableId == tableId);
+  if (idMatches) return GarsonTableProof.tableId;
+  if (idsPresent) {
+    // The id still names the source table. A complete destination stamp
+    // whose stored number is already canonical belongs to this table.
+    final stored = garsonStoredTableNumber(order);
+    if (areaComplete &&
+        canonicalTableNumber > 0 &&
+        stored == canonicalTableNumber) {
+      return GarsonTableProof.areaLabel;
+    }
+    return GarsonTableProof.none;
+  }
+
   if (areaComplete) return GarsonTableProof.areaLabel;
 
   final orderHasPartialArea = orderArea.isNotEmpty || orderAreaNo > 0;
@@ -671,6 +694,19 @@ bool garsonOrderBelongsToCloseTable({
       GarsonTableProof.none;
 }
 
+bool _completeStampNamesAnotherArea({
+  required String tableArea,
+  required String orderArea,
+  required int orderAreaNo,
+  required String orderLabel,
+}) {
+  return tableArea.isNotEmpty &&
+      orderArea.isNotEmpty &&
+      orderArea != tableArea &&
+      orderAreaNo > 0 &&
+      orderLabel.isNotEmpty;
+}
+
 bool _storedTableNumberBelongsToAnotherTable({
   required Map<String, dynamic> table,
   required int canonicalTableNumber,
@@ -685,9 +721,8 @@ bool _storedTableNumberBelongsToAnotherTable({
   final areaNo = _pi(table['area_table_number']);
   // Bahçe 1 is stored as its area index. A row that still has the Bahçe
   // label after table_number becomes 1 matches this table. Keep the
-  // exception for that unstamped row. A full move that stored the
-  // destination area name, area index, and display label is separated
-  // later by the area comparison.
+  // exception for that unstamped row. A full move that stored a different
+  // area name is rejected before a stale table id can count as proof.
   if (areaNo > 0 && stored == areaNo) return false;
   return true;
 }

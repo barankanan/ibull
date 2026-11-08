@@ -184,3 +184,96 @@ begin
   end if;
 end
 $$;
+
+-- Repo fixture schema does not define table_orders.table_id or
+-- store_table_id. The columns are added only in this isolated database.
+-- A full move must leave them unchanged. This is not a production migration.
+do $$
+declare
+  v_before integer;
+  v_bahce uuid;
+  v_salon uuid;
+  v_id uuid := '88888888-8888-4888-8888-888888888884';
+  v_table_id uuid;
+  v_store_table_id uuid;
+  v_number integer;
+  v_area text;
+  v_label text;
+begin
+  select count(*)
+    into v_before
+  from information_schema.columns
+  where table_schema = 'public'
+    and table_name = 'table_orders'
+    and column_name in ('table_id', 'store_table_id');
+
+  if v_before <> 0 then
+    raise exception
+      'repo fixture already carries table identity columns: %',
+      v_before;
+  end if;
+
+  alter table public.table_orders add column table_id uuid;
+  alter table public.table_orders add column store_table_id uuid;
+
+  select id
+    into v_bahce
+  from public.store_tables
+  where seller_id = '88888888-8888-4888-8888-888888888888'
+    and table_number = 11;
+
+  select id
+    into v_salon
+  from public.store_tables
+  where seller_id = '88888888-8888-4888-8888-888888888888'
+    and table_number = 1;
+
+  insert into public.table_orders (
+    id, seller_id, table_number, items, status,
+    area_name, area_table_number, display_table_label,
+    table_id, store_table_id
+  ) values (
+    v_id,
+    '88888888-8888-4888-8888-888888888888',
+    11,
+    '[{"name":"cay","price":15,"quantity":1}]'::jsonb,
+    'sent',
+    'Bahçe',
+    1,
+    'Bahçe 1',
+    v_bahce,
+    v_bahce
+  );
+
+  perform set_config(
+    'request.jwt.claim.sub',
+    '88888888-8888-4888-8888-888888888888',
+    true
+  );
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+
+  perform public.transfer_table_orders_v2(
+    '88888888-8888-4888-8888-888888888888',
+    11,
+    1,
+    'full'
+  );
+
+  select table_number, area_name, display_table_label, table_id, store_table_id
+    into v_number, v_area, v_label, v_table_id, v_store_table_id
+  from public.table_orders
+  where id = v_id;
+
+  if v_number is distinct from 1
+     or v_area is distinct from 'Salon'
+     or v_label is distinct from 'Salon 1'
+     or v_table_id is distinct from v_bahce
+     or v_store_table_id is distinct from v_bahce
+     or v_table_id is not distinct from v_salon
+  then
+    raise exception
+      'full move changed table identity number=% area=% label=% table_id=% store_table_id=% bahce=% salon=%',
+      v_number, v_area, v_label, v_table_id, v_store_table_id, v_bahce, v_salon;
+  end if;
+end
+$$;

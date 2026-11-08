@@ -640,6 +640,158 @@ void main() {
     },
   );
 
+  test(
+    'a stamped Salon row that still carries the Bahçe table id is not closed as Bahçe',
+    () {
+      final bahce = <String, dynamic>{
+        'id': 'bahce',
+        'seller_id': 'seller-a',
+        'table_number': 11,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_label': 'Bahçe 1',
+      };
+      final salon = <String, dynamic>{
+        'id': 'salon',
+        'seller_id': 'seller-a',
+        'table_number': 1,
+        'area_name': 'Salon',
+        'area_table_number': 1,
+        'display_label': 'Salon 1',
+      };
+      final source = <String, dynamic>{
+        'id': 'open-bahce',
+        'seller_id': 'seller-a',
+        'table_id': 'bahce',
+        'store_table_id': 'bahce',
+        'table_number': 11,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_table_label': 'Bahçe 1',
+        'status': 'sent',
+        '_garson_source_table': 'table_orders',
+        'items': const <Map<String, dynamic>>[],
+        'total': 90,
+      };
+      final moved = stampFullTransferDestination(
+        order: source,
+        destinationTable: salon,
+      );
+      expect(moved.applied, isTrue);
+      expect(moved.row['table_number'], 1);
+      expect(moved.row['area_name'], 'Salon');
+      expect(moved.row['area_table_number'], 1);
+      expect(moved.row['display_table_label'], 'Salon 1');
+      expect(moved.row['table_id'], 'bahce');
+      expect(moved.row['store_table_id'], 'bahce');
+      expect(
+        garsonTableProof(
+          table: bahce,
+          canonicalTableNumber: 11,
+          order: moved.row,
+          sellerId: 'seller-a',
+        ),
+        GarsonTableProof.none,
+      );
+      expect(
+        closeSessionTableOrderFromRawRow(
+          row: moved.row,
+          anchor: bahce,
+          canonicalTableNumber: 11,
+          sellerId: 'seller-a',
+        ),
+        isNull,
+      );
+      expect(
+        garsonTableOrderNeedsRealign(
+          order: moved.row,
+          table: bahce,
+          canonicalTableNumber: 11,
+          sellerId: 'seller-a',
+        ),
+        isFalse,
+      );
+      expect(
+        garsonTableProof(
+          table: salon,
+          canonicalTableNumber: 1,
+          order: moved.row,
+          sellerId: 'seller-a',
+        ),
+        GarsonTableProof.areaLabel,
+      );
+      final salonBill = closeSessionTableOrderFromRawRow(
+        row: moved.row,
+        anchor: salon,
+        canonicalTableNumber: 1,
+        sellerId: 'seller-a',
+      );
+      expect(salonBill, isNotNull);
+      expect(
+        garsonTableOrderNeedsRealign(
+          order: salonBill!,
+          table: salon,
+          canonicalTableNumber: 1,
+          sellerId: 'seller-a',
+        ),
+        isFalse,
+      );
+
+      final storeIdOnly = Map<String, dynamic>.from(moved.row)..remove('table_id');
+      expect(storeIdOnly['store_table_id'], 'bahce');
+      expect(
+        garsonTableProof(
+          table: bahce,
+          canonicalTableNumber: 11,
+          order: storeIdOnly,
+          sellerId: 'seller-a',
+        ),
+        GarsonTableProof.none,
+      );
+      expect(
+        garsonTableProof(
+          table: salon,
+          canonicalTableNumber: 1,
+          order: storeIdOnly,
+          sellerId: 'seller-a',
+        ),
+        GarsonTableProof.areaLabel,
+      );
+
+      final unstamped = <String, dynamic>{
+        'id': 'misindexed-bahce',
+        'seller_id': 'seller-a',
+        'table_id': 'bahce',
+        'table_number': 1,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_table_label': 'Bahçe 1',
+        'status': 'sent',
+        '_garson_source_table': 'table_orders',
+        'items': const <Map<String, dynamic>>[],
+        'total': 90,
+      };
+      expect(
+        garsonTableProof(
+          table: bahce,
+          canonicalTableNumber: 11,
+          order: unstamped,
+          sellerId: 'seller-a',
+        ),
+        GarsonTableProof.tableId,
+      );
+      expect(
+        garsonTableOrderNeedsRealign(
+          order: unstamped,
+          table: bahce,
+          canonicalTableNumber: 11,
+          sellerId: 'seller-a',
+        ),
+        isTrue,
+      );
+    },
+  );
+
   test('one pending job has a single winner and an uncertain print is not reprinted', () {
     final job = <String, String>{'status': 'pending'};
     final first = claimPendingJob(job);
