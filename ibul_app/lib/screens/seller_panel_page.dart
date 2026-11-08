@@ -36595,12 +36595,89 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     return _customerKitchenPendingForUi(snap);
   }
 
-  bool _canSubmitDraft() {
-    if (_draftItems.isEmpty || _isSubmitting) return false;
-    if (!_isEditingOrder) return true;
-    if (_currentEditingChangeSummary().hasChanges) return true;
-    if (!_editingOrderAwaitingCustomerKitchenSend()) return false;
-    return widget.onConfirmCustomerKitchenPrint != null;
+  String? _draftSubmitBlockedReason() {
+    if (_isSubmitting) return 'already_submitting';
+    if (_draftItems.isEmpty) return 'empty_draft';
+    if (!_isEditingOrder) return null;
+    if (_currentEditingChangeSummary().hasChanges) return null;
+    if (!_editingOrderAwaitingCustomerKitchenSend()) {
+      return 'edit_without_changes';
+    }
+    if (widget.onConfirmCustomerKitchenPrint == null) {
+      return 'kitchen_callback_missing';
+    }
+    return null;
+  }
+
+  bool _canSubmitDraft() => _draftSubmitBlockedReason() == null;
+
+  String _diagnosticTableId(int canonicalTable) {
+    final label = (widget.tableTitleOverride ?? '').trim();
+    for (final row in widget.storeTables) {
+      final stored = (row['display_label'] ?? row['display_table_label'] ?? '')
+          .toString()
+          .trim();
+      if (label.isEmpty || stored != label) continue;
+      final number = int.tryParse('${row['table_number']}') ?? 0;
+      if (canonicalTable > 0 && number > 0 && number != canonicalTable) {
+        continue;
+      }
+      final id = row['id']?.toString().trim() ?? '';
+      if (id.isNotEmpty) return id;
+    }
+    return 'missing';
+  }
+
+  Future<void> _logOrderSendDiagnostic(
+    String sendTraceId,
+    int canonicalTable,
+    String? blockedReason,
+  ) async {
+    final label = (widget.tableTitleOverride ?? '').trim();
+    ibulSendTrace(sendTraceId, 'table_resolved', {
+      'label': label.isEmpty ? '-' : label,
+      'requestedTable': widget.tableNumber,
+      'canonicalTable': canonicalTable,
+      'tableId': _diagnosticTableId(canonicalTable),
+    });
+    final items = _draftItems
+        .map((item) => _normalizeItem(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+    ibulSendTrace(sendTraceId, 'draft', {'itemCount': items.length});
+    if (blockedReason != null) {
+      ibulSendTrace(sendTraceId, 'blocked', {
+        'blocked_reason': blockedReason,
+        'writes': 0,
+      });
+    }
+    try {
+      final decision = await _orderPrintJobService.inspectSendDecision(
+        restaurantId: widget.sellerId,
+        tableNumber: canonicalTable,
+        items: items,
+      );
+      ibulSendTrace(sendTraceId, 'fingerprint', {
+        'chars': decision.fingerprintChars,
+        'tag': decision.fingerprintTag,
+        'canonicalTable': canonicalTable,
+      });
+      ibulSendTrace(sendTraceId, 'idempotency_key', {
+        'previous': decision.savedKey,
+        'lookupBeforeSend': decision.lookupBeforeSend,
+      });
+      ibulSendTrace(sendTraceId, 'resolveGarsonSubmitKey', {
+        'decision': 'absent_on_this_commit',
+      });
+    } catch (error) {
+      ibulSendTrace(sendTraceId, 'diagnostic_read_failed', {
+        'error': error.runtimeType.toString(),
+        'writes': 0,
+      });
+    }
+    ibulSendTrace(sendTraceId, 'diagnostic_done', {
+      'writes': 0,
+      'rpc': 'not_started',
+    });
   }
 
   Map<String, dynamic> _orderChangeSummaryPayload(
@@ -37089,21 +37166,39 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   Future<void> _submitDraft(
     List<Map<String, dynamic>> existingTableOrders,
   ) async {
-    if (_isSubmitting) return;
-    if (!_canSubmitDraft()) return;
+    final sendTraceId =
+        'send-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
+    final submitting = _isSubmitting;
+    final canSubmit = _canSubmitDraft();
+    final blockedReason = _draftSubmitBlockedReason();
+    final label = (widget.tableTitleOverride ?? '').trim();
+    ibulSendTrace(sendTraceId, 'button_pressed', {
+      'label': label.isEmpty ? '-' : label,
+      'requestedTable': widget.tableNumber,
+      'isSubmitting': submitting,
+      'canSubmitDraft': canSubmit,
+      'blocked_reason': blockedReason ?? 'none',
+    });
     final canonicalTableNumber = canonicalStoreTableNumber(
       requestedNumber: widget.tableNumber,
       displayLabel: widget.tableTitleOverride,
       tables: widget.storeTables,
     );
-    final sendTraceId =
-        'send-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
-    ibulSendTrace(sendTraceId, 'button_pressed', {
-      'label': widget.tableTitleOverride ?? '-',
-      'requestedTable': widget.tableNumber,
-    });
+    if (ibulOrderWritesForbidden) {
+      await _logOrderSendDiagnostic(
+        sendTraceId,
+        canonicalTableNumber,
+        blockedReason,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tanılama tamam. Sunucuya yazılmadı.')),
+      );
+      return;
+    }
+    if (blockedReason != null) return;
     ibulSendTrace(sendTraceId, 'table_resolved', {
-      'label': widget.tableTitleOverride ?? '-',
+      'label': label.isEmpty ? '-' : label,
       'requestedTable': widget.tableNumber,
       'canonicalTable': canonicalTableNumber,
     });
@@ -37143,7 +37238,12 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
 
       if (customerKitchenSendOnly) {
         final cb = widget.onConfirmCustomerKitchenPrint;
-        if (cb == null) return;
+        if (cb == null) {
+          ibulSendTrace(sendTraceId, 'blocked', {
+            'blocked_reason': 'kitchen_callback_missing',
+          });
+          return;
+        }
         final submittedItems = _draftItems
             .map((item) => Map<String, dynamic>.from(item))
             .toList(growable: false);
@@ -37154,7 +37254,12 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           ),
         );
         if (!mounted) return;
-        if (!kitchenOk) return;
+        if (!kitchenOk) {
+          ibulSendTrace(sendTraceId, 'blocked', {
+            'blocked_reason': 'kitchen_not_confirmed',
+          });
+          return;
+        }
         final snap = _editingOrderSnapshot;
         final pseudoSubmitted =
             snap == null
@@ -37186,6 +37291,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       if (editingId != null &&
           editingId.isNotEmpty &&
           !changeSummary.hasChanges) {
+        ibulSendTrace(sendTraceId, 'blocked', {
+          'blocked_reason': 'edit_without_changes',
+        });
         return;
       }
       final regularCount = items
@@ -40779,12 +40887,19 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                 ),
                 if (!isNarrowHeader)
                   Text(
-                    'Garson İşlem Ekranı',
+                    ibulOrderWritesForbidden
+                        ? 'Tanılama açık'
+                        : 'Garson İşlem Ekranı',
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                   ),
               ],
             ),
             actions: [
+              if (ibulOrderWritesForbidden)
+                TextButton(
+                  onPressed: () => _submitDraft(tableOrders),
+                  child: const Text('Tanıla'),
+                ),
               if (_draftItems.isNotEmpty &&
                   _bottomIndex != 2 &&
                   !isNarrowHeader)

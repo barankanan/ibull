@@ -989,23 +989,10 @@ class OrderPrintJobService {
     }
   }
 
-  Future<OrderPrintJobDispatchResult> dispatchNewOrder({
+  List<Map<String, dynamic>> _normalizedSendItems({
     required String restaurantId,
-    required int tableNumber,
     required List<Map<String, dynamic>> items,
-    String? waiterId,
-    String? waiterName,
-    String? notes,
-    String jobType = 'new_order',
-    bool garsonDesktopFastKitchen = false,
-    String? idempotencyKey,
-    String? traceId,
-  }) async {
-    final resolvedTraceId = (traceId ?? '').trim().isEmpty
-        ? _generateTraceId()
-        : traceId!.trim();
-    final pipelineStartedAt = DateTime.now().toIso8601String();
-    final pipelineWatch = Stopwatch()..start();
+  }) {
     final productMappings = mergedKitchenProductMappingsForRestaurant(
       restaurantId,
     );
@@ -1021,10 +1008,82 @@ class OrderPrintJobService {
           productStationByProductId: productMappings,
           restaurantId: restaurantId,
         );
-    final normalized = _routingService
+    return _routingService
         .normalizeItems(enrichedItems)
         .map((item) => item.toPayloadMap())
         .toList(growable: false);
+  }
+
+  /// Reads the saved send key. Does not mint a key, flush the ledger, or
+  /// call the order RPC.
+  Future<OrderSendDiagnosticDecision> inspectSendDecision({
+    required String restaurantId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> items,
+    String jobType = 'new_order',
+  }) async {
+    final normalized = _normalizedSendItems(
+      restaurantId: restaurantId,
+      items: items,
+    );
+    if (normalized.isEmpty) {
+      return decideOrderSendDiagnostic(
+        itemCount: 0,
+        fingerprint: '',
+        savedKeyPresent: false,
+      );
+    }
+    final fingerprint = orderSendActionFingerprint(
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+      jobType: jobType,
+      items: normalized,
+    );
+    await _ensureSendKeysLoaded();
+    return decideOrderSendDiagnostic(
+      itemCount: normalized.length,
+      fingerprint: fingerprint,
+      savedKeyPresent: _sendKeys.snapshot.containsKey(fingerprint),
+    );
+  }
+
+  @visibleForTesting
+  Future<String> debugNormalizedSendFingerprint({
+    required String restaurantId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> items,
+    String jobType = 'new_order',
+  }) async {
+    return orderSendActionFingerprint(
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+      jobType: jobType,
+      items: _normalizedSendItems(restaurantId: restaurantId, items: items),
+    );
+  }
+
+  Future<OrderPrintJobDispatchResult> dispatchNewOrder({
+    required String restaurantId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> items,
+    String? waiterId,
+    String? waiterName,
+    String? notes,
+    String jobType = 'new_order',
+    bool garsonDesktopFastKitchen = false,
+    String? idempotencyKey,
+    String? traceId,
+  }) async {
+    refuseDiagnosticOrderWrite('create_table_order_with_print_jobs');
+    final resolvedTraceId = (traceId ?? '').trim().isEmpty
+        ? _generateTraceId()
+        : traceId!.trim();
+    final pipelineStartedAt = DateTime.now().toIso8601String();
+    final pipelineWatch = Stopwatch()..start();
+    final normalized = _normalizedSendItems(
+      restaurantId: restaurantId,
+      items: items,
+    );
 
     if (normalized.isEmpty) {
       ibulSendTrace(resolvedTraceId, 'rpc_not_started', {
@@ -1524,6 +1583,7 @@ class OrderPrintJobService {
     required String restaurantId,
     required String printJobId,
   }) async {
+    refuseDiagnosticOrderWrite('retry_print_job');
     await _client
         .from('print_jobs')
         .update({'status': 'pending', 'last_error': null, 'printed_at': null})
@@ -1544,6 +1604,7 @@ class OrderPrintJobService {
     required String tableOrderId,
     String? waiterName,
   }) async {
+    refuseDiagnosticOrderWrite('create_table_order_with_print_jobs');
     final row = await _client
         .from('table_orders')
         .select('id, seller_id, table_number, items')
@@ -1672,6 +1733,7 @@ class OrderPrintJobService {
     String? idempotencyKey,
     bool lookupBeforeSend = false,
   }) async {
+    refuseDiagnosticOrderWrite('create_table_order_with_print_jobs');
     final noteText =
         '$traceId${notes != null && notes.isNotEmpty ? ' $notes' : ''}';
     final params = buildCreateTableOrderRpcParams(

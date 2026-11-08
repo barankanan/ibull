@@ -6,8 +6,10 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ibul_app/services/desktop_print_orchestrator.dart';
 import 'package:ibul_app/services/order_print_job_service.dart';
+import 'package:ibul_app/services/order_send_access.dart';
 import 'package:ibul_app/services/print_station_service.dart';
 import 'package:ibul_app/services/printer_repository.dart';
+import 'package:ibul_app/services/store/store_table_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -343,4 +345,141 @@ void main() {
       await client.dispose();
     },
   );
+
+  test('diagnostic mode cannot send, print, pay, close, or transfer', () async {
+    debugOrderWritesForbiddenOverride = true;
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final requests = <String>[];
+    final client = SupabaseClient(
+      'https://example.supabase.co',
+      'test-key',
+      httpClient: MockClient((request) async {
+        requests.add('${request.method} ${request.url}');
+        return http.Response(
+          '{"message":"unexpected"}',
+          500,
+          headers: {'content-type': 'application/json'},
+          request: request,
+        );
+      }),
+    );
+    final items = <Map<String, dynamic>>[
+      {'name': 'Soup', 'quantity': 1, 'price': 10},
+    ];
+    OrderPrintJobService service() {
+      return OrderPrintJobService(
+        client: client,
+        printerRepository: PrinterRepository(client: client),
+        printOrchestrator: DesktopPrintOrchestrator(
+          printerRepository: PrinterRepository(client: client),
+          printStationService: PrintStationService(client: client),
+        ),
+      );
+    }
+
+    try {
+      final printService = service();
+      await expectLater(
+        printService.dispatchNewOrder(
+          restaurantId: '10000000-0000-0000-0000-000000000001',
+          tableNumber: 11,
+          items: items,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'Tanılama modu yazmayı reddetti.',
+          ),
+        ),
+      );
+      await expectLater(
+        printService.dispatchNewOrderFromTableOrder(tableOrderId: 'order-1'),
+        throwsA(isA<StateError>()),
+      );
+      await expectLater(
+        printService.retryPrintJob(
+          restaurantId: '10000000-0000-0000-0000-000000000001',
+          printJobId: 'job-1',
+        ),
+        throwsA(isA<StateError>()),
+      );
+      final tables = StoreTableService(
+        supabase: client,
+        currentUserIdResolver: () => 'staff',
+      );
+      await expectLater(
+        tables.closeTableWithHistory(
+          sellerId: '10000000-0000-0000-0000-000000000001',
+          tableNumber: 11,
+          paymentMethod: 'cash',
+        ),
+        throwsA(isA<StateError>()),
+      );
+      await expectLater(
+        tables.closeTableOrders(
+          sellerId: '10000000-0000-0000-0000-000000000001',
+          tableNumber: 11,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      await expectLater(
+        tables.recordTablePayment(
+          sellerId: '10000000-0000-0000-0000-000000000001',
+          tableNumber: 11,
+          sessionKey: 'session',
+          amount: 10,
+          method: 'cash',
+        ),
+        throwsA(isA<StateError>()),
+      );
+      await expectLater(
+        tables.transferTableOrders(
+          sellerId: '10000000-0000-0000-0000-000000000001',
+          fromTable: 11,
+          toTable: 13,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      await expectLater(
+        tables.updateTableOrder('order-1', status: 'sent'),
+        throwsA(isA<StateError>()),
+      );
+      expect(requests, isEmpty);
+
+      debugOrderWritesForbiddenOverride = false;
+      final fingerprint = await printService.debugNormalizedSendFingerprint(
+        restaurantId: '10000000-0000-0000-0000-000000000001',
+        tableNumber: 11,
+        items: items,
+      );
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'ibul.order_send_ledger.v1': jsonEncode({fingerprint: 'kept-key'}),
+      });
+      final decision = await service().inspectSendDecision(
+        restaurantId: '10000000-0000-0000-0000-000000000001',
+        tableNumber: 11,
+        items: items,
+      );
+      expect(decision.itemCount, greaterThan(0));
+      expect(decision.savedKey, 'found');
+      expect(decision.lookupBeforeSend, 'would_run');
+      expect(decision.fingerprintTag, isNot(contains('Soup')));
+      expect(requests, isEmpty);
+      final stored = await SharedPreferences.getInstance();
+      expect(stored.getString('ibul.order_send_ledger.v1'), contains('kept-key'));
+
+      final empty = await service().inspectSendDecision(
+        restaurantId: '10000000-0000-0000-0000-000000000001',
+        tableNumber: 11,
+        items: const <Map<String, dynamic>>[],
+      );
+      expect(empty.savedKey, 'not_checked');
+      expect(empty.lookupBeforeSend, 'skipped');
+      expect(requests, isEmpty);
+    } finally {
+      debugOrderWritesForbiddenOverride = null;
+      await client.dispose();
+    }
+  });
 }

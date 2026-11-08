@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/services/order_send_access.dart';
@@ -879,5 +880,71 @@ void main() {
       fingerprint: 'bahce|11|salad-1',
     );
     expect(retry, first);
+  });
+
+  test('diagnostic writes are refused only in a debug build', () {
+    expect(
+      orderWritesForbidden(debugMode: false, diagnosticRequested: true),
+      isFalse,
+    );
+    expect(
+      orderWritesForbidden(debugMode: true, diagnosticRequested: false),
+      isFalse,
+    );
+    expect(
+      orderWritesForbidden(debugMode: true, diagnosticRequested: true),
+      isTrue,
+    );
+  });
+
+  test('send diagnostic reports the key decision without the draft text', () {
+    const fingerprint = 'restaurant|11|new_order|secret-customer-note';
+    final saved = decideOrderSendDiagnostic(
+      itemCount: 2,
+      fingerprint: fingerprint,
+      savedKeyPresent: true,
+    );
+    expect(saved.savedKey, 'found');
+    expect(saved.lookupBeforeSend, 'would_run');
+    expect(saved.fingerprintTag, isNot(contains('secret-customer-note')));
+    expect(saved.fingerprintTag, orderSendFingerprintTag(fingerprint));
+
+    final missing = decideOrderSendDiagnostic(
+      itemCount: 2,
+      fingerprint: fingerprint,
+      savedKeyPresent: false,
+    );
+    expect(missing.savedKey, 'absent');
+    expect(missing.lookupBeforeSend, 'skipped');
+
+    final empty = decideOrderSendDiagnostic(
+      itemCount: 0,
+      fingerprint: fingerprint,
+      savedKeyPresent: true,
+    );
+    expect(empty.savedKey, 'not_checked');
+    expect(empty.lookupBeforeSend, 'skipped');
+    expect(empty.fingerprintTag, 'skipped');
+  });
+
+  test('the send tap is logged before a blocked return or the order RPC', () {
+    final source = File('lib/screens/seller_panel_page.dart').readAsStringSync();
+    final helperStart = source.indexOf('Future<void> _logOrderSendDiagnostic(');
+    final submitStart = source.indexOf('Future<void> _submitDraft(');
+    final helper = source.substring(helperStart, submitStart);
+    expect(helper.contains('inspectSendDecision'), isTrue);
+    expect(helper.contains('dispatchNewOrder'), isFalse);
+    expect(helper.contains('.rpc('), isFalse);
+
+    final submitEnd = source.indexOf('Widget _buildCategoryChips(', submitStart);
+    final body = source.substring(submitStart, submitEnd);
+    final pressed = body.indexOf("'button_pressed'");
+    final diagnostic = body.indexOf('if (ibulOrderWritesForbidden)');
+    final blocked = body.indexOf('if (blockedReason != null) return;');
+    final dispatch = body.indexOf('dispatchNewOrder(');
+    expect(pressed, greaterThanOrEqualTo(0));
+    expect(pressed, lessThan(diagnostic));
+    expect(diagnostic, lessThan(blocked));
+    expect(blocked, lessThan(dispatch));
   });
 }

@@ -12,6 +12,7 @@ import '../../utils/garson_active_orders_fetch.dart';
 import '../../utils/order_status_constants.dart';
 import '../../utils/table_labels.dart';
 import '../bill_edit_access.dart';
+import '../order_send_access.dart';
 import 'table_close_history_fallback.dart';
 import 'table_operation_access.dart';
 import 'table_order_history_utils.dart';
@@ -1436,6 +1437,7 @@ class StoreTableService {
     Map<String, dynamic>? lastEditSummary,
     String? lastEditNote,
   }) async {
+    refuseDiagnosticOrderWrite('update_table_order');
     final updateData = <String, dynamic>{};
     if (status != null) {
       updateData['status'] = status;
@@ -1853,6 +1855,7 @@ class StoreTableService {
     required String sellerId,
     required int tableNumber,
   }) async {
+    refuseDiagnosticOrderWrite('close_table_orders');
     // ── Strategy: try RPC first (SECURITY DEFINER — bypasses RLS and the
     // broken DELETE trigger), fall back to direct DELETE only if RPC is
     // unavailable.  The RPC uses UPDATE status='archived' internally so it
@@ -2001,6 +2004,7 @@ class StoreTableService {
     String? note,
     String? idempotencyKey,
   }) async {
+    refuseDiagnosticOrderWrite('record_table_payment');
     final resolvedSellerId = _resolveSellerId(sellerId);
     final resolvedSession = sessionKey.trim();
     final resolvedMethod = method.trim();
@@ -2304,6 +2308,7 @@ class StoreTableService {
     String? waiterName,
     String? sessionKey,
   }) async {
+    refuseDiagnosticOrderWrite('close_table_with_history');
     try {
       final raw = await _supabase
           .rpc(
@@ -2769,6 +2774,7 @@ class StoreTableService {
     String? waiterName,
     String? note,
   }) async {
+    refuseDiagnosticOrderWrite('transfer_table_orders');
     if (fromTable <= 0 || toTable <= 0) {
       throw Exception('Geçersiz masa numarası.');
     }

@@ -9,6 +9,98 @@ const String ibulBuildCommit = String.fromEnvironment(
   defaultValue: 'unknown',
 );
 
+/// Debug-only. Release and profile builds ignore this flag.
+const bool ibulOrderDiagnosticOnly = bool.fromEnvironment(
+  'IBUL_ORDER_DIAGNOSTIC_ONLY',
+  defaultValue: false,
+);
+
+/// Tests set this. Production leaves it null.
+@visibleForTesting
+bool? debugOrderWritesForbiddenOverride;
+
+/// Diagnostic mode exists only in a debug build. A release binary keeps
+/// sending even if the flag was baked in by mistake.
+bool orderWritesForbidden({
+  required bool debugMode,
+  required bool diagnosticRequested,
+}) {
+  if (!debugMode) return false;
+  return diagnosticRequested;
+}
+
+bool get ibulOrderWritesForbidden {
+  final override = debugOrderWritesForbiddenOverride;
+  if (override != null) return override;
+  return orderWritesForbidden(
+    debugMode: kDebugMode,
+    diagnosticRequested: ibulOrderDiagnosticOnly,
+  );
+}
+
+/// Stops an order, print, payment, close, or transfer write.
+void refuseDiagnosticOrderWrite(String operation) {
+  if (!ibulOrderWritesForbidden) return;
+  ibulSendTrace('diagnostic', 'write_refused', {
+    'operation': operation,
+    'writes': 0,
+  });
+  throw StateError('Tanılama modu yazmayı reddetti.');
+}
+
+/// Non-reversible tag so two drafts can be compared without logging items.
+String orderSendFingerprintTag(String fingerprint) {
+  var hash = 0x811c9dc5;
+  for (final unit in fingerprint.codeUnits) {
+    hash ^= unit;
+    hash = (hash * 0x01000193) & 0x7fffffff;
+  }
+  return hash.toRadixString(16);
+}
+
+class OrderSendDiagnosticDecision {
+  const OrderSendDiagnosticDecision({
+    required this.itemCount,
+    required this.fingerprintChars,
+    required this.fingerprintTag,
+    required this.savedKey,
+    required this.lookupBeforeSend,
+  });
+
+  final int itemCount;
+  final int fingerprintChars;
+  final String fingerprintTag;
+
+  /// `found`, `absent`, or `not_checked`.
+  final String savedKey;
+
+  /// `would_run` or `skipped`. The lookup itself is not executed.
+  final String lookupBeforeSend;
+}
+
+OrderSendDiagnosticDecision decideOrderSendDiagnostic({
+  required int itemCount,
+  required String fingerprint,
+  required bool savedKeyPresent,
+}) {
+  if (itemCount <= 0) {
+    return const OrderSendDiagnosticDecision(
+      itemCount: 0,
+      fingerprintChars: 0,
+      fingerprintTag: 'skipped',
+      savedKey: 'not_checked',
+      lookupBeforeSend: 'skipped',
+    );
+  }
+  return OrderSendDiagnosticDecision(
+    itemCount: itemCount,
+    fingerprintChars: fingerprint.length,
+    fingerprintTag: orderSendFingerprintTag(fingerprint),
+    savedKey: savedKeyPresent ? 'found' : 'absent',
+    lookupBeforeSend: savedKeyPresent ? 'would_run' : 'skipped',
+  );
+}
+
 void ibulSendTrace(
   String traceId,
   String stage, [

@@ -80,7 +80,10 @@ String _resolveDesktopRestaurantId(LoginRouteResolution resolution) {
 void main() async {
   final sw = Stopwatch()..start();
   WidgetsFlutterBinding.ensureInitialized();
-  debugPrint('[IBUL_BUILD] commit=$ibulBuildCommit target=lib/main_seller.dart');
+  debugPrint(
+    '[IBUL_BUILD] commit=$ibulBuildCommit target=lib/main_seller.dart '
+    'diagnostic=${ibulOrderWritesForbidden ? 'on' : 'off'}',
+  );
 
   configureAppDiagnostics(
     startupMessage: 'İbul Satıcı — desktop startup',
