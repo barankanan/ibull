@@ -667,6 +667,7 @@ class StoreTableService {
   Future<List<Map<String, dynamic>>> getTableOrdersSnapshot(
     String sellerId, {
     int? tableNumber,
+    bool surfaceErrors = false,
   }) async {
     final resolvedSellerId = sellerId.trim();
     if (resolvedSellerId.isEmpty) {
@@ -714,6 +715,7 @@ class StoreTableService {
         error: error,
         stack: stack,
       );
+      if (surfaceErrors) rethrow;
     } on TimeoutException catch (error, stack) {
       logGarsonActiveOrdersFetchError(
         restaurantId: resolvedSellerId,
@@ -721,6 +723,7 @@ class StoreTableService {
         error: error,
         stack: stack,
       );
+      if (surfaceErrors) rethrow;
     } catch (error, stack) {
       logGarsonActiveOrdersFetchError(
         restaurantId: resolvedSellerId,
@@ -728,6 +731,7 @@ class StoreTableService {
         error: error,
         stack: stack,
       );
+      if (surfaceErrors) rethrow;
     }
 
     final restaurantOrdersQuery =
@@ -758,6 +762,7 @@ class StoreTableService {
         error: error,
         stack: stack,
       );
+      if (surfaceErrors) rethrow;
     }
 
     final merged = mergeGarsonActiveOrderSources(
@@ -1219,7 +1224,10 @@ class StoreTableService {
       );
     }
     try {
-      final orders = await getTableOrdersSnapshot(resolved);
+      final orders = await getTableOrdersSnapshot(
+        resolved,
+        surfaceErrors: true,
+      );
       final tableCount = await _exactOpenCount(
         table: 'table_orders',
         sellerColumn: 'seller_id',
@@ -1232,9 +1240,12 @@ class StoreTableService {
         sellerId: resolved,
         tableOrders: false,
       );
-      final complete = tableCount != null &&
-          restaurantCount != null &&
-          orders.length == tableCount + restaurantCount;
+      final complete = openOrderReadIsComplete(
+        tableFetchFailed: false,
+        restaurantFetchFailed: false,
+        openTableOrders: tableCount,
+        openCustomerOrders: restaurantCount,
+      );
       return GarsonOpenOrderRead(
         orders: orders,
         succeeded: true,

@@ -1364,11 +1364,17 @@ class OrderPrintJobService {
       },
     };
 
+    final savedOrderId = data['order_id']?.toString().trim() ?? '';
+    if (savedOrderId.isEmpty) {
+      throw StateError(
+        'Sipariş sonucu doğrulanamadı. Aynı gönderim anahtarı duruyor.',
+      );
+    }
     _releaseUnsettledOrderSave(restaurantId, sendKey);
     _sendKeys.complete(sendFingerprint);
     await _sendKeys.flush();
     return OrderPrintJobDispatchResult(
-      orderId: data['order_id']?.toString(),
+      orderId: savedOrderId,
       orderNumber: data['order_number']?.toString(),
       printJobCount: (data['print_job_count'] as num?)?.toInt() ?? 0,
       printJobIds: printJobIds,

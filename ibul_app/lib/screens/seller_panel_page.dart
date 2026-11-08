@@ -41,7 +41,6 @@ import '../services/campaign_service.dart';
 import '../services/order_service.dart';
 import '../services/kitchen_print_trace_log.dart';
 import '../services/order_print_job_service.dart';
-import '../services/order_send_access.dart';
 import '../services/desktop_print_orchestrator.dart';
 import '../services/desktop_print_hub.dart';
 import '../services/printer_encoding_profile_store.dart';
@@ -614,6 +613,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   List<Map<String, dynamic>> _garsonPendingIncomingTableAreas =
       <Map<String, dynamic>>[];
   GarsonBoardState _garsonBoardState = const GarsonBoardState();
+  final Map<int, String> _garsonCloseSessionKeyByTable = <int, String>{};
   String? _garsonManualTableOrdersSellerId;
   String? _garsonManualTableOrdersSignature;
   bool _hasLoadedGarsonTableOrdersData = false;
@@ -2701,12 +2701,24 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         ),
       );
       _guardGarsonStaleTableRouteOnBoard(source: 'garson_manual_refresh_done');
+      if (mounted) setState(() {});
       debugPrint(
         '[GarsonManualRefresh][done] '
         'tables=${_storeTables.length} '
         'products=${_products.length} '
         'orders=${_garsonManualTableOrders.length}',
       );
+    } catch (error) {
+      debugPrint('[GarsonManualRefresh][error] $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Masalar yenilenemedi. Bağlantıyı kontrol edin. Eski kartlar duruyor.',
+            ),
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         _safeSetState(() {
@@ -3520,6 +3532,17 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       _pruneExpiredGarsonClosedTableMarkers(source: source);
       final openRead = await _storeService.readVerifiedOpenOrders(sellerId);
       final fresh = openRead.orders;
+      if (openRead.succeeded && openRead.complete) {
+        final openTables = <int>{
+          for (final order in fresh) _garsonTableNumberFromOrder(order),
+        };
+        _mobileGarsonOptimisticSentAtByTable.removeWhere(
+          (number, _) => !openTables.contains(number),
+        );
+        _mobileGarsonOptimisticItemsByTable.removeWhere(
+          (number, _) => !openTables.contains(number),
+        );
+      }
       final visibleWithoutStaleBills = dropCachedBillsMissingFromOpenSnapshot(
         visibleOrders: _garsonManualTableOrders,
         serverRead: openRead,
@@ -14354,6 +14377,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       );
       return;
     }
+    tableNumber = canonicalStoreTableNumber(
+      requestedNumber: tableNumber,
+      displayLabel: tableLabel,
+      tables: _garsonVisibleTablesForUi(),
+    );
+    final sessionKey = _garsonCloseSessionKeyByTable.putIfAbsent(
+      tableNumber,
+      () =>
+          'session_${sellerId}_${tableNumber}_${DateTime.now().millisecondsSinceEpoch}',
+    );
 
     // Snapshot of board state taken BEFORE any mutation. Restored if DB
     // operations fail so the board never shows stale empty state.
@@ -14378,6 +14411,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       if (sessionOrders.isEmpty) {
         if (!mounted) return;
         setState(() {
+          _mobileGarsonOptimisticSentAtByTable.remove(tableNumber);
+          _mobileGarsonOptimisticItemsByTable.remove(tableNumber);
           _garsonManualTableOrders = _garsonManualTableOrders
               .where(
                 (order) => !garsonOrderBelongsToCloseTable(
@@ -14392,6 +14427,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             _garsonManualTableOrders,
           );
         });
+        _publishGarsonVisibleOrders(
+          _garsonManualTableOrders,
+          source: 'garson_close_verified_empty',
+          forceApply: true,
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(garsonCloseTableAlreadyEmptySnackbarText(tableLabel)),
@@ -14457,8 +14497,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           paymentMethod: 'cash',
           waiterId: currentUser?.id,
           waiterName: _sellerPrintJobService.safeUserDisplayName(currentUser),
+          sessionKey: sessionKey,
         );
         writesForbidden = closeResult['writes_forbidden'] == true;
+        if (!writesForbidden) {
+          _garsonCloseSessionKeyByTable.remove(tableNumber);
+        }
         bulkCloseCommitted = true;
         final reportedClosed = closeResult['orders_updated'];
         if (reportedClosed is num) {
@@ -33954,7 +33998,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   bool _isLoadingProducts = false;
   bool _hasShownRealtimeFallbackWarning = false;
   bool _isSubmitting = false;
-  String? _orderSendIdempotencyKey;
   late int _bottomIndex;
   String _selectedCategory = 'Tümü';
   String? _editingOrderId;
@@ -34658,7 +34701,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     return <String, dynamic>{
       'id': result.orderId ?? raw['order_id']?.toString(),
       'seller_id': widget.sellerId,
-      'table_number': widget.tableNumber,
+      'table_number': canonicalStoreTableNumber(
+        requestedNumber: widget.tableNumber,
+        displayLabel: widget.tableTitleOverride,
+        tables: widget.storeTables,
+      ),
       'items': items,
       'status': status,
       'created_at':
@@ -37010,8 +37057,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   ) async {
     if (_isSubmitting) return;
     if (!_canSubmitDraft()) return;
-    _orderSendIdempotencyKey ??= newOrderSendIdempotencyKey();
-    final sendKey = _orderSendIdempotencyKey!;
+    final canonicalTableNumber = canonicalStoreTableNumber(
+      requestedNumber: widget.tableNumber,
+      displayLabel: widget.tableTitleOverride,
+      tables: widget.storeTables,
+    );
     setState(() => _isSubmitting = true);
     final pipelineWatch = Stopwatch()..start();
     final isUpdate =
@@ -37285,13 +37335,12 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         final orderDispatchWatch = Stopwatch()..start();
         final dispatchResult = await _orderPrintJobService.dispatchNewOrder(
           restaurantId: widget.sellerId,
-          tableNumber: widget.tableNumber,
+          tableNumber: canonicalTableNumber,
           items: items,
           waiterId: _currentWaiterId(),
           waiterName: _currentWaiterName(),
           jobType: 'new_order',
           garsonDesktopFastKitchen: canFastKitchen,
-          idempotencyKey: sendKey,
         );
         kitchenPerfDbSaveMs = orderDispatchWatch.elapsedMilliseconds;
         _orderPrintJobService.debugLogResult(dispatchResult);
@@ -37411,11 +37460,16 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         'ok': dispatchFeedback.physicallyDispatched,
       });
       if (!mounted) return;
+      final savedOrderId = submittedOrder['id']?.toString().trim() ?? '';
+      if ((editingId == null || editingId.isEmpty) && savedOrderId.isEmpty) {
+        throw StateError(
+          'Sipariş sonucu doğrulanamadı. Aynı gönderim anahtarı duruyor.',
+        );
+      }
       final actionLabel = (editingId != null && editingId.isNotEmpty)
           ? 'Sipariş güncellendi.'
           : 'Sipariş gönderildi.';
       setState(() {
-        _orderSendIdempotencyKey = null;
         _draftItems.clear();
         _editingOrderId = null;
         _editingOrderSnapshot = null;
@@ -37438,7 +37492,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         _startPrintCompletionTracking(dispatchFeedback);
       }
       _notifyDraftChanged();
-      widget.onOrderSubmitted?.call(widget.tableNumber, items, submittedOrder);
+      widget.onOrderSubmitted?.call(
+        canonicalTableNumber,
+        items,
+        submittedOrder,
+      );
       if (!widget.debugDisableLiveSync && !widget.debugUseLocalSubmit) {
         unawaited(_refreshTableOrdersAfterSubmit());
       }

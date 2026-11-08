@@ -490,4 +490,97 @@ void main() {
       'Sipariş kalemleri boş olamaz.',
     );
   });
+
+  test('Bahçe 1 uses canonical 11 and Salon 1 stays 1', () {
+    final tables = <Map<String, dynamic>>[
+      {'table_number': 1, 'display_label': 'Salon 1', 'area_name': 'Salon'},
+      {
+        'table_number': 11,
+        'display_label': 'Bahçe 1',
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+      },
+    ];
+    expect(
+      canonicalStoreTableNumber(
+        requestedNumber: 1,
+        displayLabel: 'Bahçe 1',
+        tables: tables,
+      ),
+      11,
+    );
+    expect(
+      canonicalStoreTableNumber(
+        requestedNumber: 11,
+        displayLabel: 'Bahçe 1',
+        tables: tables,
+      ),
+      11,
+    );
+    expect(
+      canonicalStoreTableNumber(
+        requestedNumber: 1,
+        displayLabel: 'Salon 1',
+        tables: tables,
+      ),
+      1,
+    );
+  });
+
+  test('a filtered short read is complete and a capped or failed read is not', () {
+    expect(
+      openOrderReadIsComplete(
+        tableFetchFailed: false,
+        restaurantFetchFailed: false,
+        openTableOrders: 0,
+        openCustomerOrders: 10,
+      ),
+      isTrue,
+    );
+    expect(
+      openOrderReadIsComplete(
+        tableFetchFailed: false,
+        restaurantFetchFailed: false,
+        openTableOrders: 0,
+        openCustomerOrders: 200,
+      ),
+      isFalse,
+    );
+    expect(
+      openOrderReadIsComplete(
+        tableFetchFailed: true,
+        restaurantFetchFailed: false,
+        openTableOrders: 0,
+        openCustomerOrders: 0,
+      ),
+      isFalse,
+    );
+    expect(
+      openOrderReadIsComplete(
+        tableFetchFailed: false,
+        restaurantFetchFailed: false,
+        openTableOrders: null,
+        openCustomerOrders: 0,
+      ),
+      isFalse,
+    );
+  });
+
+  test('a different cart does not reuse another send key', () {
+    final ledger = OrderSendKeyLedger();
+    final first = resolveOrderSendKey(
+      ledger: ledger,
+      fingerprint: 'bahce|11|salad-1',
+    );
+    final changed = resolveOrderSendKey(
+      ledger: ledger,
+      fingerprint: 'bahce|11|salad-3',
+    );
+    expect(changed, isNot(first));
+    final retry = resolveOrderSendKey(
+      ledger: ledger,
+      fingerprint: 'bahce|11|salad-1',
+    );
+    expect(retry, first);
+  });
 }

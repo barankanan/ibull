@@ -711,6 +711,43 @@ List<Map<String, dynamic>> garsonRowsForTableClose({
   ];
 }
 
+/// Bahçe 1 is canonical table 11. A card titled Bahçe 1 must not use Salon 1.
+int canonicalStoreTableNumber({
+  required int requestedNumber,
+  required String? displayLabel,
+  required List<Map<String, dynamic>> tables,
+}) {
+  final label = displayLabel?.trim() ?? '';
+  if (label.isNotEmpty) {
+    for (final row in tables) {
+      final stored = (row['display_label'] ?? row['display_table_label'] ?? '')
+          .toString()
+          .trim();
+      if (stored != label) continue;
+      final number = _firstPositiveInt(<dynamic>[row['table_number']]);
+      if (number > 0) return number;
+    }
+  }
+  return requestedNumber > 0 ? requestedNumber : 0;
+}
+
+/// A short visible list can still be complete. The 200-row cap is not.
+/// A failed fetch is never complete, so a refresh cannot wipe the card.
+bool openOrderReadIsComplete({
+  required bool tableFetchFailed,
+  required bool restaurantFetchFailed,
+  required int? openTableOrders,
+  required int? openCustomerOrders,
+  int restaurantFetchCap = 200,
+  int tableFetchCap = 1000,
+}) {
+  if (tableFetchFailed || restaurantFetchFailed) return false;
+  if (openTableOrders == null || openCustomerOrders == null) return false;
+  if (openTableOrders >= tableFetchCap) return false;
+  if (openCustomerOrders >= restaurantFetchCap) return false;
+  return true;
+}
+
 class GarsonOpenOrderRead {
   const GarsonOpenOrderRead({
     required this.orders,
