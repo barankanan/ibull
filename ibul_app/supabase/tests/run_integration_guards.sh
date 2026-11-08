@@ -18,6 +18,7 @@ apply_filename_order() {
   $PSQL -d "$db" -f "$MIG/20261107_table_operation_staff_guard.sql"
   $PSQL -d "$db" -f "$MIG/20261107_waiter_request_single_order.sql"
   $PSQL -d "$db" -f "$MIG/20261107_order_identity_idempotency.sql"
+  $PSQL -d "$db" -f "$MIG/20261108_transfer_full_move_destination_labels.sql"
 }
 
 apply_waiter_before_send() {
@@ -30,6 +31,7 @@ apply_waiter_before_send() {
   $PSQL -d "$db" -f "$MIG/20261107_table_operation_staff_guard.sql"
   $PSQL -d "$db" -f "$MIG/20261107_order_send_staff_guard.sql"
   $PSQL -d "$db" -f "$MIG/20261107_order_identity_idempotency.sql"
+  $PSQL -d "$db" -f "$MIG/20261108_transfer_full_move_destination_labels.sql"
 }
 
 reset_db() {
@@ -143,5 +145,8 @@ if [ "$send_count" != "1" ] || [ "$job_count" != "1" ] || [ "$pay_count" != "1" 
   echo "concurrent race failed send=$send_count jobs=$job_count pay=$pay_count" >&2
   exit 1
 fi
+
+$PSQL -d ibul_guard_filename -f "$TEST/transfer_destination_stamp_assertions.sql"
+$PSQL -d ibul_guard_reverse -f "$TEST/transfer_destination_stamp_assertions.sql"
 
 echo "INTEGRATION_SQL_OK"

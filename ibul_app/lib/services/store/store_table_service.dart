@@ -2823,6 +2823,9 @@ class StoreTableService {
     );
 
     try {
+      // A full move stores the destination area name, area index, and
+      // display label in the same `transfer_table_orders_v2` update as
+      // `table_number`. Do not patch those columns after this call.
       return await _callTransferRpc(
         functionName: 'transfer_table_orders_v2',
         sellerId: resolvedSellerId,

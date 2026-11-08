@@ -532,6 +532,114 @@ void main() {
     );
   });
 
+  test(
+    'a stamped Salon 1 move stays out of Bahçe close and an unstamped Bahçe 1 still closes',
+    () {
+      final bahce = <String, dynamic>{
+        'id': 'bahce',
+        'seller_id': 'seller-a',
+        'table_number': 11,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_label': 'Bahçe 1',
+      };
+      final salon = <String, dynamic>{
+        'id': 'salon',
+        'seller_id': 'seller-a',
+        'table_number': 1,
+        'area_name': 'Salon',
+        'area_table_number': 1,
+        'display_label': 'Salon 1',
+      };
+      final source = <String, dynamic>{
+        'id': 'open-bahce',
+        'seller_id': 'seller-a',
+        'table_number': 11,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_table_label': 'Bahçe 1',
+        'status': 'sent',
+        '_garson_source_table': 'table_orders',
+        'items': const <Map<String, dynamic>>[],
+        'total': 90,
+      };
+      final moved = stampFullTransferDestination(
+        order: source,
+        destinationTable: salon,
+      );
+      expect(moved.applied, isTrue);
+      expect(moved.row['table_number'], 1);
+      expect(moved.row['area_name'], 'Salon');
+      expect(moved.row['table_area_name'], 'Salon');
+      expect(moved.row['area_table_number'], 1);
+      expect(moved.row['display_table_label'], 'Salon 1');
+      expect(
+        closeSessionTableOrderFromRawRow(
+          row: moved.row,
+          anchor: bahce,
+          canonicalTableNumber: 11,
+          sellerId: 'seller-a',
+        ),
+        isNull,
+      );
+      expect(source['table_number'], 11);
+      expect(source['area_name'], 'Bahçe');
+
+      final misindexed = <String, dynamic>{
+        'id': 'misindexed-bahce',
+        'seller_id': 'seller-a',
+        'table_number': 1,
+        'area_name': 'Bahçe',
+        'area_table_number': 1,
+        'display_table_label': 'Bahçe 1',
+        'status': 'sent',
+        '_garson_source_table': 'table_orders',
+        'items': const <Map<String, dynamic>>[],
+        'total': 90,
+      };
+      final kept = closeSessionTableOrderFromRawRow(
+        row: misindexed,
+        anchor: bahce,
+        canonicalTableNumber: 11,
+        sellerId: 'seller-a',
+      );
+      expect(kept, isNotNull);
+      expect(kept!['table_number'], 11);
+      expect(kept['_stored_table_number'], 1);
+
+      final incomplete = stampFullTransferDestination(
+        order: source,
+        destinationTable: <String, dynamic>{
+          'table_number': 1,
+          'area_name': 'Salon',
+        },
+      );
+      expect(incomplete.applied, isFalse);
+      expect(incomplete.row['table_number'], 11);
+      expect(incomplete.row['area_name'], 'Bahçe');
+      expect(incomplete.row['display_table_label'], 'Bahçe 1');
+
+      final alreadyMoved = Map<String, dynamic>.from(source);
+      alreadyMoved['table_number'] = 1;
+      final secondWrite = stampFullTransferDestination(
+        order: alreadyMoved,
+        destinationTable: salon,
+      );
+      expect(secondWrite.applied, isFalse);
+      expect(secondWrite.row['table_number'], 1);
+      expect(secondWrite.row['area_name'], 'Bahçe');
+      expect(secondWrite.row['display_table_label'], 'Bahçe 1');
+      final stillBahce = closeSessionTableOrderFromRawRow(
+        row: secondWrite.row,
+        anchor: bahce,
+        canonicalTableNumber: 11,
+        sellerId: 'seller-a',
+      );
+      expect(stillBahce, isNotNull);
+      expect(stillBahce!['table_number'], 11);
+    },
+  );
+
   test('one pending job has a single winner and an uncertain print is not reprinted', () {
     final job = <String, String>{'status': 'pending'};
     final first = claimPendingJob(job);
