@@ -10,6 +10,7 @@ import '../models/store_sub_category.dart';
 import '../models/staff_access_policy.dart';
 import '../models/sub_admin.dart';
 import '../utils/product_create_log.dart';
+import '../utils/table_labels.dart';
 import '../utils/product_edit_log.dart';
 import 'store/store_media_service.dart';
 import 'store/store_mapping_helpers.dart';
@@ -1670,18 +1671,22 @@ class StoreService {
     );
   }
 
-  Future<void> realignTableOrderNumber({
+  Future<bool> realignTableOrderNumber({
     required String sellerId,
     required String orderId,
-    required int canonicalTableNumber,
-    required int storedTableNumber,
+    required Map<String, dynamic> order,
+    required Map<String, dynamic> table,
   }) {
     return _tableService.realignTableOrderNumber(
       sellerId: sellerId,
       orderId: orderId,
-      canonicalTableNumber: canonicalTableNumber,
-      storedTableNumber: storedTableNumber,
+      order: order,
+      table: table,
     );
+  }
+
+  Future<GarsonOpenOrderRead> readVerifiedOpenOrders(String sellerId) {
+    return _tableService.readVerifiedOpenOrders(sellerId);
   }
 
   Future<Map<String, dynamic>> closeTableWithHistory({

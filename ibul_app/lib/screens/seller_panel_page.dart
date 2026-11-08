@@ -3518,10 +3518,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         userInitiated;
     try {
       _pruneExpiredGarsonClosedTableMarkers(source: source);
-      final fresh = await _storeService.getTableOrdersSnapshot(sellerId);
+      final openRead = await _storeService.readVerifiedOpenOrders(sellerId);
+      final fresh = openRead.orders;
       final visibleWithoutStaleBills = dropCachedBillsMissingFromOpenSnapshot(
         visibleOrders: _garsonManualTableOrders,
-        serverOpenOrders: fresh,
+        serverRead: openRead,
       );
       if (visibleWithoutStaleBills.length != _garsonManualTableOrders.length) {
         _garsonManualTableOrders = visibleWithoutStaleBills;
@@ -14400,17 +14401,20 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       }
 
       for (final order in sessionOrders) {
-        if (!garsonTableOrderNeedsRealign(
-          order: order,
-          canonicalTableNumber: tableNumber,
-        )) {
+        if (tableRow == null ||
+            !garsonTableOrderNeedsRealign(
+              order: order,
+              table: tableRow,
+              canonicalTableNumber: tableNumber,
+              sellerId: sellerId,
+            )) {
           continue;
         }
         await _storeService.realignTableOrderNumber(
           sellerId: sellerId,
           orderId: order['id']?.toString() ?? '',
-          canonicalTableNumber: tableNumber,
-          storedTableNumber: garsonStoredTableNumber(order),
+          order: order,
+          table: tableRow,
         );
       }
 

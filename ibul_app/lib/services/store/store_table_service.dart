@@ -7,13 +7,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config/runtime_config.dart';
 import '../../models/garson_operation_rules.dart';
-import '../../models/mixed_service_order.dart';
 import '../../models/staff_access_policy.dart';
 import '../../utils/garson_active_orders_fetch.dart';
 import '../../utils/order_status_constants.dart';
 import '../../utils/table_labels.dart';
 import '../bill_edit_access.dart';
-import 'close_table_workflow.dart';
 import 'table_close_history_fallback.dart';
 import 'table_operation_access.dart';
 import 'table_order_history_utils.dart';
@@ -871,7 +869,7 @@ class StoreTableService {
         .or('order_type.eq.table,delivery_type.eq.table')
         .not('status', 'in', OrderStatusConstants.terminalStatuses.toList())
         .order('created_at', ascending: false)
-        .limit(garsonOpenSnapshotTrustLimit)
+        .limit(200)
         .timeout(tableOrderTimeout);
     final rawOrders = List<Map<String, dynamic>>.from(rows as List);
     if (rawOrders.isEmpty) return const <Map<String, dynamic>>[];
@@ -1180,18 +1178,23 @@ class StoreTableService {
     return byId.values.toList(growable: false);
   }
 
-  Future<void> realignTableOrderNumber({
+  Future<bool> realignTableOrderNumber({
     required String sellerId,
     required String orderId,
-    required int canonicalTableNumber,
-    required int storedTableNumber,
+    required Map<String, dynamic> order,
+    required Map<String, dynamic> table,
   }) async {
+    final canonicalTableNumber = _parseTableNumberValue(table['table_number']);
+    final storedTableNumber = garsonStoredTableNumber(order);
     if (orderId.trim().isEmpty ||
-        sellerId.trim().isEmpty ||
-        canonicalTableNumber <= 0 ||
-        storedTableNumber <= 0 ||
-        storedTableNumber == canonicalTableNumber) {
-      return;
+        order['id']?.toString().trim() != orderId.trim() ||
+        !garsonTableOrderNeedsRealign(
+          order: order,
+          table: table,
+          canonicalTableNumber: canonicalTableNumber,
+          sellerId: sellerId,
+        )) {
+      return false;
     }
     await _supabase
         .from('table_orders')
@@ -1203,6 +1206,75 @@ class StoreTableService {
         .eq('seller_id', sellerId)
         .eq('table_number', storedTableNumber)
         .timeout(tableOrderTimeout);
+    return true;
+  }
+
+  Future<GarsonOpenOrderRead> readVerifiedOpenOrders(String sellerId) async {
+    final resolved = sellerId.trim();
+    if (resolved.isEmpty) {
+      return const GarsonOpenOrderRead(
+        orders: <Map<String, dynamic>>[],
+        succeeded: false,
+        complete: false,
+      );
+    }
+    try {
+      final orders = await getTableOrdersSnapshot(resolved);
+      final tableCount = await _exactOpenCount(
+        table: 'table_orders',
+        sellerColumn: 'seller_id',
+        sellerId: resolved,
+        tableOrders: true,
+      );
+      final restaurantCount = await _exactOpenCount(
+        table: 'orders',
+        sellerColumn: 'restaurant_id',
+        sellerId: resolved,
+        tableOrders: false,
+      );
+      final complete = tableCount != null &&
+          restaurantCount != null &&
+          orders.length == tableCount + restaurantCount;
+      return GarsonOpenOrderRead(
+        orders: orders,
+        succeeded: true,
+        complete: complete,
+      );
+    } catch (error) {
+      debugPrint('[StoreTableService.readVerifiedOpenOrders] $error');
+      return const GarsonOpenOrderRead(
+        orders: <Map<String, dynamic>>[],
+        succeeded: false,
+        complete: false,
+      );
+    }
+  }
+
+  Future<int?> _exactOpenCount({
+    required String table,
+    required String sellerColumn,
+    required String sellerId,
+    required bool tableOrders,
+  }) async {
+    try {
+      var query = _supabase.from(table).count(CountOption.exact).eq(
+            sellerColumn,
+            sellerId,
+          );
+      query = query.not(
+        'status',
+        'in',
+        OrderStatusConstants.terminalStatuses.toList(),
+      );
+      if (!tableOrders) {
+        query = query.or('order_type.eq.table,delivery_type.eq.table');
+      }
+      final count = await query;
+      return count;
+    } catch (error) {
+      debugPrint('[StoreTableService._exactOpenCount] $table $error');
+      return null;
+    }
   }
 
   Future<List<Map<String, dynamic>>> getTableOrdersByTable({
@@ -2125,14 +2197,16 @@ class StoreTableService {
       final result = raw is Map
           ? Map<String, dynamic>.from(raw)
           : <String, dynamic>{};
-      // The live function already closes orders in the same transaction.
-      if (!result.containsKey('orders_updated')) {
-        result['orders_updated'] = await closeRestaurantOrdersForTable(
-          sellerId: sellerId,
-          tableNumber: tableNumber,
-        );
-      }
-      return result;
+      final decision = decideCloseTableRpc(
+        functionMissing: false,
+        timedOut: false,
+        ordersUpdated: result['orders_updated'],
+      );
+      if (decision == CloseTableRpcDecision.accept) return result;
+      return _readOnlyCloseVerification(
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+      );
     } on PostgrestException catch (error) {
       if (!_shouldFallbackToDirectTableWrite(error)) {
         debugPrint(
@@ -2141,23 +2215,62 @@ class StoreTableService {
         );
         throw _finalTableOperationDenial('Masa kapatma');
       }
-      // Fall back to client-side archive + delete if RPC unavailable (older DB)
+      if (isCloseTableRpcMissing(
+        code: error.code,
+        message: error.message,
+        details: error.details?.toString(),
+        hint: error.hint,
+      )) {
+        debugPrint(
+          '[StoreTableService] closeTableWithHistory missing ($error). BLOCKED.',
+        );
+        await _closeTableClientSide(
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+          paymentMethod: paymentMethod,
+          paymentNote: paymentNote,
+          waiterId: waiterId,
+          waiterName: waiterName,
+          sessionKey: sessionKey,
+        );
+        return const <String, dynamic>{};
+      }
       debugPrint(
-        '[StoreTableService] closeTableWithHistory RPC failed ($error). Falling back to client-side archive.',
+        '[StoreTableService] closeTableWithHistory failed ($error). '
+        'No client-side archive.',
       );
-      await _closeTableClientSide(
+      return _readOnlyCloseVerification(
         sellerId: sellerId,
         tableNumber: tableNumber,
-        paymentMethod: paymentMethod,
-        paymentNote: paymentNote,
-        waiterId: waiterId,
-        waiterName: waiterName,
-        sessionKey: sessionKey,
       );
-      return const <String, dynamic>{'client_side_archive': true};
     } on TimeoutException {
-      throw Exception('Masa kapatma zaman aşımına uğradı. Tekrar deneyin.');
+      debugPrint(
+        '[StoreTableService] closeTableWithHistory timeout. Read-only check.',
+      );
+      return _readOnlyCloseVerification(
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+      );
     }
+  }
+
+  Future<Map<String, dynamic>> _readOnlyCloseVerification({
+    required String sellerId,
+    required int tableNumber,
+  }) async {
+    final stillOpen = await _exactOpenCount(
+      table: 'table_orders',
+      sellerColumn: 'seller_id',
+      sellerId: sellerId,
+      tableOrders: true,
+    );
+    if (stillOpen == 0) {
+      return const <String, dynamic>{
+        'orders_updated': 0,
+        'verified_read_only': true,
+      };
+    }
+    throw StateError(closeTableRpcUnverifiedMessage);
   }
 
   /// Ensures a just-closed table session is queryable from `table_order_history`
@@ -2305,21 +2418,7 @@ class StoreTableService {
   // TABLE HISTORY (CLOSED ORDERS)
   // ─────────────────────────────────────────────────────────────────────────────
 
-  /// **Fallback** for [closeTableWithHistory] when the RPC is unavailable or
-  /// fails (e.g. an internal DB trigger blocks the server-side DELETE).
-  ///
-  /// Strategy:
-  ///   1. Fetch active orders by (sellerId, tableNumber).
-  ///   2. Archive each to [table_order_history] — **best-effort**: a failed
-  ///      INSERT is logged but does NOT abort the close. Closing without a
-  ///      history record is preferred over leaving a table permanently stuck.
-  ///   3. Attempt a bulk DELETE via [closeTableOrders].
-  ///      If the DELETE fails (e.g. a DB trigger raises P0001), fall back to
-  ///      per-order UPDATE status = 'closed'. Both outcomes make the orders
-  ///      invisible on the Garson board because [normalizeTableOrderToGarsonBoardOrder]
-  ///      filters out any terminal-status row.
-  ///   4. Verify by primary-key that every targeted order is either deleted or
-  ///      carries a terminal status. Throws on any remaining active orders.
+  /// Critical close never archives from the client. A missing RPC stays blocked.
   Future<void> _closeTableClientSide({
     required String sellerId,
     required int tableNumber,
@@ -2329,173 +2428,13 @@ class StoreTableService {
     String? waiterName,
     String? sessionKey,
   }) async {
-    // ── 1. Fetch active orders — propagate on error (no silent empty fallback).
-    List<Map<String, dynamic>> activeOrders;
-    try {
-      final rows = await _supabase
-          .from('table_orders')
-          .select()
-          .eq('seller_id', sellerId)
-          .eq('table_number', tableNumber)
-          .timeout(tableOrderTimeout);
-      activeOrders = List<Map<String, dynamic>>.from(rows as List);
-    } on PostgrestException catch (error) {
-      debugPrint(
-        '[StoreTableService._closeTableClientSide] '
-        'fetch_active_orders failed: $error',
-      );
-      throw _tableOrderException(
-        'Masa siparişlerini alma (kapatma öncesi)',
-        error,
-      );
-    } on TimeoutException {
-      throw Exception(
-        'Masa siparişleri alınamadı (zaman aşımı). '
-        'Bağlantıyı kontrol edip tekrar deneyin.',
-      );
-    }
-
-    if (activeOrders.isEmpty) return; // nothing to close
-
-    // Record IDs for ID-based verification at the end.
-    final targetIds = activeOrders
-        .map((o) => o['id']?.toString() ?? '')
-        .where((id) => id.isNotEmpty)
-        .toList(growable: false);
-
-    // ── 2. Archive — best-effort. A failed history INSERT must NOT block close.
-    final session =
-        sessionKey ??
-        'session_${sellerId}_${tableNumber}_${DateTime.now().millisecondsSinceEpoch}';
-    final archivedAt = DateTime.now().toUtc().toIso8601String();
-    var grandTotalAll = 0.0;
-    for (final order in activeOrders) {
-      for (final item in TableOrderHistoryUtils.parseJsonList(order['items'])) {
-        final normalized = MixedServiceOrder.normalizeOrderItem(item);
-        grandTotalAll += MixedServiceOrder.itemLineTotal(normalized);
-      }
-    }
-
-    var historyArchived = false;
-    try {
-      await _runWithTableOrderHistorySchemaFallback(
-        operation: (includeArchivedAt) {
-          return _supabase
-              .from('table_order_history')
-              .insert({
-                'seller_id': sellerId,
-                'table_number': tableNumber,
-                'session_key': session,
-                'payment_method': paymentMethod,
-                if (paymentNote != null && paymentNote.isNotEmpty)
-                  'payment_note': paymentNote,
-                if (waiterId != null && waiterId.isNotEmpty)
-                  'waiter_id': waiterId,
-                if (waiterName != null && waiterName.isNotEmpty)
-                  'waiter_name': waiterName,
-                'grand_total': grandTotalAll,
-                'archived_orders': activeOrders,
-                'status': 'closed',
-                'closed_at': archivedAt,
-                if (includeArchivedAt) 'archived_at': archivedAt,
-              })
-              .timeout(tableOrderTimeout);
-        },
-      );
-      historyArchived = true;
-      debugPrint(
-        '[StoreTableService._closeTableClientSide] '
-        'history_insert=ok_hotfix table=$tableNumber total=$grandTotalAll',
-      );
-    } catch (hotfixErr) {
-      debugPrint(
-        '[StoreTableService._closeTableClientSide] '
-        'history_insert=hotfix_failed table=$tableNumber error=$hotfixErr',
-      );
-    }
-
-    if (!historyArchived) {
-      for (final order in activeOrders) {
-        final items = order['items'] ?? [];
-        var grandTotal = 0.0;
-        for (final item in TableOrderHistoryUtils.parseJsonList(items)) {
-          final normalized = MixedServiceOrder.normalizeOrderItem(item);
-          grandTotal += MixedServiceOrder.itemLineTotal(normalized);
-        }
-        try {
-          await _supabase
-              .from('table_order_history')
-              .insert({
-                'original_order_id': order['id']?.toString(),
-                'seller_id': sellerId,
-                'table_number': tableNumber,
-                'items': order['items'] ?? '[]',
-                'status': 'closed',
-                'revision': order['revision'] ?? 1,
-                'last_edit_summary': order['last_edit_summary'] ?? {},
-                'last_edit_note': order['last_edit_note'],
-                'payment_method': paymentMethod,
-                'payment_note': paymentNote,
-                'waiter_id': waiterId,
-                'waiter_name': waiterName,
-                'grand_total': grandTotal,
-                'session_key': session,
-                'opened_at': order['created_at'],
-                'closed_at': archivedAt,
-                'created_at': order['created_at'] ?? archivedAt,
-              })
-              .timeout(tableOrderTimeout);
-          debugPrint(
-            '[StoreTableService._closeTableClientSide] '
-            'history_insert=ok orderId=${order['id']}',
-          );
-        } catch (archiveErr) {
-          debugPrint(
-            '[StoreTableService._closeTableClientSide] '
-            'history_insert=failed (best-effort, continuing close) '
-            'orderId=${order['id']} error=$archiveErr',
-          );
-        }
-      }
-    }
-
-    // ── Steps 3 & 4: delegated to the pure [runCloseTableFallbackWorkflow].
-    // This separation keeps the fallback algorithm testable without a real
-    // Supabase client — tests inject simple lambda mocks instead.
-    await runCloseTableFallbackWorkflow(
-      orderIds: targetIds,
-      bulkDelete: () =>
-          closeTableOrders(sellerId: sellerId, tableNumber: tableNumber),
-      deleteById: (id) => deleteTableOrder(id),
-      markClosed: (id) async {
-        await _supabase
-            .from('table_orders')
-            .update({
-              'status': 'closed',
-              'updated_at': DateTime.now().toUtc().toIso8601String(),
-            })
-            .eq('id', id)
-            .timeout(tableOrderTimeout);
-      },
-      verifyByIds: (ids) => getTableOrdersByIds(ids),
-      onEvent: (event) {
-        debugPrint(
-          '[StoreTableService._closeTableClientSide] '
-          'table=$tableNumber $event',
-        );
-      },
+    debugPrint(
+      '[StoreTableService._closeTableClientSide] blocked '
+      'seller=$sellerId table=$tableNumber method=$paymentMethod '
+      'note=${paymentNote ?? ''} waiter=${waiterId ?? ''} '
+      'name=${waiterName ?? ''} session=${sessionKey ?? ''}',
     );
-
-    // BUG-FIX (Reopen Bug): also close any matching customer-side `orders`
-    // rows.  Note that `closeTableOrders` above already calls this on its
-    // happy path; this extra call covers the failure-and-retry case where
-    // we land in the per-order fallback loop without ever hitting the
-    // happy-path mirror update.  It is idempotent because the filter excludes
-    // already-terminal rows.
-    await closeRestaurantOrdersForTable(
-      sellerId: sellerId,
-      tableNumber: tableNumber,
-    );
+    throw StateError(closeTableRpcBlockedMessage);
   }
 
   /// Returns paginated historical (closed) orders for a seller.

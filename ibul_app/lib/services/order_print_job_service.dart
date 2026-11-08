@@ -2660,11 +2660,16 @@ class OrderPrintJobService {
                   },
                 )
                 .ignore();
-            await _resetPrintJobToPending(
-              printJobId,
-              requestUrl: requestUrl,
-              error: failureMessage,
-            );
+            if (shouldAutomaticallyRequeuePrint(
+              claim: PrintClaimResult.won,
+              dispatch: classifyPrintDispatchFailure(failureMessage),
+            )) {
+              await _resetPrintJobToPending(
+                printJobId,
+                requestUrl: requestUrl,
+                error: failureMessage,
+              );
+            }
             dispatchedJobCount += 1;
             _logKitchen(
               'Dispatch',
@@ -2805,11 +2810,16 @@ class OrderPrintJobService {
           // Bridge unreachable from this device (e.g. garson on a tablet,
           // bridge running on the restaurant’s desktop). Reset to 'pending'
           // so DesktopPrintHub can dispatch it when the UPDATE listener fires.
-          await _resetPrintJobToPending(
-            printJobId,
-            requestUrl: requestUrl,
-            error: failureMessage,
-          );
+          if (shouldAutomaticallyRequeuePrint(
+            claim: PrintClaimResult.won,
+            dispatch: classifyPrintDispatchFailure(failureMessage),
+          )) {
+            await _resetPrintJobToPending(
+              printJobId,
+              requestUrl: requestUrl,
+              error: failureMessage,
+            );
+          }
           dispatchedJobCount += 1; // pending for hub retry — not a hard failure
           _logKitchen(
             'Dispatch',

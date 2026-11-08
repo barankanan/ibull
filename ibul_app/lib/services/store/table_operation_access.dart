@@ -49,3 +49,39 @@ bool shouldFallbackToDirectTableWrite({
 bool isFinalTableOperationDenialError(Object error) {
   return isFinalTableOperationDenial(message: error.toString());
 }
+
+const String closeTableRpcBlockedMessage =
+    'Masa kapatma BLOCKED. close_table_with_history yok. Masa açık kaldı.';
+
+const String closeTableRpcUnverifiedMessage =
+    'Masa kapatma yanıtı belirsiz. Yeni yazma yapılmadı.';
+
+enum CloseTableRpcDecision { accept, readOnly, blocked }
+
+/// A numeric `orders_updated` is the live contract, including zero.
+/// A missing function is blocked. Timeout or any other payload is read-only.
+CloseTableRpcDecision decideCloseTableRpc({
+  required bool functionMissing,
+  required bool timedOut,
+  required Object? ordersUpdated,
+}) {
+  if (functionMissing) return CloseTableRpcDecision.blocked;
+  if (timedOut || ordersUpdated is! num) return CloseTableRpcDecision.readOnly;
+  return CloseTableRpcDecision.accept;
+}
+
+bool isCloseTableRpcMissing({
+  String? code,
+  String? message,
+  String? details,
+  String? hint,
+}) {
+  final text = '${message ?? ''} ${details ?? ''} ${hint ?? ''}'.toLowerCase();
+  return code == 'PGRST202' ||
+      code == '42883' ||
+      text.contains('could not find the function') ||
+      (text.contains('close_table_with_history') &&
+          (text.contains('does not exist') ||
+              text.contains('schema cache') ||
+              text.contains('could not find')));
+}

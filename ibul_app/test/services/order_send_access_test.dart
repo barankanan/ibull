@@ -271,11 +271,21 @@ void main() {
       isFalse,
     );
     expect(
-      garsonTableOrderNeedsRealign(order: bahceBill, canonicalTableNumber: 11),
+      garsonTableOrderNeedsRealign(
+        order: bahceBill,
+        table: bahce,
+        canonicalTableNumber: 11,
+        sellerId: 'seller-a',
+      ),
       isTrue,
     );
     expect(
-      garsonTableOrderNeedsRealign(order: salonBill, canonicalTableNumber: 1),
+      garsonTableOrderNeedsRealign(
+        order: salonBill,
+        table: salon,
+        canonicalTableNumber: 1,
+        sellerId: 'seller-a',
+      ),
       isFalse,
     );
 
@@ -284,9 +294,145 @@ void main() {
         bahceBill,
         <String, dynamic>{'id': 'draft', 'status': 'draft', 'total': 2490},
       ],
-      serverOpenOrders: const <Map<String, dynamic>>[],
+      serverRead: const GarsonOpenOrderRead(
+        orders: <Map<String, dynamic>>[],
+        succeeded: true,
+        complete: true,
+      ),
     );
     expect(visible.map((row) => row['id']), ['draft']);
+  });
+
+  test('missing area, old visit and another seller do not move a table', () {
+    final bahce = <String, dynamic>{
+      'id': 'bahce',
+      'seller_id': 'seller-a',
+      'table_number': 11,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_label': 'Bahçe 1',
+    };
+    final numberOnly = <String, dynamic>{
+      'id': 'number-only',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+    };
+    final partialArea = <String, dynamic>{
+      'id': 'partial',
+      'seller_id': 'seller-a',
+      'table_number': 1,
+      'area_name': 'Bahçe',
+      'status': 'sent',
+      'display_table_label': 'Bahçe 1',
+      '_garson_source_table': 'table_orders',
+    };
+    final salonIdOnBahceLabel = <String, dynamic>{
+      'id': 'salon-id',
+      'seller_id': 'seller-a',
+      'table_id': 'salon',
+      'table_number': 1,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_table_label': 'Bahçe 1',
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+    };
+    final oldVisit = <String, dynamic>{
+      'id': 'old',
+      'seller_id': 'seller-a',
+      'table_number': 11,
+      'status': 'closed',
+      '_garson_source_table': 'table_order_history',
+    };
+    final otherSeller = <String, dynamic>{
+      'id': 'other-shop',
+      'seller_id': 'seller-b',
+      'table_id': 'bahce',
+      'table_number': 1,
+      'area_name': 'Bahçe',
+      'area_table_number': 1,
+      'display_table_label': 'Bahçe 1',
+      'status': 'sent',
+      '_garson_source_table': 'table_orders',
+    };
+    for (final order in [numberOnly, partialArea, salonIdOnBahceLabel, oldVisit, otherSeller]) {
+      expect(
+        garsonOrderBelongsToCloseTable(
+          table: bahce,
+          canonicalTableNumber: 11,
+          order: order,
+          sellerId: 'seller-a',
+        ),
+        isFalse,
+        reason: order['id'].toString(),
+      );
+      expect(
+        garsonTableOrderNeedsRealign(
+          order: order,
+          table: bahce,
+          canonicalTableNumber: 11,
+          sellerId: 'seller-a',
+        ),
+        isFalse,
+        reason: order['id'].toString(),
+      );
+    }
+    final cached = dropCachedBillsMissingFromOpenSnapshot(
+      visibleOrders: <Map<String, dynamic>>[numberOnly],
+      serverRead: const GarsonOpenOrderRead(
+        orders: <Map<String, dynamic>>[],
+        succeeded: true,
+        complete: false,
+      ),
+    );
+    expect(cached, hasLength(1));
+    expect(
+      dropCachedBillsMissingFromOpenSnapshot(
+        visibleOrders: <Map<String, dynamic>>[numberOnly],
+        serverRead: const GarsonOpenOrderRead(
+          orders: <Map<String, dynamic>>[],
+          succeeded: false,
+          complete: true,
+        ),
+      ),
+      hasLength(1),
+    );
+  });
+
+  test('one pending job has a single winner and an uncertain print is not reprinted', () {
+    final job = <String, String>{'status': 'pending'};
+    final first = claimPendingJob(job);
+    final second = claimPendingJob(job);
+    expect(first, PrintClaimResult.won);
+    expect(second, PrintClaimResult.lost);
+    expect(job['status'], 'claimed');
+    expect(
+      interpretPrintClaim(requestFailed: true, updatedRowCount: 1),
+      PrintClaimResult.uncertain,
+    );
+    expect(
+      shouldAutomaticallyRequeuePrint(
+        claim: PrintClaimResult.won,
+        dispatch: classifyPrintDispatchFailure('TimeoutException: timed out'),
+      ),
+      isFalse,
+    );
+    expect(
+      shouldAutomaticallyRequeuePrint(
+        claim: PrintClaimResult.lost,
+        dispatch: PrintDispatchVerdict.notSent,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldAutomaticallyRequeuePrint(
+        claim: PrintClaimResult.won,
+        dispatch: classifyPrintDispatchFailure('SocketException: Connection refused'),
+      ),
+      isTrue,
+    );
   });
 
   test('print anchor is terminal and is not a cancellation', () {

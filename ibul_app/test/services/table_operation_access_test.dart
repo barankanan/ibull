@@ -65,4 +65,46 @@ void main() {
       isFalse,
     );
   });
+
+  test('missing close RPC is blocked and an unclear payload is read-only', () {
+    expect(
+      decideCloseTableRpc(
+        functionMissing: true,
+        timedOut: false,
+        ordersUpdated: 2,
+      ),
+      CloseTableRpcDecision.blocked,
+    );
+    expect(
+      decideCloseTableRpc(
+        functionMissing: false,
+        timedOut: true,
+        ordersUpdated: 2,
+      ),
+      CloseTableRpcDecision.readOnly,
+    );
+    expect(
+      decideCloseTableRpc(
+        functionMissing: false,
+        timedOut: false,
+        ordersUpdated: null,
+      ),
+      CloseTableRpcDecision.readOnly,
+    );
+    expect(
+      decideCloseTableRpc(
+        functionMissing: false,
+        timedOut: false,
+        ordersUpdated: 0,
+      ),
+      CloseTableRpcDecision.accept,
+    );
+    expect(
+      isCloseTableRpcMissing(
+        code: 'PGRST202',
+        message: 'Could not find the function public.close_table_with_history',
+      ),
+      isTrue,
+    );
+  });
 }

@@ -152,6 +152,58 @@ Future<dynamic> recoverOrderSaveAfterTimeout({
       'Sipariş sonucu doğrulanamadı. Aynı gönderim anahtarı duruyor.',
     );
   }
+
+/// One conditional `pending → claimed` update.
+/// [won] is the only result that may print. [lost] means another device
+/// owns the job. [uncertain] must not print and must not be queued again.
+enum PrintClaimResult { won, lost, uncertain }
+
+PrintClaimResult interpretPrintClaim({
+  required bool requestFailed,
+  required int updatedRowCount,
+}) {
+  if (requestFailed || updatedRowCount < 0) return PrintClaimResult.uncertain;
+  if (updatedRowCount == 1) return PrintClaimResult.won;
+  if (updatedRowCount == 0) return PrintClaimResult.lost;
+  return PrintClaimResult.uncertain;
+}
+
+/// Two devices share one pending row. The first update that still sees
+/// `pending` wins and changes the status. The second sees a non-pending row.
+PrintClaimResult claimPendingJob(Map<String, String> job) {
+  if (job['status'] != 'pending') {
+    return PrintClaimResult.lost;
+  }
+  job['status'] = 'claimed';
+  return PrintClaimResult.won;
+}
+
+enum PrintDispatchVerdict { printed, notSent, uncertain }
+
+PrintDispatchVerdict classifyPrintDispatchFailure(Object error) {
+  final raw = error.toString().toLowerCase();
+  if (raw.contains('timeout') ||
+      raw.contains('timed out') ||
+      raw.contains('uncertain') ||
+      raw.contains('belirsiz')) {
+    return PrintDispatchVerdict.uncertain;
+  }
+  if (raw.contains('connection refused') ||
+      raw.contains('failed host lookup') ||
+      raw.contains('socketexception') ||
+      raw.contains('connection reset')) {
+    return PrintDispatchVerdict.notSent;
+  }
+  return PrintDispatchVerdict.uncertain;
+}
+
+/// A ticket is queued again only when it is certain the printer never saw it.
+bool shouldAutomaticallyRequeuePrint({
+  required PrintClaimResult claim,
+  required PrintDispatchVerdict dispatch,
+}) {
+  return claim == PrintClaimResult.won &&
+      dispatch == PrintDispatchVerdict.notSent;
 }
 
 /// A replay may print only a job that is still pending.
