@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/services/order_send_access.dart';
 import 'package:ibul_app/utils/garson_active_orders_fetch.dart';
@@ -8,14 +10,8 @@ void main() {
   test('the same action keeps one key until it succeeds', () {
     final ledger = OrderSendKeyLedger();
     const fingerprint = 'rest|4|new_order|soup';
-    final first = resolveOrderSendKey(
-      ledger: ledger,
-      fingerprint: fingerprint,
-    );
-    final retry = resolveOrderSendKey(
-      ledger: ledger,
-      fingerprint: fingerprint,
-    );
+    final first = resolveOrderSendKey(ledger: ledger, fingerprint: fingerprint);
+    final retry = resolveOrderSendKey(ledger: ledger, fingerprint: fingerprint);
     expect(retry, first);
     ledger.complete(fingerprint);
     final nextOrder = resolveOrderSendKey(
@@ -63,10 +59,7 @@ void main() {
       fingerprint: 'action',
       requestedKey: 'send-stable',
     );
-    expect(
-      resolveOrderSendKey(ledger: ledger, fingerprint: 'action'),
-      key,
-    );
+    expect(resolveOrderSendKey(ledger: ledger, fingerprint: 'action'), key);
   });
 
   test('missing idempotent RPC is a hard stop', () {
@@ -115,6 +108,73 @@ void main() {
     );
     expect(withoutKey.containsKey('p_local_order_id'), isFalse);
     expect(withoutKey.containsKey('p_idempotency_key'), isFalse);
+  });
+
+  test('a timed out save does not start a second insert', () async {
+    var sends = 0;
+    final hung = Completer<Map<String, dynamic>>();
+    await expectLater(
+      recoverOrderSaveAfterTimeout(
+        timeout: const Duration(milliseconds: 20),
+        pollAttempts: 2,
+        pollInterval: Duration.zero,
+        send: () {
+          sends += 1;
+          return hung.future;
+        },
+        lookup: () async => null,
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('Aynı gönderim anahtarı duruyor'),
+        ),
+      ),
+    );
+    expect(sends, 1);
+  });
+
+  test(
+    'a timed out save returns the committed order without another insert',
+    () async {
+      var sends = 0;
+      var lookups = 0;
+      final result = await recoverOrderSaveAfterTimeout(
+        timeout: const Duration(milliseconds: 20),
+        pollAttempts: 3,
+        pollInterval: Duration.zero,
+        send: () {
+          sends += 1;
+          return Completer<Map<String, dynamic>>().future;
+        },
+        lookup: () async {
+          lookups += 1;
+          if (lookups < 2) return null;
+          return <String, dynamic>{
+            'order_id': 'committed',
+            'idempotent_replay': true,
+          };
+        },
+      );
+      expect(sends, 1);
+      expect(lookups, 2);
+      expect(result, isA<Map<String, dynamic>>());
+      expect((result as Map<String, dynamic>)['order_id'], 'committed');
+    },
+  );
+
+  test('a completed save does not look the order up again', () async {
+    var lookups = 0;
+    final result = await recoverOrderSaveAfterTimeout(
+      send: () async => <String, dynamic>{'order_id': 'fresh'},
+      lookup: () async {
+        lookups += 1;
+        return <String, dynamic>{'order_id': 'other'};
+      },
+    );
+    expect(lookups, 0);
+    expect((result as Map<String, dynamic>)['order_id'], 'fresh');
   });
 
   test('replay prints only a pending ticket', () {
@@ -259,8 +319,7 @@ void main() {
     expect(
       friendlyOrderSendRpcMessage(
         code: '42703',
-        message:
-            'column "table_number" of relation "orders" does not exist',
+        message: 'column "table_number" of relation "orders" does not exist',
       ),
       contains('create_table_order_with_print_jobs_impl'),
     );

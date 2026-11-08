@@ -208,10 +208,21 @@ class OrderPrintJobService {
     KitchenRoutingService? routingService,
     PrinterRepository? printerRepository,
     DesktopPrintOrchestrator? printOrchestrator,
+    this.orderSaveTimeout = const Duration(seconds: 12),
+    this.orderCommitPollAttempts = 4,
+    this.orderCommitPollInterval = const Duration(milliseconds: 400),
   }) : _clientOverride = client,
        _routingService = routingService ?? const KitchenRoutingService(),
        _printerRepositoryInstance = printerRepository,
        _printOrchestratorInstance = printOrchestrator;
+
+  /// How long one save RPC may run before the client stops waiting.
+  /// The request itself is not cancelled.
+  final Duration orderSaveTimeout;
+
+  /// Reads after a timeout. This does not start another insert.
+  final int orderCommitPollAttempts;
+  final Duration orderCommitPollInterval;
 
   // Lazily resolve Supabase client so preview/widget tests can render without
   // initializing Supabase plugins.
@@ -988,6 +999,7 @@ class OrderPrintJobService {
       items: normalized,
     );
     await _ensureSendKeysLoaded();
+    final retryingOpenSend = _sendKeys.snapshot.containsKey(sendFingerprint);
     final sendKey = resolveOrderSendKey(
       ledger: _sendKeys,
       fingerprint: sendFingerprint,
@@ -1021,16 +1033,17 @@ class OrderPrintJobService {
     late final dynamic response;
     try {
       response = await _runCreateTableOrderWithPrintJobsRpc(
-      restaurantId: restaurantId,
-      tableNumber: tableNumber,
-      normalized: normalized,
-      waiterId: waiterId,
-      waiterName: waiterName,
-      notes: notes,
-      traceId: traceId,
-      jobType: jobType,
-      idempotencyKey: sendKey,
-    );
+        restaurantId: restaurantId,
+        tableNumber: tableNumber,
+        normalized: normalized,
+        waiterId: waiterId,
+        waiterName: waiterName,
+        notes: notes,
+        traceId: traceId,
+        jobType: jobType,
+        idempotencyKey: sendKey,
+        lookupBeforeSend: retryingOpenSend,
+      );
     } catch (error) {
       // Keep [sendKey] so the same action retries with the same record.
       rethrow;
@@ -1586,6 +1599,7 @@ class OrderPrintJobService {
     required String traceId,
     required String jobType,
     String? idempotencyKey,
+    bool lookupBeforeSend = false,
   }) async {
     final noteText =
         '$traceId${notes != null && notes.isNotEmpty ? ' $notes' : ''}';
@@ -1599,33 +1613,35 @@ class OrderPrintJobService {
       jobType: jobType,
       idempotencyKey: idempotencyKey,
     );
-    Future<dynamic> once() {
-      return _client.rpc(
-        'create_table_order_with_print_jobs',
-        params: params,
+    final localOrderId = (idempotencyKey ?? '').trim();
+    if (lookupBeforeSend && localOrderId.isNotEmpty) {
+      final existing = await _lookupCommittedOrder(
+        restaurantId: restaurantId,
+        localOrderId: localOrderId,
       );
+      if (existing != null) return existing;
+    }
+
+    Future<dynamic> once() {
+      return _client.rpc('create_table_order_with_print_jobs', params: params);
     }
 
     try {
-      return await once().timeout(const Duration(seconds: 12));
-    } on TimeoutException {
-      final recovered = await _lookupCommittedOrder(
-        restaurantId: restaurantId,
-        localOrderId: (idempotencyKey ?? '').trim(),
+      return await recoverOrderSaveAfterTimeout(
+        send: once,
+        lookup: () {
+          if (localOrderId.isEmpty) {
+            return Future<Map<String, dynamic>?>.value(null);
+          }
+          return _lookupCommittedOrder(
+            restaurantId: restaurantId,
+            localOrderId: localOrderId,
+          );
+        },
+        timeout: orderSaveTimeout,
+        pollAttempts: localOrderId.isEmpty ? 1 : orderCommitPollAttempts,
+        pollInterval: orderCommitPollInterval,
       );
-      if (recovered != null) return recovered;
-      try {
-        return await once().timeout(const Duration(seconds: 20));
-      } on TimeoutException {
-        final again = await _lookupCommittedOrder(
-          restaurantId: restaurantId,
-          localOrderId: (idempotencyKey ?? '').trim(),
-        );
-        if (again != null) return again;
-        throw StateError(
-          'Sipariş sonucu doğrulanamadı. Aynı gönderim anahtarı duruyor.',
-        );
-      }
     } on PostgrestException catch (error) {
       throw Exception(_friendlyDispatchRpcError(error));
     }

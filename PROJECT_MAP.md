@@ -604,6 +604,12 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 # Update Log
 
+## 2026-11-08
+
+- PR #16 zaman aşımı yolu, `create_table_order_with_print_jobs` cevabı 12 saniyede gelmezse ve `orders.local_order_id` henüz görünmezse aynı RPC’yi ikinci kez çağırıyordu. İlk istek sunucuda sürerken bu ikinci çağrı ayrı sipariş ve mutfak fişi açabilir.
+- Zaman aşımı artık ikinci insert başlatmaz. Kayıt görünene kadar okunur; görünmezse aynı gönderim anahtarı durur. Kullanıcı yeniden denerse önce bu anahtar aranır.
+- Yeni migration yok. Production SQL uygulanmadı. Fiziksel yazıcı doğrulanmadı.
+
 ## 2026-11-07
 
 - Personel yetkisi: `fullAccess` (Tam Erişim) sayfa işlemlerini kapsar, personel yönetimini kapsamaz. Tahsilat, işletme sahibi veya aktif `manageOrders` / Tam Erişim kaydı olmadan yazılamaz. Personel kendi yetki satırını yükseltemez; davet yalnızca durum olarak aktifleşir.

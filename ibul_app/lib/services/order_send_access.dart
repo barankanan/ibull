@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -17,10 +18,12 @@ String orderSendActionFingerprint({
   required String jobType,
   required List<Map<String, dynamic>> items,
 }) {
-  final canonical = items.map((item) {
-    final keys = item.keys.map((key) => key.toString()).toList()..sort();
-    return <String, dynamic>{for (final key in keys) key: item[key]};
-  }).toList(growable: false);
+  final canonical = items
+      .map((item) {
+        final keys = item.keys.map((key) => key.toString()).toList()..sort();
+        return <String, dynamic>{for (final key in keys) key: item[key]};
+      })
+      .toList(growable: false);
   return jsonEncode(<String, dynamic>{
     'restaurantId': restaurantId.trim(),
     'tableNumber': tableNumber,
@@ -120,6 +123,35 @@ Map<String, dynamic> buildCreateTableOrderRpcParams({
     // function and makes PostgREST reject the whole send.
     if (key.isNotEmpty) 'p_local_order_id': key,
   };
+}
+
+/// One save attempt. A client timeout must not call [send] again.
+///
+/// The timed-out request is still running on the server. A second insert can
+/// commit beside it and open another order plus another kitchen ticket.
+/// Recovery only reads the row that the first attempt already committed.
+Future<dynamic> recoverOrderSaveAfterTimeout({
+  required Future<dynamic> Function() send,
+  required Future<Map<String, dynamic>?> Function() lookup,
+  Duration timeout = const Duration(seconds: 12),
+  int pollAttempts = 4,
+  Duration pollInterval = const Duration(milliseconds: 400),
+}) async {
+  try {
+    return await send().timeout(timeout);
+  } on TimeoutException {
+    final attempts = pollAttempts < 1 ? 1 : pollAttempts;
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      if (attempt > 0 && pollInterval > Duration.zero) {
+        await Future<void>.delayed(pollInterval);
+      }
+      final committed = await lookup();
+      if (committed != null) return committed;
+    }
+    throw StateError(
+      'Sipariş sonucu doğrulanamadı. Aynı gönderim anahtarı duruyor.',
+    );
+  }
 }
 
 /// A replay may print only a job that is still pending.
