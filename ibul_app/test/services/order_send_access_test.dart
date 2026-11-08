@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/services/order_send_access.dart';
+import 'package:ibul_app/services/store/table_transfer_plan.dart';
 import 'package:ibul_app/utils/garson_active_orders_fetch.dart';
 import 'package:ibul_app/utils/table_labels.dart';
 import 'package:ibul_app/utils/order_status_constants.dart';
@@ -802,6 +803,45 @@ void main() {
       ),
     );
     expect(withheld, hasLength(1));
+  });
+
+  test('partial transfer does not use the legacy RPC and timeout is not retried', () {
+    expect(legacyFullTransferAllowed('full'), isTrue);
+    expect(legacyFullTransferAllowed('partial'), isFalse);
+    expect(legacyFullTransferAllowed('customer'), isFalse);
+    expect(shouldAutoRetryTransferAfterTimeout(), isFalse);
+    expect(
+      transferTimeoutUserMessage(TransferTimeoutRead.sameAsBefore),
+      contains('Sonuç belirsiz'),
+    );
+    expect(
+      transferTimeoutUserMessage(TransferTimeoutRead.incomplete),
+      contains('yeniden okunamadı'),
+    );
+    expect(
+      classifyTransferTimeoutRead(
+        sourceIdsBefore: {'a'},
+        sourceIdsAfter: {'a'},
+        destinationIdsAfter: const <String>{},
+        sourceCustomerBefore: 1,
+        destinationCustomerBefore: 0,
+        sourceCustomerAfter: 1,
+        destinationCustomerAfter: 0,
+      ),
+      TransferTimeoutRead.sameAsBefore,
+    );
+    expect(
+      classifyTransferTimeoutRead(
+        sourceIdsBefore: {'a'},
+        sourceIdsAfter: const <String>{},
+        destinationIdsAfter: {'a'},
+        sourceCustomerBefore: 0,
+        destinationCustomerBefore: 0,
+        sourceCustomerAfter: null,
+        destinationCustomerAfter: 0,
+      ),
+      TransferTimeoutRead.incomplete,
+    );
   });
 
   test('a failed order lookup is not treated as an absent order', () {

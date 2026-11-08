@@ -2799,6 +2799,18 @@ class StoreTableService {
             : 'Seçilen ürünler bu masada bulunamadı. Masa olduğu gibi bırakıldı.',
       );
     }
+    final sourceIds = sourceOrders
+        .map((order) => order['id']?.toString().trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final sourceCustomerBefore = await _countOpenCustomerOrdersForTable(
+      sellerId: resolvedSellerId,
+      tableNumber: fromTable,
+    );
+    final destinationCustomerBefore = await _countOpenCustomerOrdersForTable(
+      sellerId: resolvedSellerId,
+      tableNumber: toTable,
+    );
 
     try {
       return await _callTransferRpc(
@@ -2814,10 +2826,28 @@ class StoreTableService {
       );
     } on PostgrestException catch (error) {
       if (!_isMissingTransferRpc(error)) rethrow;
+      if (!legacyFullTransferAllowed(canonical)) {
+        final kind = canonical == 'customer' ? 'Müşteri bazlı' : 'Kısmi';
+        throw Exception(
+          '$kind masa aktarımı BLOCKED. transfer_table_orders_v2 yok. '
+          'Eski transfer_table_orders çağrılmadı. Siparişler yerinde kaldı.',
+        );
+      }
       debugPrint(
         '[StoreTableService] transfer_table_orders_v2 missing '
-        'code=${error.code ?? '-'}. Using transfer_table_orders. '
+        'code=${error.code ?? '-'}. Full move uses transfer_table_orders. '
         'No client-side write.',
+      );
+    } on TimeoutException {
+      throw Exception(
+        await _transferTimeoutMessage(
+          sellerId: resolvedSellerId,
+          fromTable: fromTable,
+          toTable: toTable,
+          sourceIdsBefore: sourceIds,
+          sourceCustomerBefore: sourceCustomerBefore,
+          destinationCustomerBefore: destinationCustomerBefore,
+        ),
       );
     }
 
@@ -2838,6 +2868,62 @@ class StoreTableService {
         'Masa aktarma fonksiyonu sunucuda yok (${error.code ?? '-'}). '
         'Siparişler yerinde kaldı.',
       );
+    } on TimeoutException {
+      throw Exception(
+        await _transferTimeoutMessage(
+          sellerId: resolvedSellerId,
+          fromTable: fromTable,
+          toTable: toTable,
+          sourceIdsBefore: sourceIds,
+          sourceCustomerBefore: sourceCustomerBefore,
+          destinationCustomerBefore: destinationCustomerBefore,
+        ),
+      );
+    }
+  }
+
+  Future<String> _transferTimeoutMessage({
+    required String sellerId,
+    required int fromTable,
+    required int toTable,
+    required Set<String> sourceIdsBefore,
+    required int? sourceCustomerBefore,
+    required int? destinationCustomerBefore,
+  }) async {
+    try {
+      final sourceNow = await getTableOrdersByTable(
+        sellerId: sellerId,
+        tableNumber: fromTable,
+      );
+      final destinationNow = await getTableOrdersByTable(
+        sellerId: sellerId,
+        tableNumber: toTable,
+      );
+      final read = classifyTransferTimeoutRead(
+        sourceIdsBefore: sourceIdsBefore,
+        sourceIdsAfter: sourceNow
+            .map((order) => order['id']?.toString().trim() ?? '')
+            .where((id) => id.isNotEmpty)
+            .toSet(),
+        destinationIdsAfter: destinationNow
+            .map((order) => order['id']?.toString().trim() ?? '')
+            .where((id) => id.isNotEmpty)
+            .toSet(),
+        sourceCustomerBefore: sourceCustomerBefore,
+        destinationCustomerBefore: destinationCustomerBefore,
+        sourceCustomerAfter: await _countOpenCustomerOrdersForTable(
+          sellerId: sellerId,
+          tableNumber: fromTable,
+        ),
+        destinationCustomerAfter: await _countOpenCustomerOrdersForTable(
+          sellerId: sellerId,
+          tableNumber: toTable,
+        ),
+      );
+      return transferTimeoutUserMessage(read);
+    } catch (error) {
+      debugPrint('[StoreTableService] transfer timeout reread failed: $error');
+      return transferTimeoutUserMessage(TransferTimeoutRead.incomplete);
     }
   }
 
@@ -2893,9 +2979,7 @@ class StoreTableService {
                 '(${error.code ?? '-'}). Siparişler yerinde kaldı.',
       );
     } on TimeoutException {
-      throw Exception(
-        'Masa aktarımı zaman aşımına uğradı. Siparişler yerinde kaldı.',
-      );
+      rethrow;
     }
   }
 

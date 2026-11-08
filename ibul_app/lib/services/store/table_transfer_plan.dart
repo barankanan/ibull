@@ -1,5 +1,55 @@
 import '../../utils/garson_active_orders_fetch.dart';
 
+/// The live `transfer_table_orders` function is only used for a full move.
+/// Partial and customer moves stay blocked until `transfer_table_orders_v2`
+/// is proven on the server.
+bool legacyFullTransferAllowed(String canonicalType) => canonicalType == 'full';
+
+enum TransferTimeoutRead { sameAsBefore, changed, incomplete }
+
+/// A timed-out transfer is never retried. The read only describes what is
+/// visible now; it does not prove the server call failed.
+TransferTimeoutRead classifyTransferTimeoutRead({
+  required Set<String> sourceIdsBefore,
+  required Set<String> sourceIdsAfter,
+  required Set<String> destinationIdsAfter,
+  required int? sourceCustomerBefore,
+  required int? destinationCustomerBefore,
+  required int? sourceCustomerAfter,
+  required int? destinationCustomerAfter,
+}) {
+  if (sourceCustomerBefore == null ||
+      destinationCustomerBefore == null ||
+      sourceCustomerAfter == null ||
+      destinationCustomerAfter == null) {
+    return TransferTimeoutRead.incomplete;
+  }
+  final idsSame = sourceIdsBefore.length == sourceIdsAfter.length &&
+      sourceIdsBefore.containsAll(sourceIdsAfter);
+  final movedIds = sourceIdsBefore.intersection(destinationIdsAfter);
+  final customersSame = sourceCustomerBefore == sourceCustomerAfter &&
+      destinationCustomerBefore == destinationCustomerAfter;
+  if (idsSame && movedIds.isEmpty && customersSame) {
+    return TransferTimeoutRead.sameAsBefore;
+  }
+  return TransferTimeoutRead.changed;
+}
+
+bool shouldAutoRetryTransferAfterTimeout() => false;
+
+String transferTimeoutUserMessage(TransferTimeoutRead read) {
+  final observation = switch (read) {
+    TransferTimeoutRead.sameAsBefore =>
+      'Yeniden okumada açık kayıtlar aktarım öncesiyle aynı görünüyor.',
+    TransferTimeoutRead.changed =>
+      'Yeniden okumada kaynak veya hedef değişmiş görünüyor.',
+    TransferTimeoutRead.incomplete =>
+      'Kaynak ve hedef masa yeniden okunamadı.',
+  };
+  return 'Masa aktarımı yanıtı zaman aşımına uğradı. Sonuç belirsiz. '
+      'Otomatik tekrar yapılmadı. $observation';
+}
+
 /// Canonical transfer type stored in `table_transfers_log`.
 ///
 /// The UI enum name `customerBased` is not a valid log value. Callers may
