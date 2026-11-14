@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import '../../../../../services/local_print_service.dart';
+import '../../../../../services/printer_link_status.dart';
 
 String normalizePrinterWorkflowMessage(
   Object error, {
@@ -19,6 +22,13 @@ String normalizePrinterWorkflowMessage(
           : 'Yazıcı kuyruğu meşgul. '
                 "Sistem Ayarları > Yazıcılar'dan kuyruğu temizleyin veya USB'yi çıkarıp takın.";
     }
+  }
+  final facing = waiterFacingPrintError(error);
+  if (error is LocalPrintServiceException ||
+      error is TimeoutException ||
+      facing.contains('belirsiz') ||
+      facing.contains('ulaşılamadı')) {
+    return facing;
   }
   final rawMessage = error.toString().replaceFirst('Exception: ', '').trim();
   if (rawMessage.isEmpty) {

@@ -864,6 +864,92 @@ bool shouldClearGarsonCatalogAsNonFood({
   return !isFoodCategory;
 }
 
+List<SellerModule> modulesForStaff({
+  required List<SellerModule> modules,
+  required bool isOwner,
+  String? staffRole,
+  Set<String> permissions = const <String>{},
+  Set<String>? visibleModules,
+}) {
+  if (isOwner) return modules;
+  if (visibleModules != null) {
+    return modules
+        .where((module) => visibleModules.contains(module.name))
+        .toList(growable: false);
+  }
+  bool allowed(SellerModule module) {
+    switch (module) {
+      case SellerModule.garson:
+      case SellerModule.orders:
+        return permissions.contains('viewOrders') ||
+            permissions.contains('manageOrders');
+      case SellerModule.dashboard:
+        return permissions.contains('viewOrders');
+      case SellerModule.finance:
+        return permissions.contains('viewFinance');
+      case SellerModule.products:
+      case SellerModule.collections:
+        return permissions.contains('manageProducts');
+      case SellerModule.campaigns:
+        return permissions.contains('manageCampaigns');
+      case SellerModule.support:
+        return permissions.contains('manageSupport');
+      case SellerModule.store:
+        return permissions.contains('manageStoreProfile');
+      case SellerModule.team:
+        return permissions.contains('manageStaff');
+      case SellerModule.system:
+        return permissions.contains('manageOrders') ||
+            permissions.contains('managePrintSettings');
+      default:
+        return false;
+    }
+  }
+
+  final filtered = modules.where(allowed).toList(growable: false);
+  if (staffRole == 'waiter') {
+    final floor = modules.where((module) => module == SellerModule.garson);
+    final extras = filtered.where((module) => module != SellerModule.garson);
+    return <SellerModule>[...floor, ...extras];
+  }
+  if (filtered.isEmpty) return const <SellerModule>[SellerModule.garson];
+  return filtered;
+}
+
+/// Whether a module may stay open. [pending] means the store profile is not
+/// loaded yet, so a missing restaurant page is not a permission denial.
+enum StaffModuleAccess { allowed, pending, denied }
+
+StaffModuleAccess judgeStaffModuleAccess({
+  required SellerModule module,
+  required bool profileLoaded,
+  required bool isOwner,
+  required String? staffRole,
+  required Set<String> permissions,
+  Set<String>? visibleModules,
+  required List<SellerModule> catalog,
+}) {
+  if (isOwner) return StaffModuleAccess.allowed;
+  if (visibleModules != null) {
+    if (!profileLoaded) return StaffModuleAccess.pending;
+    return visibleModules.contains(module.name)
+        ? StaffModuleAccess.allowed
+        : StaffModuleAccess.denied;
+  }
+  final allowed = modulesForStaff(
+    modules: catalog,
+    isOwner: false,
+    staffRole: staffRole,
+    permissions: permissions,
+  );
+  if (allowed.contains(module)) return StaffModuleAccess.allowed;
+  if (!profileLoaded) return StaffModuleAccess.pending;
+  return StaffModuleAccess.denied;
+}
+
+const staffModuleDeniedMessage = 'Bu sayfaya erişim yetkiniz yok.';
+const staffAdisyonDeniedMessage = 'Adisyonu açma yetkiniz yok.';
+
 List<SellerModule> visibleSellerModules(
   String? storeCategory, {
   bool garsonOnly = false,

@@ -30,7 +30,10 @@ export async function getAuthedContext(req: Request): Promise<AuthedContext> {
   const userClient = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authHeader } },
   });
-  const serviceClient = createClient(supabaseUrl, serviceRoleKey);
+  const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { Authorization: `Bearer ${serviceRoleKey}` } },
+  });
 
   const { data, error } = await userClient.auth.getUser();
   if (error || !data.user) {

@@ -19,8 +19,10 @@ class PrinterStationTestGuard {
     if (testInFlight) {
       return 'Test fişi zaten gönderiliyor, lütfen bekleyin.';
     }
-    if (printSystemEnabledLoaded &&
-        (queueRuntimeDisabled || !printSystemEnabled)) {
+    if (!printSystemEnabledLoaded) {
+      return 'Yazıcı servisi durumu bilinmiyor. Test fişi gönderilmez.';
+    }
+    if (queueRuntimeDisabled || !printSystemEnabled) {
       return 'Baskı sistemi kapalı.';
     }
     if (!bridgeReachable) {

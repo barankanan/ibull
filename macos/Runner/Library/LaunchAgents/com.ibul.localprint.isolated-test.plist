@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.ibul.localprint.isolated-test</string>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>com.ibul.sellerdesktop</string>
+	</array>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/IbulPrintBridge</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+		<key>Crashed</key>
+		<true/>
+	</dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PRINT_BRIDGE_HOST</key>
+		<string>127.0.0.1</string>
+		<key>PRINT_BRIDGE_PORT</key>
+		<string>18771</string>
+		<key>PRINT_STATION_ENABLED</key>
+		<string>false</string>
+		<key>PRINT_BRIDGE_TRANSPORT</key>
+		<string>auto</string>
+		<key>PRINT_BRIDGE_DATA_DIR</key>
+		<string>~/Library/Application Support/IbulPrintBridgeIsolatedTest</string>
+		<key>PRINT_BRIDGE_ENV_FILE</key>
+		<string>~/Library/Application Support/IbulPrintBridgeIsolatedTest/bridge.env</string>
+	</dict>
+</dict>
+</plist>

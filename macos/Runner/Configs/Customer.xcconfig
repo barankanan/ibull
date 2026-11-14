@@ -1,0 +1,8 @@
+#include "AppInfo.xcconfig"
+
+// İBUL customer app. Selected only by the Customer scheme
+// (Debug-Customer, Release-Customer, Profile-Customer).
+// Production seller builds do not include this file.
+PRODUCT_NAME = IBUL
+PRODUCT_BUNDLE_IDENTIFIER = com.ibul.customer
+APP_DISPLAY_NAME = İBUL

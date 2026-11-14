@@ -1,0 +1,45 @@
+{
+  "scope": "Offline historical catalog; optional local rows only",
+  "results": [
+    {
+      "name": "orders required columns",
+      "status": "PASS",
+      "detail": "Present in historical catalog; not refreshed"
+    },
+    {
+      "name": "order_items required columns",
+      "status": "PASS",
+      "detail": "Present in historical catalog; not refreshed"
+    },
+    {
+      "name": "printers required columns",
+      "status": "PASS",
+      "detail": "Present in historical catalog; not refreshed"
+    },
+    {
+      "name": "print_jobs required columns",
+      "status": "PASS",
+      "detail": "Present in historical catalog; not refreshed"
+    },
+    {
+      "name": "orders idempotency unique index",
+      "status": "PASS",
+      "detail": "Historical catalog"
+    },
+    {
+      "name": "paused print status",
+      "status": "PASS",
+      "detail": "Historical CHECK accepts paused_by_operator"
+    },
+    {
+      "name": "Realtime baseline completeness",
+      "status": "BLOCKED",
+      "detail": "Historical query returned 0 rows for its unknown filter. Publication exists, but a complete membership/settings snapshot was not saved. Do not infer global emptiness."
+    },
+    {
+      "name": "current production order/printer row compatibility",
+      "status": "BLOCKED",
+      "detail": "No complete local production row export supplied. Historical schema and aggregate latency exports cannot prove row compatibility. No production connection made."
+    }
+  ]
+}

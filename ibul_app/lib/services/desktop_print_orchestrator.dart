@@ -14,6 +14,7 @@ import '../models/printer_model.dart';
 import '../models/station_printer_model.dart';
 import 'desktop_print_ports.dart';
 import 'local_print_service.dart';
+import 'printer_link_status.dart';
 import 'macos_admin_release_models.dart';
 import 'macos_usb_permission_recovery_service.dart';
 import '../models/turkish_encoding_calibration.dart';
@@ -884,7 +885,7 @@ class DesktopPrintOrchestrator {
       testMode: testMode,
       timeout: timeout ??
           (tcpHot
-              ? LocalPrintService.ethernetHotPathTimeout
+              ? LocalPrintService.ethernetPrintHttpTimeout
               : null),
     );
   }
@@ -3441,6 +3442,9 @@ class DesktopPrintOrchestrator {
     var profileResolveMs = 0;
     var payloadBuildMs = 0;
     var bridgeRequestMs = 0;
+    if (!PhysicalPrintGate.allowsSend) {
+      return _printSystemDisabledResult();
+    }
     final fastFlow = _isFastPhysicalPrintFlow(flowType, flowName);
     if (!fastFlow && restaurantId != null && restaurantId.trim().isNotEmpty) {
       final snapshot = await loadSetupSnapshot(
@@ -5919,6 +5923,7 @@ class DesktopPrintOrchestrator {
         'deviceIdentifier': deviceIdentifier,
         'device_identifier': deviceIdentifier,
         'paper_width_mm': printer.paperWidthMm,
+        ...PrinterPrintSizeSettings.fromPrinterModel(printer).toBridgeFields(),
       };
     _mergeReceiptLengthIntoPrinterRaw(raw, printer);
     return UnifiedPrinterModel(
@@ -7119,7 +7124,9 @@ class DesktopPrintOrchestrator {
     if (raw.contains('print_system_disabled') ||
         raw.contains('baskı sistemi şu anda kapalı') ||
         raw.contains('baski sistemi su anda kapali') ||
-        raw.contains('baskı sistemi kapalı')) {
+        raw.contains('baskı sistemi kapalı') ||
+        raw.contains('yazıcı servisi kapalı') ||
+        raw.contains('yazici servisi kapali')) {
       return 'Baskı sistemi kapalı. Test göndermek için sistemi açın.';
     }
     if (raw.contains('cups işi kabul etti ama fiziksel baskı doğrulanamadı')) {
@@ -7180,7 +7187,7 @@ class DesktopPrintOrchestrator {
           : 'Yazıcı servisi yanıt vermedi. Bridge çalışıyor mu kontrol edin.';
     }
     if (errorCode == 'print_system_disabled') {
-      return 'Baskı sistemi şu anda kapalı. Yazıcı Ayarları > Baskı Sistemi > Aç butonunu kullanın.';
+      return 'Yazıcı servisi kapalı. Yazıcı Merkezi’nden Yazıcı Servisini açın.';
     }
     if (errorCode == 'duplicate_test_suppressed') {
       return 'Test fişi zaten gönderiliyor, lütfen bekleyin.';
@@ -7264,10 +7271,7 @@ class DesktopPrintOrchestrator {
               ? Map<String, dynamic>.from(queuePayload)
               : null);
     final localRuntime =
-        queueMap?['print_system_enabled'] ??
-        queueMap?['printSystemEnabled'] ??
-        queueMap?['print_system'] ??
-        queueMap?['enabled'];
+        queueMap?['print_system_enabled'] ?? queueMap?['printSystemEnabled'];
     if (localRuntime is bool) return localRuntime;
     final remote = snapshot.remoteConfig;
     final remoteEnabled =
@@ -7541,6 +7545,7 @@ class DesktopPrintOrchestrator {
       'isStaleSavedMapping': true,
       'discoveredStatusMessage':
           'Kayıtlı Ethernet yazıcı — bağlantı test edilmedi',
+      ...PrinterPrintSizeSettings.fromPrinterModel(legacyPrinter).toBridgeFields(),
     };
     _mergeReceiptLengthIntoPrinterRaw(raw, legacyPrinter);
     return UnifiedPrinterModel(

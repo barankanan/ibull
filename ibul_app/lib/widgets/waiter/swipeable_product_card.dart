@@ -67,19 +67,44 @@ class SwipeableProductCard extends StatelessWidget {
         labelRight: true,
       ),
       confirmDismiss: (direction) async {
-        if (direction == DismissDirection.startToEnd) {
-          // Right swipe → remove from draft.
-          onQuickRemove();
-        } else {
-          // Left swipe → open configure dialog.
-          onEdit();
-        }
-        // Always return false: we never actually dismiss the card from the list.
+        final remove = direction == DismissDirection.startToEnd;
+        // The dismissible is still settling in this callback. Opening the
+        // product sheet here deactivates an InheritedElement while the new
+        // route already depends on it (`_dependents.isEmpty`). Run the
+        // existing draft action on the next frame, after the card snaps back.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (remove) {
+            onQuickRemove();
+          } else {
+            onEdit();
+          }
+        });
         return false;
       },
       child: child,
     );
   }
+}
+
+/// Pops the product sheet after the focused field drops its inherited
+/// dependencies.
+///
+/// The selection toolbar lives in the root overlay and still depends on the
+/// sheet's [InheritedElement]. Popping in the same frame deactivates that
+/// element while the toolbar is registered, which fails
+/// `debugDeactivated` (`_dependents.isEmpty`).
+void popGarsonProductSheet(BuildContext context, [Object? result]) {
+  final navigator = Navigator.of(context);
+  final focused = FocusManager.instance.primaryFocus;
+  if (focused != null && focused.hasFocus) {
+    focused.unfocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!navigator.mounted) return;
+      navigator.pop(result);
+    });
+    return;
+  }
+  navigator.pop(result);
 }
 
 class _SwipeBackground extends StatelessWidget {

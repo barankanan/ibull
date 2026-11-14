@@ -279,31 +279,18 @@ class _PrintersTabState extends State<_PrintersTab> {
         remoteEnabled: remotePrintSystemEnabled,
       );
       if (localPrintSystemEnabled != null &&
+          remotePrintSystemEnabled != null &&
           remotePrintSystemEnabled != localPrintSystemEnabled) {
-        try {
-          await _printStationService.patchStationConfiguration(
-            restaurantId: widget.restaurantId,
-            fields: <String, dynamic>{
-              'print_system_enabled': localPrintSystemEnabled,
-              'updated_at': DateTime.now().toIso8601String(),
-            },
-          );
-          remotePrintSystemEnabled = localPrintSystemEnabled;
-          syncNotice =
-              'Yerel bridge çalışma değeri ile bulut ayarı farklıydı. Bridge runtime değeri buluta senkronlandı.';
-        } catch (_) {
-          syncNotice ??=
-              'Yerel bridge çalışma değeri ekranda gösteriliyor. Bulut ayarı senkronlanamadı.';
-        }
+        syncNotice =
+            'Yerel yazıcı servisi ${_printSystemStateLabel(localPrintSystemEnabled)} · '
+            'bulut kaydı ${_printSystemStateLabel(remotePrintSystemEnabled)}. '
+            'Fiziksel baskı yerel servis onayına bağlıdır.';
       }
       if (!mounted) return;
       final pausedJobs = await _printStationService.fetchPausedPrintJobs(
         widget.restaurantId,
       );
       if (!mounted) return;
-      final queueDisabled = _queueRuntimePrintSystemDisabled(
-        snapshot.queueStatus,
-      );
       setState(() {
         _bridgeReachable = snapshot.bridgeReachable;
         _bridgeHealthy = snapshot.bridgeHealthy;
@@ -338,9 +325,7 @@ class _PrintersTabState extends State<_PrintersTab> {
         _remotePrintSystemEnabled = remotePrintSystemEnabled;
         _printSystemSourceIsLocalRuntime = localPrintSystemEnabled != null;
         _printSystemEnabled =
-            localPrintSystemEnabled ??
-            remotePrintSystemEnabled ??
-            (queueDisabled ? false : true);
+            snapshot.bridgeReachable && localPrintSystemEnabled == true;
         _printSystemEnabledLoaded =
             localPrintSystemEnabled != null ||
             remotePrintSystemEnabled != null ||
@@ -467,10 +452,6 @@ class _PrintersTabState extends State<_PrintersTab> {
     final previousLocalEnabled = _localPrintSystemEnabled;
     final previousRemoteEnabled = _remotePrintSystemEnabled;
     setState(() {
-      _printSystemEnabled = enabled;
-      _localPrintSystemEnabled = previousLocalEnabled == null ? null : enabled;
-      _remotePrintSystemEnabled = enabled;
-      _printSystemSourceIsLocalRuntime = previousLocalEnabled != null;
       _savingPrintSystemEnabled = true;
       _printSystemError = null;
       _printSystemSyncNotice = null;
@@ -494,8 +475,8 @@ class _PrintersTabState extends State<_PrintersTab> {
         SnackBar(
           content: Text(
             enabled
-                ? 'Baskı sistemi açıldı. Yeni siparişler otomatik yazdırılır.'
-                : 'Baskı sistemi kapatıldı. Siparişler alınır ancak fişler otomatik yazdırılmaz.',
+                ? 'Yazıcı servisi açıldı'
+                : 'Yazıcı servisi kapalı. Yeni fiziksel baskı gönderilmez. Yazıcıya daha önce iletilmiş baytlar geri alınamaz.',
           ),
           backgroundColor: enabled
               ? const Color(0xFF10B981)
@@ -649,8 +630,8 @@ class _PrintersTabState extends State<_PrintersTab> {
         ? const Color(0xFFDC2626)
         : const Color(0xFF15803D);
     final primaryButtonLabel = uiEnabled
-        ? 'Baskı Sistemini Kapat'
-        : 'Baskı Sistemini Aç';
+        ? 'Yazıcı Servisini Kapat'
+        : 'Yazıcı Servisini Aç';
     final sourceLabel = _printSystemSourceIsLocalRuntime
         ? 'Gösterilen kaynak: Yerel bridge runtime'
         : 'Gösterilen kaynak: Bulut ayarı';
@@ -721,7 +702,7 @@ class _PrintersTabState extends State<_PrintersTab> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Baskı Sistemi',
+                      'Yazıcı Servisi',
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
@@ -3390,15 +3371,15 @@ class _BridgeStatusCard extends StatelessWidget {
         const Color(0xFFF0FDF4),
         const Color(0xFFBBF7D0),
         const Color(0xFF10B981),
-        'Yazıcı Köprüsü Aktif',
-        'Yerel yazıcı servisi 127.0.0.1:3001 adresinde çalışıyor.',
+        'Yazıcı servisi yanıt verdi',
+        'Yazıcı bağlantısı ve eşleştirme ayrıca doğrulanır. Otomatik baskı, istasyon kapalıyken başlamaz.',
       ),
       BridgeStatus.offline => (
         const Color(0xFFFEF2F2),
         const Color(0xFFFECACA),
         const Color(0xFFEF4444),
-        'Yazıcı Köprüsü Kapalı',
-        'Yerel yazdırma servisi ulaşılamıyor. "Servisi Başlat" veya "Servisi Onar" butonuna basın.',
+        'Kullanıcı müdahalesi gerekiyor',
+        'Yazıcı servisi yanıt vermiyor. Portun açık olması servisin çalıştığı anlamına gelmez.',
       ),
       BridgeStatus.error => (
         const Color(0xFFFFF7ED),
@@ -3411,8 +3392,8 @@ class _BridgeStatusCard extends StatelessWidget {
         const Color(0xFFFFFBEB),
         const Color(0xFFFDE68A),
         const Color(0xFFF59E0B),
-        'Bağlantı Kontrol Ediliyor…',
-        '127.0.0.1:3001 — yanıt bekleniyor.',
+        'Servis başlatılıyor',
+        'Yazıcı servisi yanıtı bekleniyor. Açık port tek başına yeterli değil.',
       ),
       BridgeStatus.unknown => (
         const Color(0xFFF9FAFB),
@@ -3472,6 +3453,17 @@ class _BridgeStatusCard extends StatelessWidget {
                     height: 1.4,
                   ),
                 ),
+                if ((BridgeManager.agentStatusLine ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    BridgeManager.agentStatusLine!,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF6B7280),
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -3907,7 +3899,11 @@ class _FailedJobsCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    _RetryButton(hub: hub, jobId: job.jobId),
+                    _RetryButton(
+                      hub: hub,
+                      jobId: job.jobId,
+                      lastError: job.error,
+                    ),
                   ],
                 ),
               );
@@ -3920,10 +3916,15 @@ class _FailedJobsCard extends StatelessWidget {
 }
 
 class _RetryButton extends StatefulWidget {
-  const _RetryButton({required this.hub, required this.jobId});
+  const _RetryButton({
+    required this.hub,
+    required this.jobId,
+    required this.lastError,
+  });
 
   final DesktopPrintHub hub;
   final String jobId;
+  final String lastError;
 
   @override
   State<_RetryButton> createState() => _RetryButtonState();
@@ -3956,9 +3957,24 @@ class _RetryButtonState extends State<_RetryButton> {
 
   Future<void> _handleRetry() async {
     if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Manuel yeniden baskı'),
+        content: Text(
+          'Bu fiş yazıcıya ulaşmış olabilir. Onay, aynı sipariş için ikinci bir fiziksel fiş üretebilir. Bu çift baskı riskidir. Belirsiz baskı otomatik tekrarlanmaz. Yazıcıyı ve çıkan fişi kontrol edin.'
+          '${widget.lastError.trim().isEmpty ? '' : '\n\nSon durum: ${widget.lastError}'}',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Vazgeç')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Kontrol ettim, yeniden bas')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     setState(() => _retrying = true);
     try {
-      await widget.hub.retryJob(widget.jobId);
+      await widget.hub.retryJob(widget.jobId, operatorConfirmed: true);
     } finally {
       if (mounted) setState(() => _retrying = false);
     }
@@ -4005,6 +4021,8 @@ class _LaunchAgentCard extends StatelessWidget {
           const SizedBox(height: 8),
           const SelectableText(
             'Yazdırma servisi bu masaüstü uygulamasıyla birlikte otomatik başlamalıdır.\n'
+            'MacBook uykuya geçince yerel yazıcı servisi durabilir. Uyandıktan sonra servis yeniden açılır.\n'
+            'Windows oturum açılışında Run kaydıyla başlar. Bu bir Windows hizmeti değildir ve çökünce kendiliğinden kalkmaz.\n'
             'macOS ve Windows release notları için docs/SELLER_DESKTOP_SETUP.md belgesini takip edin.',
             style: TextStyle(
               fontSize: 11,

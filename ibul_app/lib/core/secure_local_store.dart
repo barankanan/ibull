@@ -15,19 +15,51 @@ class SecureLocalStore {
 
   static final SecureLocalStore instance = SecureLocalStore._();
 
+  /// Existing production seller sessions. Do not rename.
+  static const sellerMacOsSecureAccount = 'flutter_secure_storage_service';
+
+  /// Customer macOS app. Distinct from the seller account and the LAN test.
+  static const customerMacOsSecureAccount = 'ibul.customer';
+
+  /// Matches `offlineTestKeychainAccount`. Selected only for offline-test builds.
+  static const offlineTestMacOsSecureAccount = 'ibul.sellerdesktop.offlinetest';
+
+  static String macOsAccountName = const bool.fromEnvironment('IBUL_OFFLINE_TEST')
+      ? offlineTestMacOsSecureAccount
+      : sellerMacOsSecureAccount;
+
+  static FlutterSecureStorage? _opened;
+
   /// v10 migrates Jetpack EncryptedSharedPreferences into the custom cipher
   /// on first access. [encryptedSharedPreferences] is ignored by the plugin
   /// and kept so this call site records the v9 storage backend.
   /// [resetOnError] stays false so a failed read does not wipe existing keys.
-  static const FlutterSecureStorage _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(
-      // ignore: deprecated_member_use
-      encryptedSharedPreferences: true,
-      resetOnError: false,
-      migrateOnAlgorithmChange: true,
-      migrateWithBackup: true,
-    ),
-  );
+  static FlutterSecureStorage get _storage {
+    return _opened ??= FlutterSecureStorage(
+      aOptions: const AndroidOptions(
+        // ignore: deprecated_member_use
+        encryptedSharedPreferences: true,
+        resetOnError: false,
+        migrateOnAlgorithmChange: true,
+        migrateWithBackup: true,
+      ),
+      mOptions: MacOsOptions(accountName: macOsAccountName),
+    );
+  }
+
+  /// Points later Keychain writes at the customer account.
+  ///
+  /// The seller desktop entry does not call this, so its existing account
+  /// stays in place. An offline-test build keeps its own account.
+  static void useCustomerMacOsAccount() {
+    if (const bool.fromEnvironment('IBUL_OFFLINE_TEST')) return;
+    if (_opened != null && macOsAccountName != customerMacOsSecureAccount) {
+      throw StateError(
+        'Secure store already opened with $macOsAccountName',
+      );
+    }
+    macOsAccountName = customerMacOsSecureAccount;
+  }
 
   Future<String?> readString(String key) async {
     try {
@@ -38,7 +70,16 @@ class SecureLocalStore {
     } catch (error) {
       _logSecureStorageFailure('read', key, error);
     }
-    return _migrateLegacySharedPreference(key);
+    final legacy = await _migrateLegacySharedPreference(key);
+    if (legacy == null || legacy.isEmpty) return legacy;
+    try {
+      await _storage.write(key: key, value: legacy);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(key);
+    } catch (error) {
+      _logSecureStorageFailure('migrate', key, error);
+    }
+    return legacy;
   }
 
   Future<void> writeString(String key, String value) async {
@@ -88,6 +129,20 @@ class SecureLocalStore {
 
   Future<void> writeJson(String key, dynamic value) async {
     await writeString(key, jsonEncode(value));
+  }
+
+  /// Stores a private key in the platform keystore. A failed write does not
+  /// fall back to SharedPreferences.
+  Future<bool> writeSecret(String key, String value) async {
+    try {
+      await _storage.write(key: key, value: value);
+    } catch (error) {
+      _logSecureStorageFailure('secret-write', key, error);
+      return false;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(key);
+    return true;
   }
 
   Future<String?> _migrateLegacySharedPreference(String key) async {

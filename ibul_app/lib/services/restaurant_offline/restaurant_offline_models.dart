@@ -9,7 +9,9 @@ enum RestaurantConnectivityMode {
   supabaseUnreachable,
   bridgeUnreachable,
   offlineLocalMode,
+  lanUnavailable,
   syncing,
+  conflict,
 }
 
 enum RestaurantLocalOrderSyncStatus {
@@ -29,6 +31,8 @@ enum RestaurantLocalPrintJobStatus {
   failed,
   retrying,
   cancelled,
+  forwarded,
+  uncertain,
 }
 
 class RestaurantLocalOrderRecord {

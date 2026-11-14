@@ -64,15 +64,13 @@ class TablePaymentBottomSheet extends StatefulWidget {
 }
 
 class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
-  TablePaymentMethod? _selectedMethod;
-  bool _isPartialMode = false;
+  final TablePaymentMethod _selectedMethod = TablePaymentMethod.cash;
+  bool _submitting = false;
   final TextEditingController _partialAmountController =
       TextEditingController();
   final TextEditingController _noteController = TextEditingController();
-  int _splitCount = 2;
 
   static const _green = Color(0xFF16A34A);
-  static const _blue = Color(0xFF2563EB);
 
   @override
   void dispose() {
@@ -93,13 +91,14 @@ class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
       '${v.toStringAsFixed(2).replaceAll('.', ',')} ₺';
 
   bool get _canConfirmPartial {
-    if (_selectedMethod == null) return false;
+    if (_submitting) return false;
     final v = double.tryParse(
         _partialAmountController.text.trim().replaceAll(',', '.'));
-    return v != null && v > 0 && v <= _remainingTotal;
+    if (v == null || v <= 0) return false;
+    final cents = (v * 100).round();
+    final remainingCents = (_remainingTotal * 100).round();
+    return cents > 0 && cents <= remainingCents;
   }
-
-  bool get _canConfirmFull => _selectedMethod != null;
 
   String _paymentMethodLabel(TablePaymentMethod m) => m.label;
 
@@ -129,14 +128,10 @@ class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
                     _buildPaymentTimeline(),
                     const SizedBox(height: 16),
                   ],
-                  _buildSplitBillRow(),
-                  const SizedBox(height: 16),
                   _buildMethodSelector(),
                   const SizedBox(height: 12),
-                  if (_isPartialMode) ...[
-                    _buildPartialAmountField(),
-                    const SizedBox(height: 12),
-                  ],
+                  _buildPartialAmountField(),
+                  const SizedBox(height: 12),
                   _buildNoteField(),
                   const SizedBox(height: 20),
                   _buildActions(),
@@ -248,15 +243,13 @@ class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
               ],
             ),
           ),
-          if (widget.existingPayments.isNotEmpty) ...[
-            _TotalColumn(
-                label: 'Ödenen', value: _paidTotal, color: _green),
-            const SizedBox(width: 16),
-            _TotalColumn(
-                label: 'Kalan',
-                value: _remainingTotal,
-                color: _remainingTotal > 0 ? Colors.orange.shade700 : _green),
-          ],
+          _TotalColumn(label: 'Ödenen', value: _paidTotal, color: _green),
+          const SizedBox(width: 16),
+          _TotalColumn(
+            label: 'Kalan',
+            value: _remainingTotal,
+            color: _remainingTotal > 0 ? Colors.orange.shade700 : _green,
+          ),
         ],
       ),
     );
@@ -339,77 +332,9 @@ class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
     );
   }
 
-  Widget _buildSplitBillRow() {
-    final perPerson = _splitCount > 0
-        ? _remainingTotal / _splitCount
-        : 0.0;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: _blue.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _blue.withValues(alpha: 0.2)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Hesabı Böl',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: _blue,
-                ),
-              ),
-              Text(
-                'Kişi başı: ${_formatMoney(perPerson)}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-            ],
-          ),
-          Row(
-            children: [
-              _StepperButton(
-                icon: Icons.remove,
-                onTap: _splitCount > 1
-                    ? () => setState(() => _splitCount--)
-                    : null,
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Text(
-                  '$_splitCount kişi',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              _StepperButton(
-                icon: Icons.add,
-                onTap: () => setState(() => _splitCount++),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildMethodSelector() {
     const methods = [
       (TablePaymentMethod.cash, Icons.payments_rounded, _green),
-      (TablePaymentMethod.card, Icons.credit_card_rounded, _blue),
-      (TablePaymentMethod.online, Icons.qr_code_scanner_rounded,
-          Color(0xFF7C3AED)),
-      (TablePaymentMethod.complimentary, Icons.card_giftcard_rounded,
-          Color(0xFFF59E0B)),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -432,7 +357,7 @@ class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
             final color = m.$3;
             final selected = _selectedMethod == method;
             return GestureDetector(
-              onTap: () => setState(() => _selectedMethod = method),
+              onTap: () {},
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 padding: const EdgeInsets.symmetric(
@@ -465,6 +390,11 @@ class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
               ),
             );
           }).toList(),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Nakit kasa kaydı. Banka veya ödeme kuruluşu onayı yoktur.',
+          style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
         ),
       ],
     );
@@ -505,78 +435,31 @@ class _TablePaymentBottomSheetState extends State<TablePaymentBottomSheet> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // Toggle partial mode
-        if (_remainingTotal > 0)
-          OutlinedButton.icon(
-            onPressed: () => setState(() {
-              _isPartialMode = !_isPartialMode;
-              if (!_isPartialMode) {
-                _partialAmountController.clear();
-              }
-            }),
-            icon: Icon(
-              _isPartialMode
-                  ? Icons.cancel_outlined
-                  : Icons.payments_outlined,
-              size: 16,
-            ),
-            label: Text(
-              _isPartialMode ? 'Kısmi Ödemeyi İptal Et' : 'Ara Ödeme Al',
-            ),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 44),
-            ),
-          ),
-        if (_isPartialMode) ...[
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            onPressed: _canConfirmPartial
-                ? () {
-                    final amount = double.parse(
-                      _partialAmountController.text
-                          .trim()
-                          .replaceAll(',', '.'),
-                    );
-                    Navigator.of(context).pop(PaymentSheetResult(
-                      method: _selectedMethod!,
-                      amount: amount,
-                      isClosing: false,
-                      note: _noteController.text.trim().isNotEmpty
-                          ? _noteController.text.trim()
-                          : null,
-                    ));
-                  }
-                : null,
-            icon: const Icon(Icons.add_rounded, size: 16),
-            label: const Text('Ara Ödeme Kaydet'),
-            style: FilledButton.styleFrom(
-              backgroundColor: _blue,
-              minimumSize: const Size(0, 44),
-            ),
-          ),
-        ],
-        const SizedBox(height: 8),
         FilledButton.icon(
-          onPressed: _canConfirmFull
+          onPressed: _canConfirmPartial
               ? () {
+                  final raw = double.parse(
+                    _partialAmountController.text
+                        .trim()
+                        .replaceAll(',', '.'),
+                  );
+                  final amount = ((raw * 100).round()) / 100;
+                  setState(() => _submitting = true);
                   Navigator.of(context).pop(PaymentSheetResult(
-                    method: _selectedMethod!,
-                    amount: _remainingTotal,
-                    isClosing: true,
+                    method: _selectedMethod,
+                    amount: amount,
+                    isClosing: false,
                     note: _noteController.text.trim().isNotEmpty
                         ? _noteController.text.trim()
                         : null,
                   ));
                 }
               : null,
-          icon: const Icon(Icons.check_circle_rounded, size: 16),
-          label: Text(
-            _remainingTotal > 0
-                ? 'Hesabı Kes — ${_formatMoney(_remainingTotal)}'
-                : 'Masayı Kapat',
-          ),
+          icon: const Icon(Icons.check_rounded, size: 16),
+          label: const Text('İşlemi onayla'),
           style: FilledButton.styleFrom(
             backgroundColor: _green,
-            minimumSize: const Size(0, 50),
+            minimumSize: const Size(0, 48),
           ),
         ),
       ],
@@ -622,33 +505,3 @@ class _TotalColumn extends StatelessWidget {
   }
 }
 
-class _StepperButton extends StatelessWidget {
-  const _StepperButton({required this.icon, this.onTap});
-
-  final IconData icon;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 28,
-        height: 28,
-        decoration: BoxDecoration(
-          color: onTap != null
-              ? const Color(0xFFE0E7FF)
-              : const Color(0xFFF1F5F9),
-          shape: BoxShape.circle,
-        ),
-        child: Icon(
-          icon,
-          size: 16,
-          color: onTap != null
-              ? const Color(0xFF2563EB)
-              : Colors.grey.shade400,
-        ),
-      ),
-    );
-  }
-}

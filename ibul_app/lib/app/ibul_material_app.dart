@@ -45,7 +45,7 @@ class _IbulMaterialAppState extends State<IbulMaterialApp> {
   Widget build(BuildContext context) {
     return MaterialApp.router(
       debugShowCheckedModeBanner: false,
-      title: 'IBUL App',
+      title: 'İBUL',
       localizationsDelegates: const [
         AppLocalizations.delegate,
         IbulTrMaterialLocalizationsDelegate(),

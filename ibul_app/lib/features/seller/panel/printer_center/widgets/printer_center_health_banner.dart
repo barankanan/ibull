@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../../../services/printer_link_status.dart';
+
 /// Compact system health summary for Yazıcı Merkezi.
 class PrinterCenterHealthBanner extends StatelessWidget {
   const PrinterCenterHealthBanner({
@@ -65,9 +67,14 @@ class PrinterCenterHealthBanner extends StatelessWidget {
             tone: supabaseReachable ? _Tone.success : _Tone.warning,
           ),
           _Chip(
-            label: 'Baskı',
-            value: printSystemEnabled ? 'Açık' : 'Kapalı',
-            tone: printSystemEnabled ? _Tone.success : _Tone.error,
+            label: 'Yazıcı servisi',
+            value: describeCanonicalPrinterStatus(
+              bridgeUp: bridgeReachable,
+              serviceEnabled: printSystemEnabled,
+            ).label,
+            tone: printSystemEnabled && bridgeReachable
+                ? _Tone.success
+                : _Tone.error,
           ),
           _Chip(
             label: 'Aktif yazıcı',

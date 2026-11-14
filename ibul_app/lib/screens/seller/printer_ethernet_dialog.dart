@@ -28,6 +28,7 @@ import '../../services/desktop_print_orchestrator.dart';
 import '../../services/local_print_service.dart';
 import '../../services/mobile_ethernet_printer_service.dart';
 import '../../services/printer_error_messages.dart';
+import '../../services/print_station_service.dart';
 import '../../services/printer_repository.dart';
 import '../../services/restaurant_offline/restaurant_connectivity_service.dart';
 import '../../services/restaurant_offline/restaurant_offline_snapshot_sync.dart';
@@ -636,7 +637,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       ipError = 'IP adresi boş olamaz.';
       debugPrint('[EthernetPrinter][validate_error] field=ip reason=empty');
     } else if (!isValidEthernetIpv4(host)) {
-      ipError = 'Geçerli bir IPv4 adresi girin (ör. 192.168.1.100).';
+      ipError = 'Geçerli bir IPv4 adresi girin (ör. 192.168.10.100).';
       debugPrint('[EthernetPrinter][validate_error] field=ip reason=invalid_format');
     }
     int port = PrinterModel.ethernetDefaultPort;
@@ -835,6 +836,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
             port: port,
             printer: <String, dynamic>{
               'id': payload['printer_id'],
+              'printer_id': payload['printer_id'],
               'backend': PrinterModel.ethernetBridgeBackend,
               'transportType': PrinterModel.ethernetBridgeTransport,
               'transport_type': PrinterModel.ethernetBridgeTransport,
@@ -842,6 +844,8 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
               'ip_address': host,
               'port': port,
               'name': form.name,
+              'displayName': form.name,
+              'source': 'ethernet_dialog_form',
             },
             timeout: const Duration(seconds: 2),
           )
@@ -978,6 +982,24 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     );
     if (_useMobileDirectTcp) {
       try {
+        final station = await PrintStationService().fetchStationConfig(
+          widget.restaurantId,
+        );
+        if (station?['print_system_enabled'] != true) {
+          if (!mounted) return;
+          setState(() {
+            _printDiagnostic = EthernetConnectionDiagnostic(
+              ok: false,
+              errorCode: 'print_system_disabled',
+              title: 'Yazıcı servisi kapalı',
+              message:
+                  'Yazıcı servisi kapalı. Yeni fiziksel baskı gönderilmedi.',
+              host: host,
+              port: port,
+            );
+          });
+          return;
+        }
         final profile = _selectedPrinterProfile;
         final diagnostic = await _mobileTcp
             .printTestReceipt(
@@ -986,6 +1008,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
               sellerName: form.name,
               autoCut: _autoCut && profile.supportsCut,
               charsPerLine: profile.charsPerLine,
+              physicalPrintAllowed: true,
             )
             .timeout(const Duration(seconds: 20));
         if (!mounted) return;
@@ -2797,6 +2820,11 @@ class _NetworkCompatibilityCard extends StatelessWidget {
               fontWeight: FontWeight.w700,
               color: Color(0xFF334155),
             ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Router DHCP rezervasyonu önerilir. IP değişirse kayıtlı yazıcıya sessizce baskı gitmez.',
+            style: TextStyle(fontSize: 11, height: 1.4, color: Color(0xFF64748B)),
           ),
           const SizedBox(height: 10),
           _DiagnosticRow(

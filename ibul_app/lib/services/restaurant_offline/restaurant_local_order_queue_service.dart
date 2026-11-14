@@ -1,16 +1,27 @@
+import 'dart:convert';
+import 'dart:io';
+
 import '../../core/secure_local_store.dart';
 import 'restaurant_offline_models.dart';
 
 class RestaurantLocalOrderQueueService {
-  RestaurantLocalOrderQueueService({SecureLocalStore? store})
-    : _store = store ?? SecureLocalStore.instance;
+  RestaurantLocalOrderQueueService({
+    SecureLocalStore? store,
+    this.writeHook,
+    this.journalDirectory,
+  }) : _store = store ?? SecureLocalStore.instance;
 
   final SecureLocalStore _store;
+  final Future<void> Function(String key, Map<String, dynamic> value)? writeHook;
+  final Directory? journalDirectory;
+  Future<void> _writeChain = Future<void>.value();
   static final Map<String, List<RestaurantLocalOrderRecord>> _memory =
       <String, List<RestaurantLocalOrderRecord>>{};
 
   static String storageKey(String restaurantId) =>
       'restaurant_offline_order_queue_v1_${restaurantId.trim()}';
+
+  Future<T> transaction<T>(Future<T> Function() body) => _locked(body);
 
   Future<List<RestaurantLocalOrderRecord>> list(String restaurantId) async {
     final id = restaurantId.trim();
@@ -18,8 +29,29 @@ class RestaurantLocalOrderQueueService {
     if (_memory.containsKey(id)) {
       return List<RestaurantLocalOrderRecord>.from(_memory[id]!);
     }
-    final raw = await _store.readJson(storageKey(id));
+    final journal = _readJournal(id);
+    if (journal != null) {
+      final parsed = _ordersFromPayload(journal);
+      _memory[id] = parsed;
+      return parsed;
+    }
+    final rawText = await _store.readString(storageKey(id));
+    if (rawText == null || rawText.trim().isEmpty) {
+      _memory[id] = const <RestaurantLocalOrderRecord>[];
+      return const <RestaurantLocalOrderRecord>[];
+    }
+    Object? raw;
+    try {
+      raw = jsonDecode(rawText);
+    } catch (_) {
+      raw = null;
+    }
     final rows = raw is Map ? raw['orders'] : null;
+    if (raw is! Map || rows is! List) {
+      throw StateError(
+        'Yerel sipariş kaydı bozuk. Üzerine yazılmadı.',
+      );
+    }
     final parsed = _readMapList(rows)
         .map(RestaurantLocalOrderRecord.fromJson)
         .toList(growable: false);
@@ -43,7 +75,9 @@ class RestaurantLocalOrderQueueService {
   }) async {
     final id = order.restaurantId.trim();
     if (id.isEmpty || order.localOrderId.trim().isEmpty) {
-      throw StateError('Offline sipariş kaydedilemedi: geçersiz restoran veya sipariş kimliği.');
+      throw StateError(
+        'Offline sipariş kaydedilemedi: geçersiz restoran veya sipariş kimliği.',
+      );
     }
     final existing = await list(id);
     if (existing.any((row) => row.localOrderId == order.localOrderId)) {
@@ -94,6 +128,21 @@ class RestaurantLocalOrderQueueService {
         .toList(growable: false);
   }
 
+  Future<bool> remove({
+    required String restaurantId,
+    required String localOrderId,
+  }) async {
+    final id = restaurantId.trim();
+    final target = localOrderId.trim();
+    final orders = await list(id);
+    final next = orders
+        .where((row) => row.localOrderId != target)
+        .toList(growable: false);
+    if (next.length == orders.length) return false;
+    await _persist(id, next);
+    return true;
+  }
+
   Future<bool> markSynced({
     required String restaurantId,
     required String localOrderId,
@@ -115,16 +164,36 @@ class RestaurantLocalOrderQueueService {
     return true;
   }
 
+  Future<T> _locked<T>(Future<T> Function() body) {
+    final run = _writeChain.then((_) => body());
+    _writeChain = run.then((_) {}, onError: (_, _) {});
+    return run;
+  }
+
   Future<void> _persist(
     String restaurantId,
     List<RestaurantLocalOrderRecord> orders,
   ) async {
-    _memory[restaurantId] = orders;
-    await _store.writeJson(storageKey(restaurantId), <String, dynamic>{
+    final payload = <String, dynamic>{
       'version': restaurantOfflineOrderQueueVersion,
       'restaurant_id': restaurantId,
       'orders': orders.map((order) => order.toJson()).toList(),
-    });
+    };
+    final key = storageKey(restaurantId);
+    final directory = journalDirectory;
+    if (directory != null) {
+      await writeAtomicQueueJournal(
+        directory: directory,
+        fileName: 'orders_$restaurantId.json',
+        payload: payload,
+      );
+    }
+    if (writeHook != null) {
+      await writeHook!(key, payload);
+    } else {
+      await _store.writeJson(key, payload);
+    }
+    _memory[restaurantId] = orders;
   }
 
   void clearMemoryForTests() {
@@ -134,6 +203,46 @@ class RestaurantLocalOrderQueueService {
   static void clearAllMemoryForTests() {
     _memory.clear();
   }
+
+  Map<String, dynamic>? _readJournal(String restaurantId) {
+    final directory = journalDirectory;
+    if (directory == null) return null;
+    final file = File('${directory.path}/orders_$restaurantId.json');
+    if (!file.existsSync()) return null;
+    final text = file.readAsStringSync();
+    if (text.trim().isEmpty) {
+      throw StateError('Yerel sipariş kaydı bozuk. Üzerine yazılmadı.');
+    }
+    final raw = jsonDecode(text);
+    if (raw is! Map || raw['orders'] is! List) {
+      throw StateError('Yerel sipariş kaydı bozuk. Üzerine yazılmadı.');
+    }
+    return Map<String, dynamic>.from(raw);
+  }
+
+  List<RestaurantLocalOrderRecord> _ordersFromPayload(Map<String, dynamic> raw) {
+    final rows = raw['orders'];
+    if (rows is! List) {
+      throw StateError('Yerel sipariş kaydı bozuk. Üzerine yazılmadı.');
+    }
+    return _readMapList(rows)
+        .map(RestaurantLocalOrderRecord.fromJson)
+        .toList(growable: false);
+  }
+}
+
+Future<void> writeAtomicQueueJournal({
+  required Directory directory,
+  required String fileName,
+  required Map<String, dynamic> payload,
+}) async {
+  await directory.create(recursive: true);
+  final target = File('${directory.path}/$fileName');
+  final temp = File(
+    '${target.path}.${DateTime.now().microsecondsSinceEpoch}.tmp',
+  );
+  await temp.writeAsString(jsonEncode(payload), flush: true);
+  await temp.rename(target.path);
 }
 
 List<Map<String, dynamic>> _readMapList(Object? raw) {

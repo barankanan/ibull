@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../app/customer_routes.dart';
 import '../app/marketplace_paths.dart';
 import '../app/seller_routes.dart';
 import '../screens/account/account_menu_navigation.dart';
@@ -144,20 +143,6 @@ class WebFooter extends StatelessWidget {
                             _openIhiz(context);
                           },
                         ),
-                        _buildActionLink(
-                          label: 'Admin Paneli',
-                          color: Colors.grey[600]!,
-                          onTap: () {
-                            _openSellerLogin(context, adminMode: true);
-                          },
-                        ),
-                        _buildActionLink(
-                          label: 'Satıcı Girişi',
-                          color: AppColors.primary,
-                          onTap: () {
-                            _openSellerLogin(context);
-                          },
-                        ),
                       ],
                     ),
                   ],
@@ -189,16 +174,6 @@ class WebFooter extends StatelessWidget {
                             onTap: () {
                               _openIhiz(context);
                             },
-                          ),
-                          _buildActionLink(
-                            label: 'Admin Paneli',
-                            color: Colors.grey[600]!,
-                            onTap: () => _openSellerLogin(context, adminMode: true),
-                          ),
-                          _buildActionLink(
-                            label: 'Satıcı Girişi',
-                            color: AppColors.primary,
-                            onTap: () => _openSellerLogin(context),
                           ),
                         ],
                       ),
@@ -365,10 +340,6 @@ class WebFooter extends StatelessWidget {
       IbulRouter.push(context, MarketplacePaths.mallHub);
       return;
     }
-    if (link == 'Satıcı Girişi') {
-      _openSellerLogin(context);
-      return;
-    }
     if (link == 'İhız') {
       _openIhiz(context);
       return;
@@ -382,15 +353,6 @@ class WebFooter extends StatelessWidget {
       return;
     }
     SiteInfoRoutes.openFooterLabel(context, link);
-  }
-
-  void _openSellerLogin(BuildContext context, {bool adminMode = false}) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            CustomerRoutes.buildSellerLoginPage(adminMode: adminMode),
-      ),
-    );
   }
 
   void _openBecomeSeller(BuildContext context) {

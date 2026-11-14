@@ -1,0 +1,78 @@
+{
+  "scope": "Actual handlers/shared helper transpiled by Node; mocked Auth/REST; seller access SQL real in PGlite; no deployed Edge runtime",
+  "results": [
+    {
+      "name": "manage-restaurant-staff inactive create",
+      "status": "PASS"
+    },
+    {
+      "name": "manage-restaurant-staff inactive permissions",
+      "status": "PASS"
+    },
+    {
+      "name": "manage-restaurant-staff inactive deactivate",
+      "status": "PASS"
+    },
+    {
+      "name": "manage-restaurant-staff owner foreign member permissions",
+      "status": "PASS"
+    },
+    {
+      "name": "manage-restaurant-staff owner foreign member deactivate",
+      "status": "PASS"
+    },
+    {
+      "name": "manage-restaurant-staff owner foreign branch create",
+      "status": "PASS"
+    },
+    {
+      "name": "manage-restaurant-staff owner own member positive control",
+      "status": "PASS"
+    },
+    {
+      "name": "manage-restaurant-staff missing token",
+      "status": "PASS"
+    },
+    {
+      "name": "manage-restaurant-staff expired token",
+      "status": "PASS"
+    },
+    {
+      "name": "seller_accept_order missing token",
+      "status": "PASS"
+    },
+    {
+      "name": "seller_accept_order expired token",
+      "status": "PASS"
+    },
+    {
+      "name": "seller_accept_order inactive waiter",
+      "status": "PASS"
+    },
+    {
+      "name": "seller_accept_order foreign owner",
+      "status": "PASS"
+    },
+    {
+      "name": "seller_accept_order own owner positive control",
+      "status": "PASS"
+    },
+    {
+      "name": "create_order missing token",
+      "status": "PASS"
+    },
+    {
+      "name": "create_order expired token",
+      "status": "PASS"
+    },
+    {
+      "name": "create_order ignores spoofed actor at RPC boundary",
+      "status": "PASS"
+    },
+    {
+      "name": "create_order inactive / branch / foreign tenant end-to-end",
+      "status": "BLOCKED",
+      "detail": "Legacy buyer RPC seller_ops.create_pending_order requires full schema clone. Handler only validates Auth and forwards actor; restaurant membership is not checked here. No deployed Edge/Auth test."
+    }
+  ]
+}

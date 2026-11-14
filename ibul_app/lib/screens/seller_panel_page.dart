@@ -32,6 +32,7 @@ import '../core/constants.dart';
 import '../core/web_seo.dart';
 import '../services/store_service.dart';
 import '../services/store/table_order_history_utils.dart';
+import '../utils/garson_draft_separation.dart';
 import '../services/auth_service.dart';
 import '../services/support_service.dart';
 import '../services/campaign_service.dart';
@@ -44,6 +45,7 @@ import '../utils/dynamic_value_helpers.dart';
 import '../utils/order_status_constants.dart';
 import '../services/kitchen_print_trace_log.dart';
 import '../services/order_print_job_service.dart';
+import '../services/waiter_submit_identity.dart';
 import '../services/desktop_print_orchestrator.dart';
 import '../services/desktop_print_hub.dart';
 import '../services/mobile_order_print_service.dart';
@@ -54,6 +56,9 @@ import '../services/product_question_service.dart';
 import '../services/seller_dashboard_service.dart';
 import '../services/seller_wallet_service.dart';
 import '../services/local_print_service.dart';
+import '../services/printer_link_status.dart';
+import '../services/printer_tcp_probe.dart';
+import '../services/store/close_table_rpc_args.dart';
 import 'seller/collections_management_page.dart';
 import 'seller/kitchen_print_management_page.dart';
 import 'seller/kitchen_display_screen.dart';
@@ -63,12 +68,15 @@ import '../models/restaurant_ops_models.dart';
 import '../models/desktop_printer_setup_models.dart';
 import '../models/garson_operation_rules.dart';
 import '../models/print_job_model.dart';
+import '../widgets/garson/store_customer_picker.dart';
 import '../widgets/garson/transfer_table_modal.dart';
 import '../widgets/garson/payment_bottom_sheet.dart';
 import '../widgets/garson/undo_action_controller.dart';
+import '../widgets/garson/adisyon_line_edit.dart';
 import '../widgets/garson/order_preview_sheet.dart';
 import '../widgets/garson/waiter_order_requests_banner.dart';
 import '../widgets/garson/garson_compact_layout.dart';
+import '../widgets/garson/garson_operation_feedback.dart';
 import '../models/mixed_service_order.dart';
 import '../models/seller_product.dart';
 import '../models/product_pricing.dart';
@@ -76,6 +84,9 @@ import '../core/home_navigation.dart';
 import 'seller_login_page.dart';
 import 'seller/add_product_page.dart';
 import '../models/sub_admin.dart';
+import '../features/seller/staff/staff_account_dialog.dart';
+import '../features/seller/staff/staff_business_catalog.dart';
+import '../features/seller/staff/staff_team_panel.dart';
 import '../widgets/common/video_player_widget.dart';
 import '../widgets/province_district_picker_dialog.dart';
 import '../widgets/restaurant_order/mixed_service_dialog.dart';
@@ -90,10 +101,14 @@ import '../utils/product_edit_log.dart';
 import '../utils/garson_product_selection.dart';
 import '../utils/print_perf_log.dart';
 import '../utils/garson_active_orders_fetch.dart';
+import '../services/restaurant_offline/restaurant_lan_host.dart';
+import '../services/restaurant_offline/restaurant_local_order_queue_service.dart';
+import '../services/restaurant_offline/restaurant_offline_models.dart';
 import '../utils/garson_board_state.dart';
 import '../utils/garson_flow_cache.dart';
 import '../utils/garson_perf_helper.dart';
 import '../utils/garson_table_route_session.dart';
+import '../services/restaurant_offline/lan_pilot_contract.dart';
 import '../services/restaurant_offline/restaurant_local_cache_service.dart';
 import '../utils/garson_table_metrics.dart';
 import '../utils/garson_table_order_state.dart';
@@ -111,7 +126,10 @@ import '../features/seller/panel/helpers/seller_desktop_app_banner_prefs.dart';
 import '../features/seller/panel/helpers/seller_logout_helper.dart';
 import '../services/restaurant_offline/restaurant_offline_snapshot_sync.dart';
 import '../widgets/restaurant_offline_banner.dart';
+import '../widgets/customer_table_presence_grant.dart';
+import '../widgets/restaurant_local_ops_page.dart';
 import '../features/seller/panel/helpers/seller_panel_module_helpers.dart';
+import '../services/staff_login_policy.dart';
 import '../features/seller/panel/models/seller_panel_types.dart';
 import '../features/seller/panel/widgets/seller_desktop_app_banner.dart';
 import '../features/seller/panel/widgets/seller_download_app_content.dart';
@@ -394,6 +412,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   UnifiedPrinterModel? _garsonCachedKitchenPrinter;
   PrinterEncodingProfile? _garsonCachedKitchenEncodingProfile;
   bool? _isLocalPrintAvailable;
+  bool? _localPrinterReachable;
   String _localPrintStatusLabel = 'Yazıcı kontrol ediliyor';
   String _localPrintStatusMessage = 'Yazıcı durumu kontrol ediliyor.';
   bool _isLocalPrintRefreshing = false;
@@ -594,13 +613,17 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   List<Map<String, dynamic>> _garsonPendingIncomingTableAreas =
       <Map<String, dynamic>>[];
   GarsonBoardState _garsonBoardState = const GarsonBoardState();
+  StreamSubscription<RestaurantLocalOrderRecord>? _lanFloorSubscription;
+  List<Map<String, dynamic>> _lanFloorOrderMaps = const <Map<String, dynamic>>[];
   String? _garsonManualTableOrdersSellerId;
   String? _garsonManualTableOrdersSignature;
   bool _hasLoadedGarsonTableOrdersData = false;
+  String? _garsonTableOrdersLoadError;
   bool _hasLoadedGarsonBootstrapData = false;
   bool _garsonHasEverLoadedTablesSuccessfully = false;
   bool _garsonHasEverLoadedOrdersSuccessfully = false;
   bool _garsonManualRefreshInProgress = false;
+  OverlayEntry? _garsonRefreshOverlay;
   bool _garsonInitialVisibleSeedDone = false;
   bool _garsonInitialBootstrapFinished = false;
   bool _garsonInitialBootstrapFailed = false;
@@ -647,6 +670,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   bool _isUploadingVideo = false;
 
   bool get _isWaiterEntry => widget.entryRole == SellerPanelEntryRole.waiter;
+  StaffMenuGate? _staffMenuGate;
 
   String get _sellerPanelSupabaseUrl {
     final raw = AppRuntimeConfig.rawSupabaseUrl.trim();
@@ -714,6 +738,16 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     final controller = _navigationController;
     if (controller == null) return;
     final nextModule = controller.activeModule;
+    final allowedModules = _visibleSellerModules();
+    final access = _staffAccessTo(nextModule);
+    if (access == StaffModuleAccess.denied && allowedModules.isNotEmpty) {
+      controller.restoreParent(
+        allowedModules.first,
+        source: 'staff_permission',
+      );
+      _announceStaffModuleDenied();
+      return;
+    }
     final nextHasUserSelected = controller.hasUserSelected;
     final changed =
         nextModule != _selectedModule ||
@@ -956,8 +990,50 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   void _setGarsonBoardState(GarsonBoardState next) {
-    _garsonBoardState = next;
+    _garsonBoardState = _lanFloorOrderMaps.isEmpty
+        ? next
+        : reconcileLanFloorOrders(
+            current: next,
+            incoming: _lanFloorOrderMaps,
+          );
     _syncGarsonBoardStateToLegacyFields();
+  }
+
+  void _rememberLanFloorOrder(Map<String, dynamic> order) {
+    final key = floorOrderKey(order);
+    if (key.isEmpty) return;
+    final next = <Map<String, dynamic>>[
+      for (final row in _lanFloorOrderMaps)
+        if (floorOrderKey(row) != key) row,
+      order,
+    ];
+    _lanFloorOrderMaps = next;
+  }
+
+  Future<void> _hydrateLanFloorBoard() async {
+    final ownerId = _resolveSellerDataOwnerId().trim();
+    final sellerId = ownerId.isNotEmpty
+        ? ownerId
+        : (_authService.currentUser?.id.trim() ?? '');
+    if (sellerId.isEmpty) return;
+    final rows = await RestaurantLocalOrderQueueService().list(sellerId);
+    if (!mounted || rows.isEmpty) return;
+    setState(() {
+      for (final row in rows) {
+        _rememberLanFloorOrder(
+          lanFloorOrderFromRecord(
+            localOrderId: row.localOrderId,
+            tableNumber: row.tableNumber,
+            tableName: row.tableName,
+            items: row.items,
+            total: row.total,
+            printStatus: row.printStatus,
+            updatedAt: row.updatedAt,
+          ),
+        );
+      }
+      _setGarsonBoardState(_garsonBoardState);
+    });
   }
 
   GarsonUiState get _garsonUiState => buildGarsonUiState(
@@ -1480,6 +1556,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       var usedOfflineCache = false;
       if (sellerId.isNotEmpty) {
         usedOfflineCache = await _hydrateGarsonBoardFromOfflineCache(sellerId);
+        await _hydrateLanFloorBoard();
         entryPerf.mark('offlineHydrate');
       }
 
@@ -1725,8 +1802,43 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   @override
+  void _seedOfflineTestGarsonBoard() {
+    const tables = <Map<String, dynamic>>[
+      <String, dynamic>{
+        'id': 'bahce-3',
+        'table_number': 3,
+        'area_id': 'bahce',
+        'display_label': 'Bahçe 3',
+        'name': 'Bahçe 3',
+      },
+    ];
+    const areas = <Map<String, dynamic>>[
+      <String, dynamic>{'id': 'bahce', 'name': 'Bahçe'},
+    ];
+    _storeCategory = 'Restoran';
+    _storeNameController.text = 'İBUL Offline Test';
+    _hasLoadedStoreProfile = true;
+    _storeTables = tables.map(Map<String, dynamic>.from).toList();
+    _storeTableAreas = areas.map(Map<String, dynamic>.from).toList();
+    _garsonBoardState = applyInitialBootstrap(
+      current: _garsonBoardState,
+      tables: _storeTables,
+      areas: _storeTableAreas,
+      orders: const <Map<String, dynamic>>[],
+      source: 'offline_test_fixture',
+    );
+    _garsonInitialVisibleSeedDone = true;
+    _garsonInitialBootstrapFinished = true;
+    _isGarsonInitialLoading = false;
+    _garsonHasEverLoadedOrdersSuccessfully = true;
+  }
+
   void initState() {
     super.initState();
+    if (const bool.fromEnvironment('IBUL_OFFLINE_TEST')) {
+      _selectedModule = SellerModule.garson;
+      _seedOfflineTestGarsonBoard();
+    }
     WidgetsBinding.instance.addObserver(this);
     _bindNavigationController(source: 'initState', viaSetState: false);
     _logSellerPanelLifecycle(
@@ -1746,9 +1858,29 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       _authService.ensureCurrentUserRow(user: _authService.currentUser),
     );
     unawaited(_restoreLastSelectedModule());
+    unawaited(_loadStaffMenuGate());
     unawaited(_restoreGarsonAreaFilter());
     unawaited(_restoreSidebarCollapsed());
     unawaited(_restoreDesktopAppBannerHidden());
+    _lanFloorSubscription = RestaurantLanHostRegistry.ordersAccepted.stream
+        .listen((order) {
+          if (!mounted) return;
+          setState(() {
+            _rememberLanFloorOrder(
+              lanFloorOrderFromRecord(
+                localOrderId: order.localOrderId,
+                tableNumber: order.tableNumber,
+                tableName: order.tableName,
+                items: order.items,
+                total: order.total,
+                printStatus: order.printStatus,
+                updatedAt: order.updatedAt,
+              ),
+            );
+            _setGarsonBoardState(_garsonBoardState);
+          });
+        });
+    unawaited(_hydrateLanFloorBoard());
     unawaited(_bootstrapSellerOwnerAndDashboardState());
     _sellerOrderHighlightExpiryScheduler = SellerOrderHighlightExpiryScheduler(
       highlightDuration: const Duration(seconds: 30),
@@ -2049,7 +2181,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     }
   }
 
-  String _bestSellerDataOwnerIdCandidate({bool includeAuthFallback = true}) {
+  String _bestSellerDataOwnerIdCandidate({bool includeAuthFallback = false}) {
     final candidates = <String>[
       _normalizeSellerIdentity(_sellerDataOwnerId),
       _firstNonEmptySellerIdentity(_garsonVisibleTablesForUi()),
@@ -2059,9 +2191,6 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       _firstNonEmptySellerIdentity(_sellerOrders),
       _normalizeSellerIdentity(_garsonManualTableOrdersSellerId),
     ];
-    if (includeAuthFallback) {
-      candidates.add(_normalizeSellerIdentity(_authService.currentUser?.id));
-    }
     for (final candidate in candidates) {
       if (candidate.isEmpty) continue;
       _rememberSellerDataOwnerId(
@@ -2071,20 +2200,16 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       );
       return candidate;
     }
-    return '';
+    if (!includeAuthFallback) return '';
+    return _normalizeSellerIdentity(_authService.currentUser?.id);
   }
 
   Future<String> _ensureSellerDataOwnerIdResolved({
     required String source,
   }) async {
-    final existing = _bestSellerDataOwnerIdCandidate(
-      includeAuthFallback: false,
-    );
-    if (existing.isNotEmpty) return existing;
-
-    final resolvedFromService = await _storeService
-        .resolveStoreOwnerIdForCurrentUser();
+    final resolvedFromService = await _storeService.resolveStoreOwnerIdForCurrentUser();
     final normalizedResolved = _normalizeSellerIdentity(resolvedFromService);
+    final authUserId = _normalizeSellerIdentity(_authService.currentUser?.id);
     if (normalizedResolved.isNotEmpty) {
       _rememberSellerDataOwnerId(
         normalizedResolved,
@@ -2092,12 +2217,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       );
       return normalizedResolved;
     }
-
-    final fallback = _bestSellerDataOwnerIdCandidate(includeAuthFallback: true);
-    if (fallback.isNotEmpty) {
-      _rememberSellerDataOwnerId(fallback, source: '${source}_auth_fallback');
-    }
-    return fallback;
+    final existing = _bestSellerDataOwnerIdCandidate(
+      includeAuthFallback: false,
+    );
+    if (existing.isNotEmpty && existing != authUserId) return existing;
+    return '';
   }
 
   Future<String> _resolveCanonicalGarsonSellerId({
@@ -2752,6 +2876,44 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     );
   }
 
+  String _visibleStoreLabel() {
+    final name = _storeNameController.text.trim();
+    if (_hasLoadedStoreProfile && name.isNotEmpty) return name;
+    if (_storeProfileLoadError != null) return 'Mağaza profili yüklenemedi';
+    if (_isLoading || !_hasLoadedStoreProfile) return 'Mağaza yükleniyor';
+    return 'Mağaza adı yok';
+  }
+
+  Future<void> _refreshMobileSellerSurface() async {
+    if (_selectedModule == SellerModule.garson || _isWaiterEntry) {
+      await _ensureSellerDataOwnerIdResolved(source: 'mobile_shell_refresh');
+      await _refreshGarsonDataManually(source: 'garson_manual_refresh_button');
+      return;
+    }
+    await _refreshDashboardData(
+      source: 'mobile_shell_refresh',
+      userInitiated: true,
+    );
+  }
+
+  void _showGarsonRefreshOverlay() {
+    if (_garsonRefreshOverlay != null) return;
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    final entry = OverlayEntry(
+      builder: (_) => const Positioned.fill(
+        child: GarsonCenterBusy(label: 'Yenileniyor...'),
+      ),
+    );
+    _garsonRefreshOverlay = entry;
+    overlay.insert(entry);
+  }
+
+  void _hideGarsonRefreshOverlay() {
+    _garsonRefreshOverlay?.remove();
+    _garsonRefreshOverlay = null;
+  }
+
   Future<void> _refreshGarsonDataManually({
     String source = 'garson_manual_refresh_button',
     bool allowInitialAutoSeed = false,
@@ -2786,6 +2948,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     _safeSetState(() {
       _garsonManualRefreshInProgress = true;
     });
+    if (!source.startsWith('mobile_pull_to_refresh')) {
+      _showGarsonRefreshOverlay();
+    }
     try {
       _garsonManualRefreshGeneration += 1;
       // A user-initiated refresh re-arms the bootstrap budget so that, if this
@@ -2829,6 +2994,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         'orders=${_garsonManualTableOrders.length}',
       );
     } finally {
+      _hideGarsonRefreshOverlay();
       if (mounted) {
         _safeSetState(() {
           _garsonManualRefreshInProgress = false;
@@ -3703,6 +3869,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     try {
       _pruneExpiredGarsonClosedTableMarkers(source: source);
       final fresh = await _storeService.getTableOrdersSnapshot(sellerId);
+      _garsonTableOrdersLoadError = null;
       debugPrint(
         '[GARSON_LOAD_SNAPSHOT] '
         'source=$source '
@@ -3843,6 +4010,13 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       return true;
     } catch (error, stack) {
       _garsonStreamState = 'snapshot_error';
+      final denial = restaurantWriteDenialMessage(
+        code: error is PostgrestException ? error.code : null,
+        details: error.toString(),
+      );
+      _garsonTableOrdersLoadError =
+          denial ??
+          error.toString().replaceFirst('Exception: ', '').trim();
       logGarsonActiveOrdersFetchError(
         restaurantId: sellerId,
         source: source,
@@ -4140,6 +4314,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   Future<void> _ensureSellerAuthAccess() async {
+    if (const bool.fromEnvironment('IBUL_OFFLINE_TEST')) return;
     await IbulAuthContextService.instance.ensureLoaded();
     final hasSession = _authService.currentUser != null;
     final isSellerContext = IbulAuthContextService.instance.isSellerSessionActive(
@@ -5170,6 +5345,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     );
     _productsSubscription?.cancel();
     _productsRealtimeRetryTimer?.cancel();
+    _lanFloorSubscription?.cancel();
     _garsonRealtimeSubscription?.cancel();
     _subAdminsSubscription?.cancel();
     _supportTicketsSubscription?.cancel();
@@ -5245,6 +5421,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         '[Lifecycle][appResumed] module=${_selectedModule.name} — '
         'triggering data refresh to prevent stale-zero display',
       );
+      unawaited(_loadStaffMenuGate());
       if (_selectedModule == SellerModule.dashboard) {
         unawaited(
           _refreshDashboardData(
@@ -5681,6 +5858,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     String source = 'store_tables_load',
     bool forceApply = false,
   }) async {
+    if (const bool.fromEnvironment('IBUL_OFFLINE_TEST')) return;
     final sellerId = await _ensureSellerDataOwnerIdResolved(
       source: '_loadStoreTables',
     );
@@ -5773,7 +5951,14 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           areasCount: _garsonVisibleTableAreasForUi().length,
           source: source,
         );
-        final tables = await _storeService.getStoreTables(sellerId: sellerId);
+        final catalog = await Future.wait<Object>([
+          _storeService.getStoreTables(sellerId: sellerId),
+          _storeService.getTableAreas(sellerId: sellerId).catchError(
+            (_) => const <Map<String, dynamic>>[],
+          ),
+        ]);
+        final tables = catalog[0] as List<Map<String, dynamic>>;
+        final areas = catalog[1] as List<Map<String, dynamic>>;
         _rememberSellerDataOwnerId(
           _firstNonEmptySellerIdentity(
             tables,
@@ -5781,14 +5966,6 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           ),
           source: '_loadStoreTables_rows',
         );
-        // Best-effort preload of dining areas (Salon/Bahçe/Teras...). This must
-        // not break older deployments where the areas table doesn't exist.
-        List<Map<String, dynamic>> areas = const <Map<String, dynamic>>[];
-        try {
-          areas = await _storeService.getTableAreas(sellerId: sellerId);
-        } catch (_) {
-          areas = const <Map<String, dynamic>>[];
-        }
         if (!mounted) return;
         tables.sort(
           (a, b) => _tableNumberFromRow(a).compareTo(_tableNumberFromRow(b)),
@@ -6578,7 +6755,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           ),
           const SizedBox(height: 4),
           Text(
-            '$totalCount masa · $occupiedCount dolu · $emptyCount boş',
+            _garsonTableOrdersLoadError ??
+                '$totalCount masa · $occupiedCount dolu · $emptyCount boş',
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w500,
@@ -6813,7 +6991,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
                   'Toplam Masa',
                   '${renderBundle.totalTableCount}',
                 ),
-                _mobileBadge('Dolu Masa', '$occupiedCount'),
+                _mobileBadge(
+                  'Dolu Masa',
+                  _garsonTableOrdersLoadError == null ? '$occupiedCount' : '—',
+                ),
                 _mobileBadge('Yeni Sipariş', '$newCount'),
                 _mobileBadge('Mutfakta', '$mutfaktaCount'),
                 _mobileBadge('Hazırlanıyor', '$preparingCount'),
@@ -6822,6 +7003,18 @@ class _SellerPanelPageState extends State<SellerPanelPage>
             ),
           ),
         ),
+        if (_garsonTableOrdersLoadError != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Text(
+              _garsonTableOrdersLoadError!,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFFB45309),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -7593,6 +7786,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     _productsSubscription = _storeService.getSellerProducts().listen(
       (products) {
         if (mounted) {
+          // A realtime reconnect can emit an empty list and wipe a catalog
+          // that the snapshot already loaded. Keep the rows and re-read.
+          if (products.isEmpty && _products.isNotEmpty) {
+            unawaited(
+              _loadProductsSnapshot(source: 'products_stream_empty'),
+            );
+            return;
+          }
           // Successful emit — reset the timeout-backoff counter so the
           // next failure starts from the shortest retry window again.
           _productsStreamTimeoutAttempts = 0;
@@ -7696,12 +7897,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   void _loadSubAdmins() {
-    final sellerId = _authService.currentUser?.id ?? '';
     final requestUrl = _sellerPanelRestRequestUrl(
       'store_sub_admins',
-      query: <String, String>{
+      query: const <String, String>{
         'select': '*',
-        'store_id': 'eq.${sellerId.isEmpty ? '<missing>' : sellerId}',
+        'store_id': 'eq.<resolved-store>',
         'order': 'created_at.desc',
       },
     );
@@ -7743,11 +7943,21 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     String source = 'products_snapshot',
   }) async {
     final sellerId = _authService.currentUser?.id ?? '';
+    final catalogSeller =
+        await _storeService.resolveStoreOwnerIdForCurrentUser();
+    debugPrint(
+      '[ProductsIdentity] authUid=$sellerId '
+      'catalogSeller=${catalogSeller ?? ''} '
+      'same=${sellerId == catalogSeller}',
+    );
+    final querySeller = (catalogSeller == null || catalogSeller.isEmpty)
+        ? sellerId
+        : catalogSeller;
     final requestUrl = _sellerPanelRestRequestUrl(
       'products',
       query: <String, String>{
         'select': '*',
-        'seller_id': 'eq.${sellerId.isEmpty ? '<missing>' : sellerId}',
+        'seller_id': 'eq.${querySeller.isEmpty ? '<missing>' : querySeller}',
         'order': 'created_at.desc',
       },
     );
@@ -7912,12 +8122,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Future<void> _loadSubAdminsSnapshot() async {
-    final sellerId = _authService.currentUser?.id ?? '';
     final requestUrl = _sellerPanelRestRequestUrl(
       'store_sub_admins',
-      query: <String, String>{
+      query: const <String, String>{
         'select': '*',
-        'store_id': 'eq.${sellerId.isEmpty ? '<missing>' : sellerId}',
+        'store_id': 'eq.<resolved-store>',
         'order': 'created_at.desc',
       },
     );
@@ -8754,10 +8963,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 800;
     final isTablet = screenWidth >= 800 && screenWidth < 1200;
-    final storeLabel = _storeNameController.text.trim().isEmpty
-        ? 'Mağazam'
-        : _storeNameController.text.trim();
-    final sellerId = _authService.currentUser?.id ?? '';
+    final storeLabel = _visibleStoreLabel();
+    final sellerId = _resolveGarsonSellerId();
     final sellerIdLabel = sellerId.isEmpty
         ? 'Satıcı ID: -'
         : 'Satıcı ID: ${sellerId.substring(0, sellerId.length < 8 ? sellerId.length : 8)}';
@@ -8790,6 +8997,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         title: _moduleLabel(_selectedModule),
         storeLabel: storeLabel,
         drawer: SellerPanelMobileDrawer(
+          roleLabel: _staffJobTitleLabel,
           items: _buildPanelMenuEntries(
             beforeSelect: () => Navigator.of(context).pop(),
           ),
@@ -8799,10 +9007,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           },
         ),
         content: _buildMobileContentArea(),
-        onRefresh: () => _refreshDashboardData(
-          source: 'mobile_pull_to_refresh',
-          userInitiated: true,
-        ),
+        onRefresh: () => unawaited(_refreshMobileSellerSurface()),
         contentBanner: webPrintNoticeBanner,
       );
     } else if (isTablet) {
@@ -8832,6 +9037,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           items: _buildPanelMenuEntries(),
           onLogoutTap: _handleSellerLogoutTap,
           collapsed: _sidebarCollapsed,
+          roleLabel: _staffJobTitleLabel,
         ),
         content: _buildContent(),
         contentBanner: webPrintNoticeBanner,
@@ -11226,7 +11432,71 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
+  bool _staffHas(String permission) {
+    final gate = _staffMenuGate;
+    if (gate == null || !gate.restrict) return true;
+    return gate.permissions.contains(permission);
+  }
+
+  bool get _actorIsStoreOwner {
+    final gate = _staffMenuGate;
+    return gate == null || !gate.restrict;
+  }
+
+  String? get _staffJobTitleLabel {
+    final title = _staffMenuGate?.jobTitle?.trim() ?? '';
+    if (_actorIsStoreOwner || title.isEmpty) return null;
+    return title;
+  }
+
+  Set<String> get _actorStaffPermissions =>
+      _staffMenuGate?.permissions ?? const <String>{};
+
+  bool get _actorCanManageStaff => actorCanManageStaff(
+        isOwner: _actorIsStoreOwner,
+        held: _actorStaffPermissions,
+      );
+
+  Widget _buildPrinterSettingsOnly() {
+    final sellerId = _resolveGarsonSellerId().trim().isNotEmpty
+        ? _resolveGarsonSellerId().trim()
+        : (_authService.currentUser?.id ?? '');
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text(
+          'Yazıcı ayarları',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Bu hesap masa ve personel ayarlarını açmaz. Yalnız yazıcı bağlantısı açıktır.',
+        ),
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed: sellerId.isEmpty
+              ? null
+              : () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => KitchenPrintManagementPage(
+                        restaurantId: sellerId,
+                      ),
+                    ),
+                  );
+                },
+          icon: const Icon(Icons.print_outlined),
+          label: const Text('Yazıcı Ayarları'),
+        ),
+      ],
+    );
+  }
+
   Widget _buildMobileSystemModule() {
+    if (!_staffHas('manageOrders') && _staffHas('managePrintSettings')) {
+      return _buildPrinterSettingsOnly();
+    }
     final sellerId = _authService.currentUser?.id ?? '';
     final tables = List<Map<String, dynamic>>.from(
       _storeTables,
@@ -11235,6 +11505,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       padding: const EdgeInsets.only(bottom: 8),
       physics: const BouncingScrollPhysics(),
       children: [
+        if (_actorIsStoreOwner || _staffHas('managePrintSettings'))
+          RestaurantOfflineBanner(
+            restaurantId: sellerId,
+            storeCategory: _storeCategory,
+            showAdvancedActions: true,
+          ),
         _buildMobileModuleHero(
           title: 'Sistem • Masa QR',
           subtitle: 'QR masalarını oluştur, indir ve yönet',
@@ -11269,6 +11545,22 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       },
                 icon: const Icon(Icons.print_outlined),
                 label: const Text('Yazıcı Ayarları'),
+              ),
+              OutlinedButton.icon(
+                onPressed: sellerId.isEmpty
+                    ? null
+                    : () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => RestaurantLocalOpsPage(
+                              restaurantId: sellerId,
+                            ),
+                          ),
+                        );
+                      },
+                icon: const Icon(Icons.lan_outlined),
+                label: const Text('Yerel operasyon'),
               ),
               OutlinedButton.icon(
                 onPressed: sellerId.isEmpty
@@ -11811,10 +12103,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       builder: (context, constraints) {
         final compact = isGarsonCompactLayout(constraints.maxWidth);
         return RefreshIndicator.adaptive(
-          onRefresh: sellerId.isEmpty
-              ? () async {}
-              : () =>
-                    _refreshGarsonDataManually(source: 'mobile_pull_to_refresh'),
+          onRefresh: () async {
+            await _ensureSellerDataOwnerIdResolved(
+              source: 'mobile_pull_to_refresh',
+            );
+            await _refreshGarsonDataManually(source: 'mobile_pull_to_refresh');
+          },
           child: ListView(
             padding: EdgeInsets.only(bottom: compact ? 4 : 8),
             physics: const AlwaysScrollableScrollPhysics(
@@ -11837,8 +12131,23 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               ],
               if (sellerId.isEmpty)
                 _mobileSurfaceCard(
-                  child: const Center(
-                    child: Text('Satıcı oturumu bulunamadı.'),
+                  child: Column(
+                    children: [
+                      Text(
+                        _storeProfileLoadError ??
+                            (_isLoading
+                                ? 'İşletme bağlantısı kuruluyor.'
+                                : 'Bağlı işletme bulunamadı. Başka mağazaya geçilmedi.'),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: () => unawaited(
+                          _refreshMobileSellerSurface(),
+                        ),
+                        child: const Text('Yeniden dene'),
+                      ),
+                    ],
                   ),
                 )
               else
@@ -12348,7 +12657,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   /// subscriptions, order fetches, and adisyon prints all use the same
   /// ID as the one used when submitting orders.
   String _resolveGarsonSellerId() {
-    return _bestSellerDataOwnerIdCandidate(includeAuthFallback: true);
+    if (const bool.fromEnvironment('IBUL_OFFLINE_TEST')) {
+      return 'offline-test-restaurant';
+    }
+    return _bestSellerDataOwnerIdCandidate(includeAuthFallback: false);
   }
 
   /// Canonical seller/store owner id for restaurant analytics and finance.
@@ -12358,9 +12670,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   /// Using the wrong id here makes "Bugünkü Ciro" and Finance appear as `₺0`
   /// even when table closes are archived correctly.
   String _resolveSellerDataOwnerId() {
+    if (const bool.fromEnvironment('IBUL_OFFLINE_TEST')) {
+      return 'offline-test-restaurant';
+    }
     if (_isFoodStoreCategory(_storeCategory) || _isWaiterEntry) {
       final restaurantOwnerId = _bestSellerDataOwnerIdCandidate(
-        includeAuthFallback: true,
+        includeAuthFallback: false,
       ).trim();
       if (restaurantOwnerId.isNotEmpty) return restaurantOwnerId;
     }
@@ -12942,7 +13257,22 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final printService = LocalPrintService();
     try {
       final status = await printService.checkAvailability();
-      _applyLocalPrintStatus(status, reason: reason);
+      bool? printerReachable;
+      final healthBody = status.details is Map
+          ? Map<String, dynamic>.from(status.details! as Map)
+          : null;
+      final target = printerTargetFromHealth(healthBody);
+      if (status.isAvailable && target != null && !kIsWeb) {
+        printerReachable = await probePrinterTcp(
+          host: target.host,
+          port: target.port,
+        );
+      }
+      _applyLocalPrintStatus(
+        status,
+        reason: reason,
+        printerReachable: printerReachable,
+      );
       if (status.isAvailable) {
         unawaited(
           _recoverPendingKitchenPrintJobs(reason: 'bridge_available_$reason'),
@@ -12985,25 +13315,41 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   void _applyLocalPrintStatus(
     LocalPrintHealthStatus status, {
     required String reason,
+    bool? printerReachable,
   }) {
-    if (status.isAvailable) {
-      _lastLocalPrintSuccessAt = DateTime.now();
-    }
-    final nextLabel = status.isAvailable
-        ? 'Yazıcı bağlı'
-        : switch (status.reason) {
-            'timeout' => 'Yanıt yok',
-            'connection_error' => 'Servise ulaşılamadı',
-            'web_cors_blocked' => 'CORS/PNA engeli',
-            'server_error' => 'Servis hatası',
-            _ => 'Servis kapalı',
-          };
-    final nextMessage = _localPrintHealthMessage(status);
+    _localPrinterReachable = printerReachable;
+    final healthBody = status.details is Map
+        ? Map<String, dynamic>.from(status.details! as Map)
+        : null;
+    final serviceEnabled = status.isAvailable
+        ? printSystemEnabledFromHealth(healthBody)
+        : null;
+    PhysicalPrintGate.observe(serviceEnabled);
+    PhysicalPrintGate.publish(
+      bridgeUp: status.isAvailable,
+      printerReachable: printerReachable,
+      serviceEnabled: serviceEnabled,
+      stationConsumerEnabled: printStationConsumerEnabledFromHealth(healthBody),
+      pendingJobs: pendingJobsFromHealth(healthBody),
+      probedPrinter: printerReachable != null,
+    );
+    final canonical = describeCanonicalPrinterStatus(
+      bridgeUp: status.isAvailable,
+      printerReachable: printerReachable,
+      serviceEnabled: serviceEnabled,
+      stationConsumerEnabled: printStationConsumerEnabledFromHealth(
+        healthBody,
+      ),
+    );
+    final nextLabel = canonical.label;
+    final nextMessage = status.reason == 'ok'
+        ? canonical.detail
+        : _localPrintHealthMessage(status);
     final requiresUpdate =
         _isLocalPrintAvailable != status.isAvailable ||
         _localPrintStatusLabel != nextLabel ||
         _localPrintStatusMessage != nextMessage;
-    _isLocalPrintAvailable = status.isAvailable;
+    _isLocalPrintAvailable = status.isAvailable && serviceEnabled == true;
     _localPrintStatusLabel = nextLabel;
     _localPrintStatusMessage = nextMessage;
     if (requiresUpdate) {
@@ -13028,7 +13374,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         : '';
     switch (status.reason) {
       case 'ok':
-        return 'Yazıcı servisi bu bilgisayarda hazır.';
+        return describePrinterLink(
+          bridgeUp: true,
+          printerReachable: _localPrinterReachable,
+        ).detail;
       case 'connection_error':
         // Detect likely CORS / Private Network Access block (browser-side)
         final details = status.details?.toString() ?? '';
@@ -13045,7 +13394,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         }
         return 'Yazıcı servisine bağlanamadı. '
             'Servis çalışmıyor olabilir veya farklı bir port dinliyor olabilir. '
-            'Bu bilgisayarda http://127.0.0.1:3001 adresini kontrol edin.$lastSuccessStr';
+            '${status.url} adresini kontrol edin.$lastSuccessStr';
       case 'timeout':
         return 'Yazıcı servisi ${status.durationMs}ms içinde yanıt vermedi. '
             'Servis aşırı yüklendi veya takıldı olabilir.$lastSuccessStr';
@@ -13064,10 +13413,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
   String _timeAgoShort(DateTime past) {
     return printerServiceTimeAgoShort(past);
-  }
-
-  Color _localPrintStatusColor(bool? isAvailable) {
-    return printerServiceStatusColor(isAvailable);
   }
 
   void _setLocalPrintPanelBusy({bool? refreshing, bool? testing}) {
@@ -13625,15 +13970,35 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             ..['table_order_id'] = activeOrderId;
       payloadBuildMs = payloadWatch.elapsedMilliseconds;
 
+      final stationConfig = await _printStationService.fetchStationConfig(
+        sellerId,
+      );
+      final printSystemEnabled = stationConfig?['print_system_enabled'] == true;
+      PhysicalPrintGate.noteAuthoritative(printSystemEnabled);
+      if (!PhysicalPrintGate.allowsSend) {
+        _showPrinterWorkflowSnackBar(
+          'Yazıcı servisi kapalı. Yazdırmak için Yazıcı Merkezi’nden sistemi açın.',
+          warning: true,
+        );
+        return;
+      }
       // Android: bridge/istasyon yok — kayıtlı Ethernet yazıcısına direct
       // TCP bas. Kuyruğa düşürmek Android'de hiç basılmamak demektir.
       if (MobileOrderPrintService.isSupportedPlatform) {
+        if (!printSystemEnabled) {
+          _showPrinterWorkflowSnackBar(
+            'Yazıcı servisi kapalı. Yazdırmak için Yazıcı Merkezi’nden sistemi açın.',
+            warning: true,
+          );
+          return;
+        }
         final printWatch = Stopwatch()..start();
         final directResult = await _mobileOrderPrintService
             .printReceiptPayload(
               restaurantId: sellerId,
               payload: basePayload,
               orderId: activeOrderId,
+              printSystemEnabled: true,
             );
         bridgeRequestMs = printWatch.elapsedMilliseconds;
         path = 'mobile_tcp';
@@ -13642,7 +14007,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         if (directResult.ok) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Adisyon fiziksel olarak yazdırıldı.'),
+              content: Text(
+                'Yazıcıya iletildi. Basıldığı doğrulanmadı.',
+              ),
               backgroundColor: Color(0xFF10B981),
             ),
           );
@@ -13728,7 +14095,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         if (directResult.ok) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Adisyon fiziksel olarak yazdırıldı.'),
+              content: Text(
+                'Yazıcıya iletildi. Basıldığı doğrulanmadı.',
+              ),
               backgroundColor: Color(0xFF10B981),
             ),
           );
@@ -13745,14 +14114,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         return;
       }
 
-      final stationConfig = await _printStationService.fetchStationConfig(
-        sellerId,
-      );
-      final printSystemEnabled =
-          stationConfig?['print_system_enabled'] != false;
       if (!printSystemEnabled) {
         _showPrinterWorkflowSnackBar(
-          'Baskı sistemi kapalı. Yazdırmak için Yazıcı Merkezi’nden sistemi açın.',
+          'Yazıcı servisi kapalı. Yazdırmak için Yazıcı Merkezi’nden sistemi açın.',
           warning: true,
         );
         return;
@@ -13933,9 +14297,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       final stationConfig = await _printStationService.fetchStationConfig(
         sellerId,
       );
-      final printSystemEnabled =
-          stationConfig?['print_system_enabled'] != false;
-      if (!printSystemEnabled) {
+      final printSystemEnabled = stationConfig?['print_system_enabled'] == true;
+      PhysicalPrintGate.noteAuthoritative(printSystemEnabled);
+      if (!PhysicalPrintGate.allowsSend) {
         _showPrinterWorkflowSnackBar(
           'Baskı sistemi kapalı. Yazdırmak için Yazıcı Merkezi’nden sistemi açın.',
           warning: true,
@@ -13971,6 +14335,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               payload: basePayload,
               orderId: record.id,
               flowName: 'history_reprint',
+              printSystemEnabled: true,
             );
         if (!mounted) return;
         if (directResult.ok) {
@@ -14213,9 +14578,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       final stationConfig = await _printStationService.fetchStationConfig(
         sellerId,
       );
-      final printSystemEnabled =
-          stationConfig?['print_system_enabled'] != false;
-      if (!printSystemEnabled) {
+      final printSystemEnabled = stationConfig?['print_system_enabled'] == true;
+      PhysicalPrintGate.noteAuthoritative(printSystemEnabled);
+      if (!PhysicalPrintGate.allowsSend) {
         _showPrinterWorkflowSnackBar(
           'Baskı sistemi kapalı. Yazdırmak için Yazıcı Merkezi’nden sistemi açın.',
           warning: true,
@@ -14397,7 +14762,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Adisyon fiziksel olarak yazdırıldı.'),
+              content: Text(
+                'Yazıcıya iletildi. Basıldığı doğrulanmadı.',
+              ),
               backgroundColor: Color(0xFF10B981),
             ),
           );
@@ -14477,6 +14844,63 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return resolved;
   }
 
+  bool _garsonOrderBelongsToClosingTable({
+    required Map<String, dynamic> order,
+    required int tableNumber,
+    Map<String, dynamic>? tableRow,
+  }) {
+    return garsonOrderBelongsToCloseTable(
+      table: tableRow,
+      canonicalTableNumber: tableNumber,
+      order: order,
+    );
+  }
+
+  void _dropGarsonTableFromVisibleState({
+    required int tableNumber,
+    Map<String, dynamic>? tableRow,
+  }) {
+    final next = removeClosedTableOrdersFromBoardState(
+      current: _garsonBoardState,
+      tableNumber: tableNumber,
+      closedOrderId: '',
+      table: tableRow,
+    );
+    _setGarsonBoardState(next);
+    _garsonManualTableOrders = _garsonManualTableOrders
+        .where(
+          (order) => !_garsonOrderBelongsToClosingTable(
+            order: order,
+            tableNumber: tableNumber,
+            tableRow: tableRow,
+          ),
+        )
+        .toList(growable: false);
+    _garsonManualTableOrdersSignature = tableOrdersListSignature(
+      _garsonManualTableOrders,
+    );
+  }
+
+  Future<bool> _confirmGarsonTableClosedAfterFailure({
+    required String sellerId,
+    required int tableNumber,
+    Map<String, dynamic>? tableRow,
+    List<String> visibleOrderIds = const <String>[],
+  }) async {
+    try {
+      final stillOpen = await _storeService.getTableCloseSession(
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+        tableRow: tableRow,
+        visibleOrderIds: visibleOrderIds,
+      );
+      return stillOpen.isEmpty;
+    } catch (error) {
+      debugPrint('[GARSON_CLOSE_CONFIRM] table=$tableNumber error=$error');
+      return false;
+    }
+  }
+
   int _pi(dynamic value) {
     if (value is int) return value;
     if (value is num) return value.toInt();
@@ -14488,6 +14912,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required String tableLabel,
     required String paymentMethod,
     List<Map<String, dynamic>>? existingOrders,
+    bool discardConfirmedDraft = false,
   }) async {
     if (_garsonClosingTableNumbers.contains(tableNumber)) {
       debugPrint(
@@ -14496,6 +14921,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       return;
     }
     _garsonClosingTableNumbers.add(tableNumber);
+    if (mounted) setState(() {});
     final closeWatch = Stopwatch()..start();
     final tableRowEarly = _storeTableRowByNumber(tableNumber);
     logGarsonCloseStart(
@@ -14521,42 +14947,115 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     // Snapshot of board state taken BEFORE any mutation. Restored if DB
     // operations fail so the board never shows stale empty state.
     final precloseBoard = _garsonBoardState;
+    final tableRow = _storeTableRowByNumber(tableNumber);
 
     try {
       // ── 1. Fetch live orders from DB in parallel.
-      final tableRow = _storeTableRowByNumber(tableNumber);
       final areaName = tableRow?['area_name']?.toString().trim() ?? '';
       final fetchWatch = Stopwatch()..start();
-      final fetchResults = await Future.wait<List<Map<String, dynamic>>>([
-        _storeService.getTableOrdersByTable(
-          sellerId: sellerId,
-          tableNumber: tableNumber,
-        ),
-        _storeService.getTableOrdersSnapshot(
-          sellerId,
-          tableNumber: tableNumber,
-        ),
-      ]);
+      final visibleOrderIds = (existingOrders ?? const <Map<String, dynamic>>[])
+          .map((order) => order['id']?.toString().trim() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false);
+      final sessionOrders = await _storeService.getTableCloseSession(
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+        tableRow: tableRow,
+        visibleOrderIds: visibleOrderIds,
+      );
       fetchWatch.stop();
       logGarsonCloseStep(
         tableNumber: tableNumber,
         step: 'fetchOrders',
         ms: fetchWatch.elapsedMilliseconds,
       );
-      final tableOrders = fetchResults[0];
-      final preCloseSnapshotOrders = fetchResults[1];
-      final sessionOrders = preCloseSnapshotOrders.isNotEmpty
-          ? preCloseSnapshotOrders
-          : tableOrders;
-
-      if (sessionOrders.isEmpty) {
+      final tableOrders = sessionOrders;
+      final hasLocalDraft =
+          _mobileGarsonDraftItemsByTable[tableNumber]?.isNotEmpty == true ||
+          garsonCloseOrdersAreUnsentDraftOnly(existingOrders) ||
+          (existingOrders?.any(garsonOrderIsUnsentLocalDraft) ?? false);
+      final optimisticAt = _mobileGarsonOptimisticSentAtByTable[tableNumber];
+      final optimisticFresh =
+          optimisticAt != null &&
+          DateTime.now().difference(optimisticAt) <=
+              const Duration(seconds: 45);
+      final closePlan = planGarsonTableClose(
+        hasUnsentDraft: hasLocalDraft,
+        hasServerBill: sessionOrders.isNotEmpty,
+        sendResultUncertain: optimisticFresh && sessionOrders.isEmpty,
+      );
+      if (closePlan.action == GarsonDraftCloseAction.keepUncertainSend) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(garsonCloseTableAlreadyEmptySnackbarText(tableLabel)),
+            content: Text(
+              garsonUncertainSendKeepsDraftSnackbarText(tableLabel),
+            ),
           ),
         );
         return;
+      }
+      if (closePlan.action == GarsonDraftCloseAction.cancelUnsentDraft ||
+          closePlan.action == GarsonDraftCloseAction.alreadyEmpty) {
+        if (!mounted) return;
+        if (closePlan.action == GarsonDraftCloseAction.cancelUnsentDraft &&
+            !discardConfirmedDraft) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                garsonDraftCancelNeedsConfirmSnackbarText(tableLabel),
+              ),
+            ),
+          );
+          return;
+        }
+        setState(() {
+          if (closePlan.cancelUnsentDraft && discardConfirmedDraft) {
+            _mobileGarsonDraftItemsByTable.remove(tableNumber);
+            _mobileGarsonDraftUpdatedAtByTable.remove(tableNumber);
+            _mobileGarsonOptimisticSentAtByTable.remove(tableNumber);
+            _mobileGarsonOptimisticItemsByTable.remove(tableNumber);
+          }
+          _dropGarsonTableFromVisibleState(
+            tableNumber: tableNumber,
+            tableRow: tableRow,
+          );
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              closePlan.action == GarsonDraftCloseAction.cancelUnsentDraft
+                  ? garsonDiscardUnsentDraftSnackbarText(tableLabel)
+                  : garsonCloseTableAlreadyEmptySnackbarText(tableLabel),
+            ),
+          ),
+        );
+        return;
+      }
+      final moneyReason = MixedServiceOrder.unverifiedOrdersMoney(
+        sessionOrders,
+      );
+      if (moneyReason != null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(moneyReason)),
+        );
+        return;
+      }
+
+      for (final order in sessionOrders) {
+        if (!garsonTableOrderNeedsRealign(
+          order: order,
+          canonicalTableNumber: tableNumber,
+        )) {
+          continue;
+        }
+        await _storeService.realignTableOrderNumber(
+          sellerId: sellerId,
+          orderId: order['id']?.toString() ?? '',
+          canonicalTableNumber: tableNumber,
+          storedTableNumber: garsonStoredTableNumber(order),
+        );
       }
 
       // ── 2. Record the exact IDs we intend to close. Verification will use
@@ -14568,16 +15067,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           .where((id) => id.isNotEmpty)
           .toList(growable: false);
 
-      // ── 3. Optimistic UI: mark table as closing.
-      if (mounted) {
-        setState(() {
-          _invalidateSellerTableOrdersFallbackFuture();
-          _markGarsonTableRecentlyClosed(
-            tableNumber,
-            source: 'close_table_optimistic',
-          );
-        });
-      }
+      // The card stays occupied and shows "Masa kapatılıyor..." until the
+      // close RPC is confirmed. Marking it closed here made the same card
+      // say "Boş Masa" while the closing label was still set.
 
       // Track how many `orders` rows actually got closed across all attempts.
       // 0 across the board is the silent-failure signature for the reopen
@@ -14593,9 +15085,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       // Revenue (Genel Bakış / Finans) reads ONLY from table_order_history
       // with closed_at — closeTableOrders() skips the archive and leaves
       // ciro stuck at 0 until this path runs.
+      Map<String, dynamic> closeResult = const <String, dynamic>{};
       try {
         final currentUser = _authService.currentUser;
-        await _storeService.closeTableWithHistory(
+        closeResult = await _storeService.closeTableWithHistory(
           sellerId: sellerId,
           tableNumber: tableNumber,
           paymentMethod: paymentMethod,
@@ -14605,12 +15098,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           waiterId: currentUser?.id,
           waiterName: _sellerPrintJobService.safeUserDisplayName(currentUser),
         );
-        // closeTableWithHistory mirrors `orders`; keep explicit count for
-        // diagnostics on the reopen-bug path.
-        ordersClosedTotal += await _storeService.closeRestaurantOrdersForTable(
-          sellerId: sellerId,
-          tableNumber: tableNumber,
-        );
+        final reportedClosed = closeResult['orders_updated'];
+        if (reportedClosed is num) {
+          ordersClosedTotal += reportedClosed.toInt();
+        }
         debugPrint(
           '[GARSON_CLOSE] archive_with_history=ok '
           'table=$tableNumber '
@@ -14618,88 +15109,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           'orders_closed_so_far=$ordersClosedTotal',
         );
       } catch (bulkErr) {
-        // Archive/delete failed (e.g. RLS blocks DELETE on table_orders).
-        // Log the error and fall through to the per-order fallback below.
         debugPrint(
           '[GARSON_CLOSE_BULK_ERROR] '
           'table=$tableNumber '
           'error=$bulkErr '
-          'action=falling_back_to_per_order_delete',
+          'action=no_direct_table_write',
         );
+        rethrow;
       }
 
-      // ── 5. Per-order fallback: re-fetch the targeted rows by ID to see
-      //       which ones the bulk delete missed, then delete/status each.
-      if (targetOrderIds.isNotEmpty) {
-        final survivors = await _storeService.getTableOrdersByIds(
-          targetOrderIds,
-        );
-        for (final order in survivors) {
-          final orderId = order['id']?.toString() ?? '';
-          if (orderId.isEmpty) continue;
-          try {
-            await _storeService.deleteTableOrder(orderId);
-            debugPrint('[GARSON_CLOSE] per_order_delete=ok orderId=$orderId');
-          } catch (deleteErr) {
-            debugPrint(
-              '[GARSON_CLOSE_DELETE_ERROR] '
-              'orderId=$orderId '
-              'error=$deleteErr '
-              'action=falling_back_to_status_update',
-            );
-            try {
-              final updateResult = await _storeService.updateTableOrder(
-                orderId,
-                status: 'closed',
-              );
-              // updateTableOrder returns null (not throws) when 0 rows
-              // were affected (e.g. RLS silent block or stale id).
-              // Treat null as a soft failure so the verification step
-              // below can surface it instead of silently mis-reporting ok.
-              if (updateResult == null) {
-                debugPrint(
-                  '[GARSON_CLOSE_UPDATE_NULL] '
-                  'orderId=$orderId '
-                  'reason=0_rows_affected '
-                  'action=will_be_caught_by_id_verification',
-                );
-              } else {
-                debugPrint(
-                  '[GARSON_CLOSE] per_order_status_update=ok orderId=$orderId',
-                );
-              }
-            } catch (updateErr) {
-              // Both delete and status-update failed for this order.
-              // Log and continue — the ID-based verification below will
-              // catch any survivors and surface them as an error.
-              debugPrint(
-                '[GARSON_CLOSE_UPDATE_ERROR] '
-                'orderId=$orderId '
-                'error=$updateErr '
-                'action=will_be_caught_by_id_verification',
-              );
-            }
-          }
-        }
-      }
-
-      // BUG-FIX (Reopen Bug): per-order fallback path may have closed
-      // `table_orders` rows one-by-one without ever calling
-      // `closeRestaurantOrdersForTable`.  Make sure the customer-facing
-      // `orders` rows are also closed so the table doesn't re-appear after
-      // refresh.
-      final ordersClosedTail = await _storeService
-          .closeRestaurantOrdersForTable(
-            sellerId: sellerId,
-            tableNumber: tableNumber,
-          );
-      ordersClosedTotal += ordersClosedTail;
-      debugPrint(
-        '[GARSON_CLOSE_ORDERS_TAIL] '
-        'table=$tableNumber '
-        'orders_closed_tail=$ordersClosedTail '
-        'orders_closed_total=$ordersClosedTotal',
-      );
+      // The RPC archives history, closes orders and clears table_orders in
+      // one transaction. A later delete or a second orders update can close
+      // only half of that visit, so this path only checks the result.
 
       // ── 6. ID-based verification — confirms every targeted row is gone or
       //       marked closed. A filter-based re-query (seller_id + table_number)
@@ -14730,6 +15151,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
       final currentUser = _authService.currentUser;
       final closeCompletedAt = DateTime.now();
+      // Required archive write when the close RPC did not leave a history row.
+      // This is an INSERT, not a UI read. The card stays occupied until it finishes.
       try {
         final insertedFallbackHistory = await _storeService
             .ensureTableHistoryRecorded(
@@ -14745,6 +15168,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               closedAt: closeCompletedAt,
               areaName: areaName,
               sessionKey: closeSessionKey,
+              knownServerHistoryId: serverHistoryIdFromCloseResult(closeResult),
             );
         debugPrint(
           '[GARSON_CLOSE_HISTORY_ENSURE] '
@@ -14753,27 +15177,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           'orders=${tableOrders.length}',
         );
 
-        await _storeService.consolidateDuplicateHistoryChain(
-          sellerId: sellerId,
-          tableNumber: tableNumber,
-          sessionKey: closeSessionKey,
-          closedAfter: closeCompletedAt,
-        );
-        final supersededHistoryId =
-            _garsonRestoredHistoryIdByTable[tableNumber]?.trim() ?? '';
-        if (supersededHistoryId.isNotEmpty) {
-          final superseded = await _storeService.supersedeRestoredHistoryOnReclose(
-            sellerId: sellerId,
-            supersededHistoryId: supersededHistoryId,
-          );
-          debugPrint(
-            '[GARSON_CLOSE_HISTORY_SUPERSEDE] '
-            'table=$tableNumber historyId=$supersededHistoryId deleted=$superseded',
-          );
-        }
-        _garsonRestoredSessionKeyByTable.remove(tableNumber);
-        _garsonRestoredHistoryIdByTable.remove(tableNumber);
-
         final historyExists = await _storeService.hasRecentTableHistory(
           sellerId: sellerId,
           tableNumber: tableNumber,
@@ -14781,8 +15184,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         );
         if (!historyExists) {
           throw Exception(
-            'Masa kapatıldı ancak geçmiş kaydı oluşturulamadı. '
-            'Lütfen tekrar deneyin veya yöneticinize bildirin.',
+            'Masa geçmişi görünmüyor. Kart boş gösterilmedi.',
           );
         }
       } catch (historyError) {
@@ -14794,14 +15196,43 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         rethrow;
       }
 
+      // Duplicate-chain deletes and superseded-row deletes are cleanup.
+      // The close record already exists from the RPC or the fallback insert.
+      unawaited(() async {
+        try {
+          await _storeService.consolidateDuplicateHistoryChain(
+            sellerId: sellerId,
+            tableNumber: tableNumber,
+            sessionKey: closeSessionKey,
+            closedAfter: closeCompletedAt,
+          );
+          final supersededHistoryId =
+              _garsonRestoredHistoryIdByTable[tableNumber]?.trim() ?? '';
+          if (supersededHistoryId.isNotEmpty) {
+            await _storeService.supersedeRestoredHistoryOnReclose(
+              sellerId: sellerId,
+              supersededHistoryId: supersededHistoryId,
+            );
+          }
+          _garsonRestoredSessionKeyByTable.remove(tableNumber);
+          _garsonRestoredHistoryIdByTable.remove(tableNumber);
+        } catch (cleanupError) {
+          debugPrint(
+            '[GARSON_CLOSE_HISTORY_CLEANUP] table=$tableNumber error=$cleanupError',
+          );
+        }
+      }());
+
       // Final merged-source verification: `table_orders` may be closed while
       // customer-side `orders` still remain active (notably when the waiter/
       // sub-admin DB migration is missing and the fallback direct UPDATE hits
       // RLS). Re-query the same merged snapshot used by the garson board and
       // fail the close if anything still looks active.
-      final remainingActiveOrders = await _storeService.getTableOrdersSnapshot(
-        sellerId,
+      final remainingActiveOrders = await _storeService.getTableCloseSession(
+        sellerId: sellerId,
         tableNumber: tableNumber,
+        tableRow: tableRow,
+        visibleOrderIds: targetOrderIds,
       );
       if (remainingActiveOrders.isNotEmpty) {
         final allFromOrders = remainingActiveOrders.every(
@@ -14839,15 +15270,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       // ── 7. All DB operations confirmed — now mutate local state.
       if (!mounted) return;
       setState(() {
+        _garsonClosingTableNumbers.remove(tableNumber);
         _invalidateSellerTableOrdersFallbackFuture();
         _markGarsonTableRecentlyClosed(
           tableNumber,
           source: 'close_table_success',
         );
-        _mobileGarsonDraftItemsByTable.remove(tableNumber);
-        _mobileGarsonDraftUpdatedAtByTable.remove(tableNumber);
-        _mobileGarsonOptimisticSentAtByTable.remove(tableNumber);
-        _mobileGarsonOptimisticItemsByTable.remove(tableNumber);
+        if (discardConfirmedDraft) {
+          _mobileGarsonDraftItemsByTable.remove(tableNumber);
+          _mobileGarsonDraftUpdatedAtByTable.remove(tableNumber);
+          _mobileGarsonOptimisticSentAtByTable.remove(tableNumber);
+          _mobileGarsonOptimisticItemsByTable.remove(tableNumber);
+        }
       });
       _applyOptimisticClosedTableSession(
         tableNumber: tableNumber,
@@ -14879,10 +15313,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           _garsonSelectedTableNumber == tableNumber;
       final routeSessionAtClose = _garsonActiveRouteSession?.sessionId;
 
+      _garsonClosingTableNumbers.remove(tableNumber);
       final nextBoardState = removeClosedTableOrdersFromBoardState(
         current: _garsonBoardState,
         tableNumber: tableNumber,
         closedOrderId: firstOrderId,
+        table: tableRow,
       );
       if (nextBoardState != _garsonBoardState) {
         _setGarsonBoardState(nextBoardState);
@@ -14901,11 +15337,23 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       // Must be in the same setState as the board-state update to prevent
       // the route-pop finally block from re-inserting stale orders.
       final purgedManualCount = _garsonManualTableOrders
-          .where((o) => _garsonTableNumberFromOrder(o) == tableNumber)
+          .where(
+            (order) => _garsonOrderBelongsToClosingTable(
+              order: order,
+              tableNumber: tableNumber,
+              tableRow: tableRow,
+            ),
+          )
           .length;
       if (purgedManualCount > 0) {
         _garsonManualTableOrders = _garsonManualTableOrders
-            .where((o) => _garsonTableNumberFromOrder(o) != tableNumber)
+            .where(
+              (order) => !_garsonOrderBelongsToClosingTable(
+                order: order,
+                tableNumber: tableNumber,
+                tableRow: tableRow,
+              ),
+            )
             .toList(growable: false);
         _garsonManualTableOrdersSignature = tableOrdersListSignature(
           _garsonManualTableOrders,
@@ -15034,6 +15482,50 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         totalMs: closeWatch.elapsedMilliseconds,
       );
     } catch (error) {
+      final confirmedClosed = await _confirmGarsonTableClosedAfterFailure(
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+        tableRow: tableRow,
+        visibleOrderIds: (existingOrders ?? const <Map<String, dynamic>>[])
+            .map((order) => order['id']?.toString().trim() ?? '')
+            .where((id) => id.isNotEmpty)
+            .toList(growable: false),
+      );
+      final historyMissing = error.toString().contains(
+        'Masa geçmişi görünmüyor',
+      );
+      var historyVerified = false;
+      if (confirmedClosed && !historyMissing) {
+        try {
+          historyVerified = await _storeService.hasRecentTableHistory(
+            sellerId: sellerId,
+            tableNumber: tableNumber,
+            since: DateTime.now().subtract(const Duration(minutes: 30)),
+          );
+        } catch (historyError) {
+          debugPrint(
+            '[GARSON_CLOSE_CONFIRM_HISTORY] table=$tableNumber error=$historyError',
+          );
+          historyVerified = false;
+        }
+      }
+      if (garsonCloseFailureShowsEmpty(
+        ordersConfirmedClosed: confirmedClosed,
+        historyVerified: historyVerified,
+      )) {
+        if (!mounted) return;
+        setState(() {
+          _garsonClosingTableNumbers.remove(tableNumber);
+          _dropGarsonTableFromVisibleState(
+            tableNumber: tableNumber,
+            tableRow: tableRow,
+          );
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(garsonCloseTableSnackbarText(tableLabel))),
+        );
+        return;
+      }
       // ── Extract the most useful DB error detail for display ────────────────
       String errorDetail;
       if (error is PostgrestException) {
@@ -15053,7 +15545,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         '[GARSON_CLOSE_TABLE_FAILED] '
         'table=$tableNumber '
         'label=$tableLabel '
-        'error=$error',
+        'error=$error '
+        'detail=$errorDetail',
       );
       if (!mounted) return;
       // ── Rollback: restore pre-close board state ────────────────────────────
@@ -15084,7 +15577,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Masa kapatılamadı.\n$errorDetail'),
+          content: Text(friendlyTableCloseError(error)),
           duration: const Duration(seconds: 8),
         ),
       );
@@ -15096,6 +15589,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     }
     } finally {
       _garsonClosingTableNumbers.remove(tableNumber);
+      if (mounted) setState(() {});
     }
   }
 
@@ -15124,6 +15618,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       tableId: tableRow?['id']?.toString() ?? '-',
       orderId: orderId,
     );
+    final hasLocalDraft =
+        _mobileGarsonDraftItemsByTable[tableNumber]?.isNotEmpty == true ||
+        (existingOrders?.any(garsonOrderIsUnsentLocalDraft) ?? false);
+    final hasServerBill = garsonCloseHasServerBill(existingOrders);
+    final draftOnly = hasLocalDraft && !hasServerBill;
+    final draftBesideBill = hasLocalDraft && hasServerBill;
     final shouldClose = await showDialog<String?>(
       context: context,
       builder: (ctx) {
@@ -15136,9 +15636,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Bu işlem masadaki aktif sipariş kayıtlarını kapatır.',
+                  Text(
+                    draftOnly
+                        ? garsonCancelUnsentDraftDialogText()
+                        : draftBesideBill
+                        ? garsonCancelDraftBesideBillDialogText()
+                        : 'Bu işlem masadaki aktif sipariş kayıtlarını kapatır.',
                   ),
+                  if (!draftOnly) ...[
                   const SizedBox(height: 14),
                   const Text(
                     'Ödeme Yöntemi',
@@ -15169,6 +15674,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     onTap: () =>
                         setDialogState(() => selectedMethod = 'online'),
                   ),
+                  ],
                 ],
               ),
               actions: [
@@ -15177,11 +15683,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   child: const Text('Vazgeç'),
                 ),
                 FilledButton(
-                  onPressed: () => Navigator.pop(ctx, selectedMethod),
+                  onPressed: () => Navigator.pop(
+                    ctx,
+                    draftOnly ? 'cancel_unsent_draft' : selectedMethod,
+                  ),
                   style: FilledButton.styleFrom(
                     backgroundColor: Colors.red.shade600,
                   ),
-                  child: const Text('Evet, Kapat'),
+                  child: Text(
+                    draftOnly ? 'Taslağı iptal et' : 'Evet, Kapat',
+                  ),
                 ),
               ],
             );
@@ -15193,8 +15704,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       await _closeGarsonTable(
         tableNumber: tableNumber,
         tableLabel: tableLabel,
-        paymentMethod: shouldClose,
+        paymentMethod: shouldClose == 'cancel_unsent_draft'
+            ? 'cash'
+            : shouldClose,
         existingOrders: existingOrders,
+        discardConfirmedDraft: draftOnly || draftBesideBill,
       );
     }
   }
@@ -15265,10 +15779,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final status = effectiveOrder?['status']?.toString();
     final isOptimistic = hasOptimisticItems && !hasOrderInDb;
     final color = _mobileGarsonStatusColor(status, hasOrder: hasOrder);
-    final statusLabel = _mobileGarsonStatusLabel(
-      status,
+    final statusLabel = garsonTableCardStatusLabel(
+      closing: _garsonClosingTableNumbers.contains(tableNumber),
       hasOrder: hasOrder,
-      isOptimistic: isOptimistic,
+      activeLabel: _mobileGarsonStatusLabel(
+        status,
+        hasOrder: hasOrder,
+        isOptimistic: isOptimistic,
+      ),
     );
 
     final previewItems = effectiveOrder != null
@@ -15337,12 +15855,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () {
-          _openGarsonTableFlowPage(
-            tableNumber: tableNumber,
-            initialOrder: order,
-          );
-        },
+        onTap: _garsonClosingTableNumbers.contains(tableNumber)
+            ? null
+            : () {
+                _openGarsonTableFlowPage(
+                  tableNumber: tableNumber,
+                  initialOrder: order,
+                );
+              },
         child: Container(
           padding: EdgeInsets.all(compact ? 8 : 10),
           decoration: BoxDecoration(
@@ -15477,6 +15997,494 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
+  Map<String, dynamic> _billLinePayload(Map<String, dynamic> item) {
+    final copy = Map<String, dynamic>.from(item)..remove('_bill_order_id');
+    final qty = (copy['quantity'] as num?)?.toInt() ?? 1;
+    copy['quantity'] = qty;
+    copy['price'] = MixedServiceOrder.parsePrice(copy['price']);
+    return copy;
+  }
+
+  Future<void> _saveAdisyonRevision({
+    required int tableNumber,
+    required String orderId,
+    required List<Map<String, dynamic>> orderLines,
+    required List<Map<String, dynamic>> printItems,
+    required List<Map<String, dynamic>> extraItems,
+    required String jobType,
+    bool requiresServerPriceAuthority = false,
+  }) async {
+    final sellerId = _resolveGarsonSellerId();
+    final payload = orderLines.map(_billLinePayload).toList(growable: false);
+    await _sellerPrintJobService.updateSavedRestaurantOrder(
+      restaurantId: sellerId,
+      orderId: orderId,
+      tableNumber: tableNumber,
+      items: payload,
+      printItems: printItems.map(_billLinePayload).toList(growable: false),
+      extraPrintItems: extraItems.map(_billLinePayload).toList(growable: false),
+      jobType: printItems.isEmpty ? 'add_item' : jobType,
+      extraJobType: 'cancel_item',
+      revisionKey: OrderPrintJobService.stableOrderEditKey(orderId, payload),
+      waiterId: Supabase.instance.client.auth.currentUser?.id,
+      waiterName: _sellerPrintJobService.safeUserDisplayName(
+        Supabase.instance.client.auth.currentUser,
+      ),
+      requiresServerPriceAuthority: requiresServerPriceAuthority,
+    );
+  }
+
+  Future<void> _editAdisyonLine({
+    required BuildContext sheetContext,
+    required void Function(VoidCallback) setSheetState,
+    required List<Map<String, dynamic>> lines,
+    required int index,
+    required int tableNumber,
+    required ValueNotifier<({double paid, bool readable, bool loading})>
+    payments,
+    required void Function(bool busy) onBusy,
+  }) async {
+    final item = lines[index];
+    final currentQty = (item['quantity'] as num?)?.toInt() ?? 1;
+    final currentUnit = MixedServiceOrder.parsePrice(item['price']);
+    final draft = await showAdisyonLineEditor(
+      context: sheetContext,
+      productName: item['name']?.toString() ?? 'Ürün',
+      quantity: currentQty,
+      unitPrice: currentUnit,
+      canChangePrice: _staffHas('viewFinance'),
+    );
+    if (draft == null) return;
+    try {
+      if (!payments.value.readable) {
+        throw const AdisyonLineDenial(
+          'Ödemeler okunamadı. Kalem değiştirilmedi.',
+        );
+      }
+      final others = lines.fold<double>(0, (sum, row) {
+        if (identical(row, item)) return sum;
+        return sum + MixedServiceOrder.itemLineTotal(row);
+      });
+      final planned = planAdisyonQuantityOrPrice(
+        currentQuantity: currentQty,
+        currentUnitPrice: currentUnit,
+        nextQuantity: draft.quantity,
+        nextUnitPrice: draft.unitPrice,
+        canChangeQuantity: _staffHas('manageOrders'),
+        canChangePrice: _staffHas('viewFinance'),
+        linePaid: adisyonLineIsPaid(item),
+        otherLinesTotal: others,
+        paidAmount: payments.value.paid,
+      );
+      final orderId = item['_bill_order_id']?.toString() ?? '';
+      if (!adisyonOrderIdIsPersisted(orderId)) {
+        throw const AdisyonLineDenial(
+          'Bu satır kayıtlı siparişe bağlı değil. Değişiklik uygulanmadı.',
+        );
+      }
+      final next = Map<String, dynamic>.from(item)
+        ..['quantity'] = planned.quantity
+        ..['price'] = planned.unitPrice;
+      final orderLines = <Map<String, dynamic>>[
+        for (final row in lines)
+          if ((row['_bill_order_id'] ?? '').toString() == orderId)
+            identical(row, item) ? next : row,
+      ];
+      final sent = adisyonLineWasSentToKitchen(item);
+      final printItems = <Map<String, dynamic>>[];
+      final extraItems = <Map<String, dynamic>>[];
+      if (sent && planned.quantity > currentQty) {
+        printItems.add({
+          ...item,
+          'quantity': planned.quantity - currentQty,
+        });
+      } else if (sent && planned.quantity < currentQty) {
+        extraItems.add({
+          ...item,
+          'quantity': currentQty - planned.quantity,
+        });
+      }
+      onBusy(true);
+      await _saveAdisyonRevision(
+        tableNumber: tableNumber,
+        orderId: orderId,
+        orderLines: orderLines,
+        printItems: printItems,
+        extraItems: extraItems,
+        jobType: 'add_item',
+        requiresServerPriceAuthority: planned.priceChanged,
+      );
+      if (!mounted) return;
+      setSheetState(() => lines[index] = next);
+    } on AdisyonLineDenial catch (error) {
+      if (!mounted) return;
+      _showPrinterWorkflowSnackBar(error.message, warning: true);
+    } catch (error) {
+      if (!mounted) return;
+      _showPrinterWorkflowSnackBar(
+        error.toString().replaceFirst('Exception: ', ''),
+        warning: true,
+      );
+    } finally {
+      if (sheetContext.mounted) onBusy(false);
+    }
+  }
+
+  Future<void> _removeAdisyonLine({
+    required BuildContext sheetContext,
+    required void Function(VoidCallback) setSheetState,
+    required List<Map<String, dynamic>> lines,
+    required int index,
+    required int tableNumber,
+    required ValueNotifier<({double paid, bool readable, bool loading})>
+    payments,
+    required void Function(bool busy) onBusy,
+  }) async {
+    final confirmed = await confirmAdisyonLineRemoval(sheetContext);
+    if (!confirmed) return;
+    final item = lines[index];
+    try {
+      if (!payments.value.readable) {
+        throw const AdisyonLineDenial(
+          'Ödemeler okunamadı. Ürün kaldırılmadı.',
+        );
+      }
+      planAdisyonLineRemoval(
+        linePaid: adisyonLineIsPaid(item),
+        canRemove: _staffHas('manageOrders'),
+        lineTotal: MixedServiceOrder.itemLineTotal(item),
+        billTotal: lines.fold<double>(
+          0,
+          (sum, row) => sum + MixedServiceOrder.itemLineTotal(row),
+        ),
+        paidAmount: payments.value.paid,
+      );
+      final orderId = item['_bill_order_id']?.toString() ?? '';
+      if (!adisyonOrderIdIsPersisted(orderId)) {
+        throw const AdisyonLineDenial(
+          'Bu satır kayıtlı siparişe bağlı değil. Ürün kaldırılmadı.',
+        );
+      }
+      final orderLines = <Map<String, dynamic>>[
+        for (final row in lines)
+          if ((row['_bill_order_id'] ?? '').toString() == orderId &&
+              !identical(row, item))
+            row,
+      ];
+      if (orderLines.isEmpty) {
+        throw const AdisyonLineDenial(
+          'Son ürün bu pencereden silinemez. Hesabı keserek kapatın.',
+        );
+      }
+      onBusy(true);
+      await _saveAdisyonRevision(
+        tableNumber: tableNumber,
+        orderId: orderId,
+        orderLines: orderLines,
+        printItems: const <Map<String, dynamic>>[],
+        extraItems: adisyonLineWasSentToKitchen(item)
+            ? <Map<String, dynamic>>[item]
+            : const <Map<String, dynamic>>[],
+        jobType: 'add_item',
+      );
+      if (!mounted) return;
+      setSheetState(() => lines.removeAt(index));
+    } on AdisyonLineDenial catch (error) {
+      if (!mounted) return;
+      _showPrinterWorkflowSnackBar(error.message, warning: true);
+    } catch (error) {
+      if (!mounted) return;
+      _showPrinterWorkflowSnackBar(
+        error.toString().replaceFirst('Exception: ', ''),
+        warning: true,
+      );
+    } finally {
+      if (sheetContext.mounted) onBusy(false);
+    }
+  }
+
+  void _openGarsonAdisyon({
+    required int tableNumber,
+    Map<String, dynamic>? initialOrder,
+  }) {
+    final gate = _staffMenuGate;
+    final restricted = gate != null && gate.restrict;
+    final canOpen = !restricted ||
+        gate.permissions.contains('viewOrders') ||
+        gate.permissions.contains('manageOrders');
+    if (!canOpen) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(staffAdisyonDeniedMessage)),
+      );
+      return;
+    }
+    unawaited(
+      _showGarsonBill(
+        tableNumber: tableNumber,
+        initialOrder: initialOrder,
+      ),
+    );
+  }
+
+  Future<void> _showGarsonBill({
+    required int tableNumber,
+    Map<String, dynamic>? initialOrder,
+  }) async {
+    final orders = <Map<String, dynamic>>[
+      ...garsonOrdersForTableNumber(
+        orders: _garsonOrdersSnapshotForUi(),
+        tableNumber: tableNumber,
+      ),
+    ];
+    if (orders.isEmpty && initialOrder != null) {
+      orders.add(initialOrder);
+    }
+    if (orders.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bu masada açık hesap yok.')),
+      );
+      return;
+    }
+    final lines = <Map<String, dynamic>>[];
+    for (final order in orders) {
+      final orderId = (order['order_id'] ?? order['id'] ?? '').toString();
+      for (final item in _garsonExtractItems(order)) {
+        lines.add(<String, dynamic>{...item, '_bill_order_id': orderId});
+      }
+    }
+    final moneyReason = MixedServiceOrder.unverifiedOrdersMoney(orders);
+    double billTotal() => lines.fold<double>(
+      0,
+      (sum, item) => sum + MixedServiceOrder.itemLineTotal(item),
+    );
+    final sellerId = _resolveGarsonSellerId();
+    final payments = ValueNotifier<({double paid, bool readable, bool loading})>(
+      (paid: 0, readable: false, loading: sellerId.isNotEmpty),
+    );
+    if (sellerId.isNotEmpty) {
+      unawaited(() async {
+        try {
+          final earliest = orders
+              .map(
+                (order) =>
+                    DateTime.tryParse(order['created_at']?.toString() ?? ''),
+              )
+              .whereType<DateTime>()
+              .fold<DateTime?>(null, (earliest, current) {
+                if (earliest == null || current.isBefore(earliest)) {
+                  return current;
+                }
+                return earliest;
+              });
+          final rows = await _storeService.getTablePayments(
+            sellerId: sellerId,
+            tableNumber: tableNumber,
+          );
+          var paid = 0.0;
+          for (final row in rows) {
+            final payment = TablePayment.fromMap(row);
+            if (earliest != null &&
+                payment.createdAt.isBefore(
+                  earliest.subtract(const Duration(minutes: 1)),
+                )) {
+              continue;
+            }
+            paid += payment.amount;
+          }
+          payments.value = (paid: paid, readable: true, loading: false);
+        } catch (error) {
+          debugPrint('[GARSON_BILL_PAYMENTS] table=$tableNumber error=$error');
+          payments.value = (paid: 0, readable: false, loading: false);
+        }
+      }());
+    }
+    if (!mounted) {
+      payments.dispose();
+      return;
+    }
+    final tableRow = _storeTableRowByNumber(tableNumber);
+    final title = tableRow == null
+        ? 'Masa $tableNumber'
+        : _tableDisplayLabelFromRow(tableRow);
+    var printing = false;
+    var revising = false;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '$title hesabı',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (moneyReason != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          moneyReason,
+                          style: const TextStyle(
+                            color: Color(0xFFB45309),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: lines.length,
+                        separatorBuilder: (_, _) => const Divider(height: 12),
+                        itemBuilder: (context, index) {
+                          final item = lines[index];
+                          final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+                          final unit = MixedServiceOrder.parsePrice(
+                            item['price'],
+                          );
+                          final line = MixedServiceOrder.itemLineTotal(item);
+                          final name = item['name']?.toString() ?? 'Ürün';
+                          return Row(
+                            children: [
+                              IconButton(
+                                tooltip: 'Düzenle',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: revising
+                                    ? null
+                                    : () => _editAdisyonLine(
+                                        sheetContext: context,
+                                        setSheetState: setSheetState,
+                                        lines: lines,
+                                        index: index,
+                                        tableNumber: tableNumber,
+                                        payments: payments,
+                                        onBusy: (busy) =>
+                                            setSheetState(() => revising = busy),
+                                      ),
+                                icon: const Icon(Icons.edit_outlined, size: 18),
+                              ),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      name,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    Text(
+                                      '$qty adet · birim ${_garsonFormatMoney(unit)}',
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Text(
+                                _garsonFormatMoney(line),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Sil',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: revising
+                                    ? null
+                                    : () => _removeAdisyonLine(
+                                        sheetContext: context,
+                                        setSheetState: setSheetState,
+                                        lines: lines,
+                                        index: index,
+                                        tableNumber: tableNumber,
+                                        payments: payments,
+                                        onBusy: (busy) =>
+                                            setSheetState(() => revising = busy),
+                                      ),
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  size: 18,
+                                  color: Color(0xFFDC2626),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text('Toplam: ${_garsonFormatMoney(billTotal())}'),
+                    ValueListenableBuilder<
+                      ({double paid, bool readable, bool loading})
+                    >(
+                      valueListenable: payments,
+                      builder: (context, state, _) {
+                        final remaining = billTotal() - state.paid;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              state.loading
+                                  ? 'Ödemeler okunuyor…'
+                                  : state.readable
+                                  ? 'Alınan ödeme: ${_garsonFormatMoney(state.paid)}'
+                                  : 'Alınan ödemeler okunamadı.',
+                            ),
+                            Text(
+                              state.readable
+                                  ? 'Kalan: ${_garsonFormatMoney(remaining < 0 ? 0 : remaining)}'
+                                  : 'Kalan bakiye ödemeler okununca hesaplanır.',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: printing || moneyReason != null
+                          ? null
+                          : () async {
+                              setSheetState(() => printing = true);
+                              await _printGarsonAdisyon(
+                                tableNumber: tableNumber,
+                                orders: orders,
+                                uiAction: 'adisyon_bill_button',
+                              );
+                              if (sheetContext.mounted) {
+                                setSheetState(() => printing = false);
+                              }
+                            },
+                      icon: const Icon(Icons.print_outlined),
+                      label: const Text('Adisyon Yazdır'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    payments.dispose();
+  }
+
   void _openGarsonTableFlowPage({
     required int tableNumber,
     Map<String, dynamic>? initialOrder,
@@ -15536,6 +16544,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
     final flowPage = _MobileGarsonTableFlowPage(
       sellerId: sellerId,
+      grantedOperationPermissions: (_staffMenuGate?.restrict ?? false)
+          ? _staffMenuGate!.permissions
+          : null,
       tableNumber: tableNumber,
       routeSessionId: routeSession.sessionId,
       storeCategory: _storeCategory,
@@ -15565,6 +16576,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       configureProductItem: _configureGarsonProductItem,
       editItemSettings: _editGarsonItemSettings,
       onDraftChanged: _onMobileGarsonDraftChanged,
+      onLeaveToGarsonList: () {
+        _returnFromGarsonTableToGarsonList(
+          source: 'garson_table_back_button',
+        );
+      },
       onOrderSubmitted: _onMobileGarsonOrderSubmitted,
       onPrintAdisyon: (selectedTableNumber, orders) => _printGarsonAdisyon(
         tableNumber: selectedTableNumber,
@@ -15589,6 +16605,32 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             source: 'mobile_close_failed',
           ),
         );
+      },
+      onTableTransferred: (fromTable, toTable) {
+        if (!mounted) return;
+        final targetId = _storeTableRowByNumber(toTable)?['id']?.toString();
+        setState(() {
+          final nextOrders = retargetGarsonOrdersAfterTransfer(
+            orders: _garsonBoardState.uiOrders,
+            fromTable: fromTable,
+            toTable: toTable,
+            toTableId: targetId,
+          );
+          _setGarsonBoardState(
+            _garsonBoardState.copyWith(
+              orders: nextOrders,
+              lastGoodOrders: nextOrders,
+              lastAppliedSource: 'table_transfer',
+              lastUpdateAt: DateTime.now(),
+            ),
+          );
+          _garsonManualTableOrders = retargetGarsonOrdersAfterTransfer(
+            orders: _garsonManualTableOrders,
+            fromTable: fromTable,
+            toTable: toTable,
+            toTableId: targetId,
+          );
+        });
       },
       onTableClosed: (closedTableNumber) {
         if (!mounted) return;
@@ -15664,10 +16706,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       cachedKitchenPrinterName: kitchenPrinter?.displayName,
       cachedKitchenPrinterBackend: kitchenPrinter?.backend.value,
       cachedKitchenPrinterQueue: kitchenPrinter?.queueName,
+      staffJobTitle: _staffJobTitleLabel,
     );
 
     // Always open as a full-screen route — consistent on mobile and web.
     final moduleBeforeOpen = _selectedModule;
+    final areaBeforeOpen = _garsonAreaFilterKey;
     debugPrint(
       '[GarsonNavigation][open_table] '
       'table=$tableNumber '
@@ -15715,6 +16759,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         onlyForTableNumber: tableNumber,
         onlyForRouteSessionId: routeSession.sessionId,
       );
+      if (_garsonAreaFilterKey != areaBeforeOpen) {
+        _garsonAreaFilterKey = areaBeforeOpen;
+      }
       debugPrint(
         '[GARSON_POP_FINALLY] '
         'table=$tableNumber '
@@ -15872,135 +16919,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildMobileTeamModule() {
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 8),
-      physics: const BouncingScrollPhysics(),
-      children: [
-        _buildMobileModuleHero(
-          title: 'Ekip Yönetimi',
-          subtitle: 'Alt yönetici davet et ve yetkileri yönet',
-          icon: Icons.groups_rounded,
-          primary: const Color(0xFF4C1D95),
-          secondary: const Color(0xFF7C3AED),
-        ),
-        const SizedBox(height: 10),
-        _mobileSurfaceCard(
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _showInviteSubAdminDialog,
-              icon: const Icon(Icons.person_add_alt),
-              label: const Text('Alt Yönetici Davet Et'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF6C63FF),
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        if (_subAdmins.isEmpty)
-          _mobileSurfaceCard(
-            child: Center(
-              child: Text(
-                'Henüz alt yönetici eklenmedi.',
-                style: TextStyle(color: Colors.grey.shade600),
-              ),
-            ),
-          )
-        else
-          ..._subAdmins.map(_buildMobileSubAdminCard),
-      ],
-    );
-  }
-
-  Widget _buildMobileSubAdminCard(SubAdmin subAdmin) {
-    final contact = subAdmin.email ?? subAdmin.phone ?? '-';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: _mobileSurfaceCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    subAdmin.email?.split('@').first ?? subAdmin.phone ?? '-',
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                _mobileBadge('Durum', subAdmin.status),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              contact,
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: subAdmin.permissions
-                  .map(
-                    (permission) => _mobileBadge(
-                      'Yetki',
-                      _mobilePermissionLabel(permission),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showEditPermissionsDialog(subAdmin),
-                    icon: const Icon(Icons.edit_outlined, size: 16),
-                    label: const Text('Yetkiler'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _removeSubAdmin(subAdmin.id),
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      size: 16,
-                      color: Colors.red,
-                    ),
-                    label: const Text('Kaldır'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _mobilePermissionLabel(SellerPermission permission) {
-    switch (permission) {
-      case SellerPermission.manageProducts:
-        return 'Ürün';
-      case SellerPermission.viewOrders:
-        return 'Sipariş Gör';
-      case SellerPermission.manageOrders:
-        return 'Sipariş Yönet';
-      case SellerPermission.manageCampaigns:
-        return 'Kampanya';
-      case SellerPermission.viewFinance:
-        return 'Finans';
-      case SellerPermission.manageSupport:
-        return 'Destek';
-      case SellerPermission.manageStoreProfile:
-        return 'Mağaza';
-    }
+    return _buildTeamModule();
   }
 
   Widget _buildMobileCampaignsModule() {
@@ -16267,8 +17186,75 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
+  Future<void> _loadStaffMenuGate() async {
+    final gate = await _authService.loadStaffMenuGate();
+    if (!mounted) return;
+    if (gate.revoked) {
+      setState(() {
+        _staffMenuGate = gate;
+        _hasLoadedStoreProfile = false;
+        _storeProfileLoadError =
+            'Bu personel hesabının işletme erişimi kapatılmış.';
+      });
+      return;
+    }
+    setState(() => _staffMenuGate = gate);
+    final allowed = _visibleSellerModules();
+    debugPrint(
+      '[SellerMenu] restrict=${gate.restrict} '
+      'modules=${allowed.map((module) => module.name).join(",")}',
+    );
+    final access = _staffAccessTo(_selectedModule);
+    if (access == StaffModuleAccess.denied && allowed.isNotEmpty) {
+      _navigationController?.restoreParent(
+        allowed.first,
+        source: 'staff_permission_load',
+      );
+      _announceStaffModuleDenied();
+    }
+  }
+
+  StaffModuleAccess _staffAccessTo(SellerModule module) {
+    final gate = _staffMenuGate;
+    return judgeStaffModuleAccess(
+      module: module,
+      profileLoaded: _hasLoadedStoreProfile,
+      isOwner: gate == null || !gate.restrict,
+      staffRole: gate?.role,
+      permissions: gate?.permissions ?? const <String>{},
+      visibleModules: gate?.visibleModules,
+      catalog: visibleSellerModules(
+        _storeCategory,
+        garsonOnly: _isWaiterEntry,
+      ),
+    );
+  }
+
+  void _announceStaffModuleDenied() {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text(staffModuleDeniedMessage)),
+      );
+  }
+
   List<SellerModule> _visibleSellerModules() {
-    return visibleSellerModules(_storeCategory, garsonOnly: _isWaiterEntry);
+    final modules = visibleSellerModules(
+      _storeCategory,
+      garsonOnly: _isWaiterEntry,
+    );
+    final gate = _staffMenuGate;
+    if (gate == null || !gate.restrict) return modules;
+    return modulesForStaff(
+      modules: modules,
+      isOwner: false,
+      staffRole: gate.role,
+      permissions: gate.permissions,
+      visibleModules: gate.visibleModules,
+    );
   }
 
   DateTimeRange get _dashboardDateRange {
@@ -19577,8 +20563,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       _storeNameController.text,
       _companyNameController.text,
       _companyTitleController.text,
-      'Mağazam',
-    ], fallback: 'Mağazam');
+      'Mağaza adı yok',
+    ], fallback: 'Mağaza adı yok');
   }
 
   String _sellerSenderPhone() {
@@ -23641,6 +24627,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildSystemModule() {
+    if (!_staffHas('manageOrders') && _staffHas('managePrintSettings')) {
+      return _buildPrinterSettingsOnly();
+    }
     final sellerId = _authService.currentUser?.id ?? '';
     final tables = List<Map<String, dynamic>>.from(
       _storeTables,
@@ -23656,6 +24645,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_actorIsStoreOwner || _staffHas('managePrintSettings'))
+            RestaurantOfflineBanner(
+              restaurantId: sellerId,
+              storeCategory: _storeCategory,
+              showAdvancedActions: true,
+            ),
           Row(
             children: [
               const Icon(
@@ -23742,6 +24737,22 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         },
                   icon: const Icon(Icons.print_outlined),
                   label: const Text('Yazıcı Ayarları'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: sellerId.isEmpty
+                      ? null
+                      : () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => RestaurantLocalOpsPage(
+                                restaurantId: sellerId,
+                              ),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.lan_outlined),
+                  label: const Text('Yerel operasyon'),
                 ),
                 OutlinedButton.icon(
                   onPressed: sellerId.isEmpty
@@ -25232,7 +26243,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final hasOrder = orderCount > 0;
     final status = order?['status']?.toString();
     final color = _mobileGarsonStatusColor(status, hasOrder: hasOrder);
-    final statusLabel = _mobileGarsonStatusLabel(status, hasOrder: hasOrder);
+    final statusLabel = garsonTableCardStatusLabel(
+      closing: _garsonClosingTableNumbers.contains(tableNumber),
+      hasOrder: hasOrder,
+      activeLabel: _mobileGarsonStatusLabel(status, hasOrder: hasOrder),
+    );
     final cardItems = <Map<String, dynamic>>[];
     for (final tableOrder in tableOrders) {
       cardItems.addAll(_garsonExtractItems(tableOrder));
@@ -25271,12 +26286,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
-        onTap: () {
-          _openGarsonTableFlowPage(
-            tableNumber: tableNumber,
-            initialOrder: order,
-          );
-        },
+        onTap: _garsonClosingTableNumbers.contains(tableNumber)
+            ? null
+            : () => _openGarsonTableFlowPage(
+                tableNumber: tableNumber,
+                initialOrder: order,
+              ),
         child: Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
@@ -25485,10 +26500,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   children: [
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: () => _printGarsonAdisyon(
+                        onPressed: () => _openGarsonAdisyon(
                           tableNumber: tableNumber,
-                          orders: tableOrders,
-                          uiAction: 'table_card_adisyon_button',
+                          initialOrder: order,
                         ),
                         style: OutlinedButton.styleFrom(
                           minimumSize: const Size(0, 34),
@@ -25503,11 +26517,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     const SizedBox(width: 5),
                     Expanded(
                       child: FilledButton(
-                        onPressed: () => _confirmCloseGarsonTable(
-                          tableNumber: tableNumber,
-                          existingOrders: tableOrders,
-                          displayLabel: tableTitle,
-                        ),
+                        onPressed: _staffHas('closeBill')
+                            ? () => _confirmCloseGarsonTable(
+                                tableNumber: tableNumber,
+                                existingOrders: tableOrders,
+                                displayLabel: tableTitle,
+                              )
+                            : null,
                         style: FilledButton.styleFrom(
                           minimumSize: const Size(0, 34),
                           padding: EdgeInsets.zero,
@@ -26289,7 +27305,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             ),
                           ),
                           IconButton(
-                            onPressed: () => Navigator.pop(bCtx),
+                            onPressed: () => popGarsonProductSheet(bCtx),
                             icon: const Icon(Icons.close),
                             splashRadius: 18,
                           ),
@@ -27061,7 +28077,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 'totalQuantity': totalQty,
                               },
                             );
-                            Navigator.pop(bCtx, lines);
+                            popGarsonProductSheet(bCtx, lines);
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primary,
@@ -31052,193 +32068,68 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildTeamModule() {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              ElevatedButton.icon(
-                onPressed: _showInviteSubAdminDialog,
-                icon: const Icon(Icons.person_add_alt, size: 18),
-                label: const Text('Alt Yönetici Davet Et'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6C63FF),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  decoration: InputDecoration(
-                    hintText: 'Alt yönetici ara...',
-                    prefixIcon: const Icon(Icons.search, size: 18),
-                    isDense: true,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                  ),
-                  onChanged: (v) {
-                    setState(() {});
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: _subAdmins.isEmpty
-                ? Center(
-                    child: Text(
-                      'Henüz alt yönetici eklemediniz',
-                      style: TextStyle(color: Colors.grey.shade600),
-                    ),
-                  )
-                : SingleChildScrollView(
-                    child: DataTable(
-                      columns: const [
-                        DataColumn(label: Text('Kullanıcı')),
-                        DataColumn(label: Text('İletişim')),
-                        DataColumn(label: Text('Yetkiler')),
-                        DataColumn(label: Text('Durum')),
-                        DataColumn(label: Text('İşlemler')),
-                      ],
-                      rows: _subAdmins.map((u) {
-                        final contact = u.email ?? u.phone ?? '-';
-                        final perms = u.permissions
-                            .map((e) {
-                              switch (e) {
-                                case SellerPermission.manageProducts:
-                                  return 'Ürün';
-                                case SellerPermission.viewOrders:
-                                  return 'Sipariş Gör';
-                                case SellerPermission.manageOrders:
-                                  return 'Sipariş Yönet';
-                                case SellerPermission.manageCampaigns:
-                                  return 'Kampanya';
-                                case SellerPermission.viewFinance:
-                                  return 'Finans Gör';
-                                case SellerPermission.manageSupport:
-                                  return 'Destek';
-                                case SellerPermission.manageStoreProfile:
-                                  return 'Mağaza';
-                              }
-                            })
-                            .join(', ');
-                        return DataRow(
-                          cells: [
-                            DataCell(
-                              Text(u.email?.split('@').first ?? u.phone ?? '-'),
-                            ),
-                            DataCell(Text(contact)),
-                            DataCell(Text(perms)),
-                            DataCell(Text(u.status)),
-                            DataCell(
-                              Row(
-                                children: [
-                                  IconButton(
-                                    tooltip: 'Yetkileri Düzenle',
-                                    icon: const Icon(Icons.edit_outlined),
-                                    onPressed: () =>
-                                        _showEditPermissionsDialog(u),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Kaldır',
-                                    icon: const Icon(Icons.delete_outline),
-                                    onPressed: () async {
-                                      final ok = await showDialog<bool>(
-                                        context: context,
-                                        builder: (ctx) => AlertDialog(
-                                          title: const Text('Kaldırılsın mı?'),
-                                          content: const Text(
-                                            'Alt yönetici listeden kaldırılacak.',
-                                          ),
-                                          actions: [
-                                            TextButton(
-                                              onPressed: () =>
-                                                  Navigator.pop(ctx, false),
-                                              child: const Text('İptal'),
-                                            ),
-                                            ElevatedButton(
-                                              onPressed: () =>
-                                                  Navigator.pop(ctx, true),
-                                              child: const Text('Kaldır'),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                      if (ok == true) {
-                                        await _removeSubAdmin(u.id);
-                                      }
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        );
-                      }).toList(),
-                    ),
-                  ),
-          ),
-        ),
-      ],
+    final kind = resolveStaffBusinessKind(
+      category: _storeCategory,
+      enabledModules: visibleSellerModules(_storeCategory).toSet(),
     );
-  }
-
-  Future<void> _inviteSubAdmin({
-    String? email,
-    String? phone,
-    required List<SellerPermission> permissions,
-  }) async {
-    setState(() => _isLoading = true);
-    try {
-      await _storeService.inviteSubAdmin(
-        email: email,
-        phone: phone,
-        permissions: permissions,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Davet oluşturuldu')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Hata: $e')));
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
+    return StaffTeamPanel(
+      key: ValueKey('staff-${_authService.currentUser?.id}-$_storeCategory'),
+      kind: kind,
+      members: _subAdmins,
+      isOwner: _actorIsStoreOwner,
+      heldPermissions: _actorStaffPermissions,
+      canManage: _actorCanManageStaff,
+      loadBranches: _storeService.getStaffBranches,
+      onCreate: _submitNewStaff,
+      onEdit: (member, draft) => _updateSubAdminPermissions(
+        member.id,
+        draft.permissions,
+        staffRole: draft.staffRole,
+        branchId: draft.branchId,
+        jobTitle: draft.jobTitle,
+        visibleModules: draft.visibleModules,
+        revokedPermissions: draft.revokedPermissions,
+      ),
+      onDeactivate: _confirmDeactivateStaff,
+      onDelete: _revokeStaffAccess,
+      onActivate: _activateStaff,
+      canDelete: _staffDeleteBlockReason,
+    );
   }
 
   Future<void> _updateSubAdminPermissions(
     String id,
-    List<SellerPermission> permissions,
-  ) async {
-    try {
-      await _storeService.updateSubAdminPermissions(id, permissions);
+    List<SellerPermission> permissions, {
+    String? staffRole,
+    String? branchId,
+    String? jobTitle,
+    List<String>? visibleModules,
+    List<SellerPermission> revokedPermissions = const <SellerPermission>[],
+  }) async {
+    if (!staffGrantWithinCeiling(
+      isOwner: _actorIsStoreOwner,
+      held: _actorStaffPermissions,
+      requested: permissions.map((permission) => permission.name),
+    )) {
       if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sahip olmadığınız yetki verilemez.')),
+      );
+      return;
+    }
+    try {
+      await _storeService.updateSubAdminPermissions(
+        id,
+        permissions,
+        staffRole: staffRole,
+        branchId: branchId,
+        jobTitle: jobTitle,
+        visibleModules: visibleModules,
+        revokedPermissions: revokedPermissions,
+      );
+      final members = await _storeService.getSubAdminsSnapshot();
+      if (!mounted) return;
+      setState(() => _subAdmins = members);
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Yetkiler güncellendi')));
@@ -31250,13 +32141,34 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     }
   }
 
+  Future<void> _deleteStaffRecord(String id) async {
+    try {
+      await _storeService.deleteStaffRecord(id);
+      final members = await _storeService.getSubAdminsSnapshot();
+      if (!mounted) return;
+      setState(() => _subAdmins = members);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Personel kaydı silindi. E-posta gönderilmedi.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Hata: ${e.toString().replaceFirst('Bad state: ', '')}')),
+      );
+    }
+  }
+
   Future<void> _removeSubAdmin(String id) async {
     try {
       await _storeService.removeSubAdmin(id);
+      final members = await _storeService.getSubAdminsSnapshot();
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Kullanıcı kaldırıldı')));
+      setState(() => _subAdmins = members);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Personel pasifleştirildi; işletme erişimi iptal edildi.'),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -31265,200 +32177,184 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     }
   }
 
-  Future<void> _showInviteSubAdminDialog() async {
-    String mode = 'email';
-    final emailController = TextEditingController();
-    final phoneController = TextEditingController();
-    final selected = <SellerPermission>{
-      SellerPermission.manageProducts,
-      SellerPermission.viewOrders,
-    }.toSet();
-    await showDialog(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setS) {
-            return AlertDialog(
-              title: const Text('Alt Yönetici Davet Et'),
-              content: SizedBox(
-                width: 420,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        children: [
-                          ChoiceChip(
-                            label: const Text('E‑posta'),
-                            selected: mode == 'email',
-                            onSelected: (_) => setS(() => mode = 'email'),
-                          ),
-                          const SizedBox(width: 8),
-                          ChoiceChip(
-                            label: const Text('Telefon'),
-                            selected: mode == 'phone',
-                            onSelected: (_) => setS(() => mode = 'phone'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      if (mode == 'email')
-                        TextField(
-                          controller: emailController,
-                          decoration: const InputDecoration(
-                            labelText: 'E‑posta',
-                            border: OutlineInputBorder(),
-                          ),
-                        )
-                      else
-                        TextField(
-                          controller: phoneController,
-                          decoration: const InputDecoration(
-                            labelText: 'Telefon',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      const SizedBox(height: 12),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Yetkiler',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey.shade800,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      ...SellerPermission.values.map((p) {
-                        final labelMap = {
-                          SellerPermission.manageProducts: 'Ürünleri Yönet',
-                          SellerPermission.viewOrders: 'Siparişleri Görüntüle',
-                          SellerPermission.manageOrders: 'Siparişleri Yönet',
-                          SellerPermission.manageCampaigns:
-                              'Kampanyaları Yönet',
-                          SellerPermission.viewFinance: 'Finansı Görüntüle',
-                          SellerPermission.manageSupport: 'Destek Yönetimi',
-                          SellerPermission.manageStoreProfile: 'Mağaza Profili',
-                        };
-                        final checked = selected.contains(p);
-                        return CheckboxListTile(
-                          value: checked,
-                          onChanged: (v) {
-                            setS(() {
-                              if (v == true) {
-                                selected.add(p);
-                              } else {
-                                selected.remove(p);
-                              }
-                            });
-                          },
-                          dense: true,
-                          title: Text(labelMap[p]!),
-                        );
-                      }),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Vazgeç'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    final email = emailController.text.trim();
-                    final phone = phoneController.text.trim();
-                    if (mode == 'email' && email.isEmpty) return;
-                    if (mode == 'phone' && phone.isEmpty) return;
-                    await _inviteSubAdmin(
-                      email: mode == 'email' ? email : null,
-                      phone: mode == 'phone' ? phone : null,
-                      permissions: selected.toList(),
-                    );
-                    if (ctx.mounted) Navigator.pop(ctx);
-                  },
-                  child: const Text('Davet Et'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-    emailController.dispose();
-    phoneController.dispose();
+  String? _staffDeleteBlockReason(SubAdmin member) {
+    final actor = _authService.currentUser?.email?.trim().toLowerCase() ?? '';
+    final email = member.email?.trim().toLowerCase() ?? '';
+    if (actor.isNotEmpty && email.isNotEmpty && actor == email) {
+      return 'Kendi hesabınız silinemez.';
+    }
+    if (!_actorIsStoreOwner &&
+        member.status == 'active' &&
+        member.permissions.contains(SellerPermission.manageStaff)) {
+      final managers = _subAdmins.where(
+        (item) =>
+            item.status == 'active' &&
+            item.permissions.contains(SellerPermission.manageStaff),
+      );
+      if (managers.length <= 1) {
+        return 'Son personel yöneticisi kaldırılamaz.';
+      }
+    }
+    return null;
   }
 
-  Future<void> _showEditPermissionsDialog(SubAdmin subAdmin) async {
-    final selected = subAdmin.permissions.toSet();
-    await showDialog(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setS) {
-            return AlertDialog(
-              title: const Text('Yetkileri Düzenle'),
-              content: SizedBox(
-                width: 420,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ...SellerPermission.values.map((p) {
-                        final labelMap = {
-                          SellerPermission.manageProducts: 'Ürünleri Yönet',
-                          SellerPermission.viewOrders: 'Siparişleri Görüntüle',
-                          SellerPermission.manageOrders: 'Siparişleri Yönet',
-                          SellerPermission.manageCampaigns:
-                              'Kampanyaları Yönet',
-                          SellerPermission.viewFinance: 'Finansı Görüntüle',
-                          SellerPermission.manageSupport: 'Destek Yönetimi',
-                          SellerPermission.manageStoreProfile: 'Mağaza Profili',
-                        };
-                        final checked = selected.contains(p);
-                        return CheckboxListTile(
-                          value: checked,
-                          onChanged: (v) {
-                            setS(() {
-                              if (v == true) {
-                                selected.add(p);
-                              } else {
-                                selected.remove(p);
-                              }
-                            });
-                          },
-                          dense: true,
-                          title: Text(labelMap[p]!),
-                        );
-                      }),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Vazgeç'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    await _updateSubAdminPermissions(
-                      subAdmin.id,
-                      selected.toList(),
-                    );
-                    if (ctx.mounted) Navigator.pop(ctx);
-                  },
-                  child: const Text('Kaydet'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+  Future<void> _revokeStaffAccess(SubAdmin member) async {
+    final blocked = _staffDeleteBlockReason(member);
+    if (blocked != null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(blocked)));
+      return;
+    }
+    await _removeSubAdmin(member.id);
   }
+
+  Future<void> _activateStaff(SubAdmin member) async {
+    try {
+      await _storeService.activateStaffAccount(member.id);
+      final members = await _storeService.getSubAdminsSnapshot();
+      if (!mounted) return;
+      setState(() => _subAdmins = members);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Personel yeniden aktifleştirildi.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error.toString().replaceFirst('Bad state: ', '').replaceFirst('Exception: ', ''),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _confirmDeactivateStaff(SubAdmin member) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Personel pasifleştirilsin mi?'),
+        content: Text(
+          member.status == 'invited'
+              ? 'Kullanılmayan davet kaydı silinecek. Sipariş geçmişi durur.'
+              : 'Personel pasifleştirilecek ve işletme erişimi iptal edilecek.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Vazgeç'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Onayla'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (member.status == 'invited') {
+      await _deleteStaffRecord(member.id);
+    } else {
+      await _removeSubAdmin(member.id);
+    }
+  }
+
+  Future<void> _submitNewStaff(StaffAccountDraft draft) async {
+    final requestId = 'staff-${DateTime.now().microsecondsSinceEpoch}';
+    Future<Map<String, dynamic>> create({required bool confirmLink}) {
+      return _storeService.createStaffAccount(
+        name: draft.name,
+        email: draft.email,
+        password: draft.password,
+        staffRole: draft.staffRole,
+        branchId: draft.branchId,
+        requestId: requestId,
+        permissions: draft.permissions,
+        jobTitle: draft.jobTitle,
+        visibleModules: draft.visibleModules,
+        confirmLink: confirmLink,
+      );
+    }
+
+    Map<String, dynamic> created;
+    try {
+      created = await create(confirmLink: false);
+    } on StaffLinkConfirmationRequired catch (linkError) {
+      if (!mounted) return;
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Mevcut personel hesabı'),
+          content: Text(linkError.message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Bağlama'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Üyeliği bağla'),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true) {
+        throw StateError(linkError.message);
+      }
+      created = await create(confirmLink: true);
+    }
+    if (!mounted) return;
+    final passwordUnchanged = created['password_unchanged'] == true;
+    final memberId = created['id']?.toString() ?? '';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          passwordUnchanged
+              ? 'Üyelik bağlandı. Yazdığınız şifre uygulanmadı; hesabın mevcut şifresi duruyor.'
+              : 'Personel hesabı oluşturuldu. E-posta gönderilmedi.',
+        ),
+      ),
+    );
+    if (passwordUnchanged && memberId.isNotEmpty) {
+      final apply = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Mevcut şifre duruyor'),
+          content: const Text(
+            'Bu e-posta için Auth hesabı zaten vardı. Üyelik bağlandı, şifre değiştirilmedi. Formdaki geçici şifreyi bu personele yazmak için onaylayın. Başka işletmenin hesabına dokunulmaz.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Şifreyi değiştirme'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Bu şifreyi yaz'),
+            ),
+          ],
+        ),
+      );
+      if (apply == true && mounted) {
+        await _storeService.setStaffTemporaryPassword(
+          subAdminId: memberId,
+          password: draft.password,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Geçici şifre güncellendi. Personel ilk girişte değiştirmeli.',
+            ),
+          ),
+        );
+      }
+    }
+    final members = await _storeService.getSubAdminsSnapshot();
+    if (!mounted) return;
+    setState(() => _subAdmins = members);
+  }
+
 
   String _moduleLabel(SellerModule module) {
     return sellerModuleLabel(module);
@@ -31618,6 +32514,7 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
   const _MobileGarsonTableFlowPage({
     super.key,
     required this.sellerId,
+    this.grantedOperationPermissions,
     required this.tableNumber,
     required this.routeSessionId,
     this.storeCategory,
@@ -31635,8 +32532,10 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
     this.storeTables = const <Map<String, dynamic>>[],
     this.occupiedTablesResolver,
     this.onDraftChanged,
+    this.onLeaveToGarsonList,
     this.onOrderSubmitted,
     this.onTableClosed,
+    this.onTableTransferred,
     this.onTableClosedSessionArchived,
     this.onTableCloseOptimistic,
     this.onTableCloseFailed,
@@ -31657,9 +32556,14 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
     this.cachedKitchenPrinterName,
     this.cachedKitchenPrinterBackend,
     this.cachedKitchenPrinterQueue,
+    this.staffJobTitle,
   });
 
   final String sellerId;
+
+  /// Null means the signed-in user is the owner and every operation stays open.
+  /// A set means only those stored permissions may run.
+  final Set<String>? grantedOperationPermissions;
   final int tableNumber;
   final String routeSessionId;
   final String? storeCategory;
@@ -31698,8 +32602,10 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
   final _GarsonConfigureProductItem configureProductItem;
   final _GarsonEditItemSettings editItemSettings;
   final _MobileGarsonDraftChanged? onDraftChanged;
+  final VoidCallback? onLeaveToGarsonList;
   final _MobileGarsonOrderSubmitted? onOrderSubmitted;
   final void Function(int tableNumber)? onTableClosed;
+  final void Function(int fromTable, int toTable)? onTableTransferred;
   final void Function(
     int tableNumber,
     List<Map<String, dynamic>> closedOrders,
@@ -31730,6 +32636,7 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
   final String? cachedKitchenPrinterName;
   final String? cachedKitchenPrinterBackend;
   final String? cachedKitchenPrinterQueue;
+  final String? staffJobTitle;
 
   bool get effectiveCanUseLocalPrintFastPath =>
       canUseLocalPrintFastPath ??
@@ -31760,7 +32667,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   String? _editingOrderId;
   Map<String, dynamic>? _editingOrderSnapshot;
   List<Map<String, dynamic>> _editingBaseItems = const <Map<String, dynamic>>[];
-  String? _pendingInitialOrderId;
   List<Map<String, dynamic>> _hydratedTableOrders =
       const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _optimisticTableOrders =
@@ -31776,6 +32682,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   Set<String> _trackedPrintJobIds = <String>{};
   int _printTrackingGeneration = 0;
   bool _customerKitchenConfirmBusy = false;
+  bool _tableTransferBusy = false;
   bool _reprintKitchenBusy = false;
   late final GarsonPerfTrace _tableOpenPerf;
   late final DateTime _tableOpenStartedAt;
@@ -31792,6 +32699,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
 
   // ── Payment Session ──────────────────────────────────────────────────────
   String? _sessionKey;
+  final WaiterSubmitIdentityStore _paymentIdentity =
+      WaiterSubmitIdentityStore();
 
   String _getOrCreateSessionKey() {
     final restored = widget.sessionKeyOverride?.trim() ?? '';
@@ -31994,12 +32903,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       unawaited(_preloadTableOrders());
     }
     _bottomIndex = widget.initialTabIndex.clamp(0, 2);
-    _pendingInitialOrderId = widget.initialOrderId;
     if (widget.initialDraftItems.isNotEmpty) {
       _draftItems
         ..clear()
         ..addAll(
-          widget.initialDraftItems
+          garsonNewOrderLines(widget.initialDraftItems)
               .map((item) => _normalizeItem(item))
               .toList(growable: false),
         );
@@ -32109,7 +33017,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       // Defensive: although setState above cannot unmount the widget, an
       // explicit guard makes the async intent clear for future maintainers.
       if (!mounted) return;
-      _tryApplyInitialOrder(tableOrders);
     } catch (error) {
       debugPrint(
         '[GARSON_DETAIL_PRELOAD] '
@@ -32193,7 +33100,21 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     if (_draftItems.isNotEmpty) {
       _clearSubmitFeedback();
     }
-    widget.onDraftChanged?.call(widget.tableNumber, _draftSnapshot());
+    widget.onDraftChanged?.call(
+      widget.tableNumber,
+      _draftLinesToPersist(),
+    );
+  }
+
+  /// A new draft is stored as the waiter entered it. An edit of an open
+  /// order is not stored as that new draft.
+  List<Map<String, dynamic>> _draftLinesToPersist() {
+    final snapshot = _draftSnapshot();
+    if (!_isEditingOrder) return garsonNewOrderLines(snapshot);
+    return garsonDraftLinesBeyond(
+      draft: snapshot,
+      covered: _editingBaseItems,
+    );
   }
 
   void _clearSubmitFeedback() {
@@ -32262,7 +33183,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     }
     if (feedback.physicallyDispatched) {
       _setSubmitFeedback(
-        'Mutfak fişi yazıcıya gönderildi',
+        'Yazıcıya iletildi. Basıldığı doğrulanmadı.',
         tone: _GarsonSubmitFeedbackTone.success,
         autoHideAfter: const Duration(seconds: 4),
       );
@@ -32302,7 +33223,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   void _finishPrintTrackingSuccess() {
     _cancelPrintTracking();
     _printTrackingGeneration += 1;
-    // Success message is already showing from immediate feedback.
+    _setSubmitFeedback(
+      'Yazıcıya iletildi. Basıldığı doğrulanmadı.',
+      tone: _GarsonSubmitFeedbackTone.success,
+      autoHideAfter: const Duration(seconds: 4),
+    );
   }
 
   void _finishPrintTrackingFailure() {
@@ -32321,7 +33246,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     if (!mounted || generation != _printTrackingGeneration) return;
     _cancelPrintTracking();
     _printTrackingGeneration += 1;
-    String message = 'Yazdırma başarısız';
+    String message = 'Baskı doğrulanamadı. Otomatik tekrar yok.';
     try {
       final stationOnline = await _printStationService.isEffectivelyOnline(
         widget.sellerId,
@@ -32422,8 +33347,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       }
       _cancelPrintTracking();
       _printTrackingGeneration += 1;
-      _setSubmitFeedback(
-        'Yazdırma sonucu doğrulanamadı. Yazıcı Merkezi\'nden kontrol edin.',
+    _setSubmitFeedback(
+      'Baskı doğrulanamadı. Otomatik tekrar yok.',
         tone: _GarsonSubmitFeedbackTone.warning,
         autoHideAfter: const Duration(seconds: 6),
       );
@@ -32632,8 +33557,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   }
 
   Future<_KitchenDispatchFeedback> _dispatchKitchenPrintJobs(
-    List<Map<String, dynamic>> items,
-  ) async {
+    List<Map<String, dynamic>> items, {
+    String? localOrderId,
+  }) async {
     if (items.isEmpty) return _KitchenDispatchFeedback.none;
     try {
       final useGarsonFastKitchen = widget.effectiveCanUseLocalPrintFastPath;
@@ -32643,8 +33569,10 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         items: items,
         waiterId: _currentWaiterId(),
         waiterName: _currentWaiterName(),
+        waiterTitle: widget.staffJobTitle,
         jobType: 'new_order',
         garsonDesktopFastKitchen: useGarsonFastKitchen == true,
+        localOrderId: localOrderId,
       );
       debugPrint(
         '[PrintPipeline] trace=${result.traceId} stage=mobile_dispatch_done '
@@ -32670,6 +33598,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   Future<_KitchenDispatchFeedback> _dispatchKitchenAdditions(
     List<Map<String, dynamic>> items, {
     String? note,
+    String? localOrderId,
   }) async {
     if (items.isEmpty) return _KitchenDispatchFeedback.none;
     try {
@@ -32679,7 +33608,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         items: items,
         waiterId: _currentWaiterId(),
         waiterName: _currentWaiterName(),
+        waiterTitle: widget.staffJobTitle,
         notes: note,
+        localOrderId: localOrderId,
       );
       _orderPrintJobService.debugLogResult(result);
       return _feedbackFromDispatchResult(result);
@@ -32691,6 +33622,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   Future<_KitchenDispatchFeedback> _dispatchKitchenRemovals(
     List<Map<String, dynamic>> items, {
     String? note,
+    String? localOrderId,
   }) async {
     if (items.isEmpty) return _KitchenDispatchFeedback.none;
     try {
@@ -32700,7 +33632,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         items: items,
         waiterId: _currentWaiterId(),
         waiterName: _currentWaiterName(),
+        waiterTitle: widget.staffJobTitle,
         notes: note,
+        localOrderId: localOrderId,
       );
       _orderPrintJobService.debugLogResult(result);
       return _feedbackFromDispatchResult(result);
@@ -32712,6 +33646,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   Future<_KitchenDispatchFeedback> _dispatchKitchenReprintJobs(
     List<Map<String, dynamic>> items, {
     String? note,
+    String? localOrderId,
   }) async {
     if (items.isEmpty) return _KitchenDispatchFeedback.none;
     try {
@@ -32724,7 +33659,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         tableOrders: tableOrders,
         waiterId: _currentWaiterId(),
         waiterName: _currentWaiterName(),
+        waiterTitle: widget.staffJobTitle,
         notes: note,
+        localOrderId: localOrderId,
       );
       _orderPrintJobService.debugLogResult(result);
       return _feedbackFromDispatchResult(result);
@@ -32902,29 +33839,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         'sellerId=${widget.sellerId} error=$error',
       );
     }
-  }
-
-  void _tryApplyInitialOrder(List<Map<String, dynamic>> tableOrders) {
-    final targetId = _pendingInitialOrderId;
-    if (targetId == null || targetId.isEmpty) return;
-    if (_draftItems.isNotEmpty) {
-      _pendingInitialOrderId = null;
-      return;
-    }
-
-    Map<String, dynamic>? found;
-    for (final order in tableOrders) {
-      if (order['id']?.toString() == targetId) {
-        found = order;
-        break;
-      }
-    }
-    _pendingInitialOrderId = null;
-    if (found == null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _loadOrderIntoDraft(found!);
-    });
   }
 
   String _productCategory(SellerProduct product) {
@@ -33503,34 +34417,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       return;
     }
 
-    // ── Auto-enter edit mode when this product already lives in a sent ──
-    // ── order and the draft is still empty.                            ──
-    if (!_isEditingOrder && _draftItems.isEmpty) {
-      final currentOrders = _displayTableOrders(_hydratedTableOrders);
-      for (final o in currentOrders) {
-        final normalized = _normalizeTableOrder(o);
-        final statusKey = _normalizedOrderStatusKey(
-          normalized['status']?.toString(),
-        );
-        if (statusKey != 'sent' &&
-            statusKey != 'preparing' &&
-            statusKey != 'ready' &&
-            statusKey != 'served') {
-          continue;
-        }
-        final orderItems = _extractItems(normalized['items']);
-        final hasProduct = orderItems.any((item) {
-          final pid = item['product_id']?.toString() ?? '';
-          final pname = item['name']?.toString() ?? '';
-          return (pid.isNotEmpty && pid == product.id) || pname == product.name;
-        });
-        if (hasProduct) {
-          _loadOrderIntoDraft(normalized);
-          break;
-        }
-      }
-    }
-
     final index = _portionQuickAddDraftIndex(product);
 
     // Duplicate detection: product was already in the draft AND was added
@@ -33592,9 +34478,12 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     setState(() {
       final toRemove = <int>[];
       for (var i = 0; i < _draftItems.length; i++) {
-        final id = _draftItems[i]['product_id']?.toString();
-        final nameMatch =
-            (_draftItems[i]['name']?.toString() ?? '') == product.name;
+        final item = _draftItems[i];
+        if (_isMixedServiceItem(item) && !_isTemplateProduct(product)) {
+          continue;
+        }
+        final id = item['product_id']?.toString();
+        final nameMatch = (item['name']?.toString() ?? '') == product.name;
         if ((id != null && id.isNotEmpty && id == product.id) || nameMatch) {
           toRemove.add(i);
         }
@@ -34399,21 +35288,28 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     required String? previousStatus,
     required _GarsonOrderChangeSummary changeSummary,
     required List<Map<String, dynamic>> nextItems,
+    String? revisionKey,
   }) async {
+    final fullKey = revisionKey == null ? null : '$revisionKey-full';
+    final removeKey = revisionKey == null ? null : '$revisionKey-remove';
+    final addKey = revisionKey == null ? null : '$revisionKey-add';
+    final reprintKey = revisionKey == null ? null : '$revisionKey-reprint';
     if (_shouldDispatchFullKitchenTicket(previousStatus)) {
-      return _dispatchKitchenPrintJobs(nextItems);
+      return _dispatchKitchenPrintJobs(nextItems, localOrderId: fullKey);
     }
 
     final feedbacks = <_KitchenDispatchFeedback>[];
     final removalFeedback = await _dispatchKitchenRemovals(
       changeSummary.kitchenRemovedItems,
       note: KitchenPrintPolicy.removeItemsNote,
+      localOrderId: removeKey,
     );
     feedbacks.add(removalFeedback);
 
     final additionFeedback = await _dispatchKitchenAdditions(
       changeSummary.kitchenAddedItems,
       note: KitchenPrintPolicy.addItemsNote,
+      localOrderId: addKey,
     );
     feedbacks.add(additionFeedback);
 
@@ -34422,6 +35318,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       final reprintFeedback = await _dispatchKitchenReprintJobs(
         nextItems,
         note: KitchenPrintPolicy.reprintNote,
+        localOrderId: reprintKey,
       );
       feedbacks.add(reprintFeedback);
     }
@@ -34855,12 +35752,20 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     return out;
   }
 
+  String? _submitRequestKey;
+  String? _submitRequestPayload;
+  final WaiterSubmitIdentityStore _submitIdentity = WaiterSubmitIdentityStore();
+
   Future<void> _submitDraft(
     List<Map<String, dynamic>> existingTableOrders,
   ) async {
     if (_isSubmitting) return;
     if (!_canSubmitDraft()) return;
     setState(() => _isSubmitting = true);
+    _setSubmitFeedback(
+      'Sipariş gönderiliyor',
+      tone: _GarsonSubmitFeedbackTone.loading,
+    );
     final sendPressedWatch = Stopwatch()..start();
     final pipelineWatch = Stopwatch()..start();
     final isUpdate =
@@ -34874,6 +35779,10 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       final items = _draftItems
           .map((item) => _normalizeItem(Map<String, dynamic>.from(item)))
           .toList(growable: false);
+      if (!isUpdate && !garsonDraftHasNewOrder(items)) {
+        _clearSubmitFeedback();
+        return;
+      }
       final editingId = _editingOrderId;
       final originalOrder = editingId == null || editingId.isEmpty
           ? null
@@ -35055,6 +35964,54 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           );
         }
       } else if (editingId != null && editingId.isNotEmpty) {
+        final orderSource =
+            (originalOrder?['_garson_source_table'] ??
+                    _editingOrderSnapshot?['_garson_source_table'])
+                ?.toString();
+        final revisionKey = OrderPrintJobService.stableOrderEditKey(
+          editingId,
+          items,
+        );
+        if (orderSource == 'orders') {
+          final fullTicket = _shouldDispatchFullKitchenTicket(originalStatus);
+          final added = changeSummary.kitchenAddedItems;
+          final removed = changeSummary.kitchenRemovedItems;
+          final printItems = fullTicket
+              ? items
+              : (added.isEmpty && removed.isEmpty ? items : added);
+          final jobType = fullTicket
+              ? 'new_order'
+              : (added.isEmpty && removed.isEmpty ? 'reprint' : 'add_item');
+          final result = await _orderPrintJobService.updateSavedRestaurantOrder(
+            restaurantId: widget.sellerId,
+            orderId: editingId,
+            tableNumber: widget.tableNumber,
+            items: items,
+            printItems: printItems,
+            jobType: jobType,
+            extraPrintItems: fullTicket ? const <Map<String, dynamic>>[] : removed,
+            revisionKey: revisionKey,
+            waiterId: _currentWaiterId(),
+            waiterName: _currentWaiterName(),
+        waiterTitle: widget.staffJobTitle,
+            garsonDesktopFastKitchen:
+                widget.effectiveCanUseLocalPrintFastPath == true,
+          );
+          parallelDispatchFeedback = _feedbackFromDispatchResult(result);
+          submittedOrder = applyGarsonSubmittedOrderItems(
+            submittedOrder: <String, dynamic>{
+              ...?originalOrder,
+              'id': editingId,
+              'seller_id': widget.sellerId,
+              'table_number': widget.tableNumber,
+              '_garson_source_table': 'orders',
+              'status': nextStatus,
+            },
+            items: items,
+            revision: nextRevision,
+            updatedAt: updatedAt,
+          );
+        } else {
         Future<Map<String, dynamic>?> updateFuture() async {
           final dbWatch = Stopwatch()..start();
           final updated = await _storeService.updateTableOrder(
@@ -35078,6 +36035,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
             previousStatus: originalStatus,
             changeSummary: changeSummary,
             nextItems: items,
+            revisionKey: revisionKey,
           );
           debugPrint(
             '[GarsonPerf] print_dispatch_ms=${printWatch.elapsedMilliseconds} '
@@ -35087,35 +36045,19 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           return feedback;
         }
 
-        final updateAndPrint = await Future.wait<dynamic>([
-          updateFuture(),
-          printFuture(),
-        ]);
-        final updatedOrder = updateAndPrint[0] as Map<String, dynamic>?;
-        parallelDispatchFeedback =
-            updateAndPrint[1] as _KitchenDispatchFeedback;
-        final baseSubmitted =
-            updatedOrder ??
-            <String, dynamic>{
-              'id': editingId,
-              'seller_id': widget.sellerId,
-              'table_number': widget.tableNumber,
-              'items': items,
-              'status': nextStatus,
-              'created_at':
-                  originalOrder?['created_at']?.toString() ??
-                  DateTime.now().toIso8601String(),
-              'updated_at': updatedAt,
-              'revision': nextRevision,
-              'last_edit_summary': lastEditSummary,
-              'last_edit_note': editPolicyMessage ?? '',
-            };
+        final updatedOrder = await updateFuture();
+        if (updatedOrder == null) {
+          throw StateError('Sipariş güncellemesi doğrulanmadı.');
+        }
+        parallelDispatchFeedback = await printFuture();
+        final baseSubmitted = updatedOrder;
         submittedOrder = applyGarsonSubmittedOrderItems(
           submittedOrder: baseSubmitted,
           items: items,
           revision: nextRevision,
           updatedAt: updatedAt,
         );
+        }
       } else {
         kitchenPerfTapAt = DateTime.now().toIso8601String();
         // Sync only — never await bridge/printer resolve before physical print.
@@ -35135,17 +36077,46 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           itemCount: items.length,
         );
         final orderDispatchWatch = Stopwatch()..start();
+        final requestPayload = jsonEncode(items);
+        final submitScope = '${widget.sellerId}:${widget.tableNumber}';
+        final savedIdentity = await _submitIdentity.read(submitScope);
+        final plan = resolveGarsonSubmitKey(
+          savedKey: savedIdentity?.key,
+          savedPayload: savedIdentity?.payload,
+          pendingKey: _submitRequestKey,
+          pendingPayload: _submitRequestPayload,
+          requestPayload: requestPayload,
+          mintedKey:
+              'waiter-${DateTime.now().microsecondsSinceEpoch}-${_currentWaiterId()}',
+        );
+        if (plan.blocked || plan.localOrderId == null) {
+          throw StateError(OrderPrintJobService.orderCommitUnverifiedMessage);
+        }
+        _submitRequestKey = plan.localOrderId;
+        _submitRequestPayload = requestPayload;
+        if (!plan.reuse) {
+          await _submitIdentity.save(
+            submitScope,
+            WaiterSubmitIdentity(
+              key: plan.localOrderId!,
+              payload: requestPayload,
+            ),
+          );
+        }
         final dispatchResult = await _orderPrintJobService.dispatchNewOrder(
           restaurantId: widget.sellerId,
           tableNumber: widget.tableNumber,
           items: items,
           waiterId: _currentWaiterId(),
           waiterName: _currentWaiterName(),
+        waiterTitle: widget.staffJobTitle,
           jobType: 'new_order',
+          localOrderId: _submitRequestKey,
           garsonDesktopFastKitchen: canFastKitchen,
           storeCategory: widget.storeCategory,
           tableName: widget.tableTitleOverride,
           t0SendPressedElapsedMs: sendPressedWatch.elapsedMilliseconds,
+          releaseUiAfterQueue: true,
         );
         kitchenPerfDbSaveMs = orderDispatchWatch.elapsedMilliseconds;
         _orderPrintJobService.debugLogResult(dispatchResult);
@@ -35188,6 +36159,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         );
         debugPrint(
           '[PrintPipeline] table_order_saved_at=${DateTime.now().toIso8601String()} '
+          'rpc_order_saved_at=${rpcRaw['order_saved_at'] ?? '-'} '
+          'rpc_print_job_created_at=${rpcRaw['print_job_created_at'] ?? '-'} '
           'table=${widget.tableNumber} db_save_ms=$kitchenPerfDbSaveMs '
           'print_jobs=${dispatchResult.printJobIds.length} '
           'print_failed=${dispatchResult.printFailureMessage ?? '-'}',
@@ -35265,9 +36238,16 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         'ok': dispatchFeedback.physicallyDispatched,
       });
       if (!mounted) return;
-      final actionLabel = (editingId != null && editingId.isNotEmpty)
-          ? 'Sipariş güncellendi.'
-          : 'Sipariş gönderildi.';
+      await _submitIdentity.clear('${widget.sellerId}:${widget.tableNumber}');
+      _submitRequestKey = null;
+      _submitRequestPayload = null;
+      final actionLabel = garsonSubmitSavedLabel(
+        isUpdate: editingId != null && editingId.isNotEmpty,
+        physicallyDispatched:
+            dispatchFeedback.physicallyDispatched,
+        printFailed: dispatchFeedback.hasError &&
+            (dispatchFeedback.orderId ?? '').isNotEmpty,
+      );
       setState(() {
         _draftItems.clear();
         _editingOrderId = null;
@@ -35297,9 +36277,20 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       }
     } catch (error) {
       if (!mounted) return;
+      debugPrint('[GarsonSubmit] $error');
+      final rawError = error.toString();
+      final explicit = LanPilotContract.userMessage(rawError);
+      final unverified = rawError.contains('TimeoutException') ||
+          rawError.contains('doğrulanamadı') ||
+          OrderPrintJobService.commitFailureIsUnreachable(error);
+      final message = explicit ??
+          (unverified
+              ? OrderPrintJobService.orderCommitUnverifiedMessage
+              : 'Sipariş kaydedilemedi. Aynı gönderim tekrar denenebilir.');
+      _setSubmitFeedback(message, tone: _GarsonSubmitFeedbackTone.warning);
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Sipariş kaydedilemedi: $error')));
+      ).showSnackBar(SnackBar(content: Text(message)));
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -36007,6 +36998,51 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     return total;
   }
 
+  Future<void> _confirmCancelUnsentDraft() async {
+    if (!mounted || _draftItems.isEmpty) return;
+    final label = (widget.tableTitleOverride ?? '').trim().isNotEmpty
+        ? widget.tableTitleOverride!.trim()
+        : 'Masa ${widget.tableNumber}';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text(garsonCloseTableDialogTitle(label)),
+          content: Text(garsonCancelUnsentDraftDialogText()),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Vazgeç'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.red.shade600,
+              ),
+              child: const Text('Taslağı iptal et'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _draftItems.clear();
+      _editingOrderId = null;
+      _editingOrderSnapshot = null;
+      _editingBaseItems = const <Map<String, dynamic>>[];
+      _clearSubmitFeedback();
+    });
+    _notifyDraftChanged();
+    widget.onTableClosed?.call(widget.tableNumber);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(garsonDiscardUnsentDraftSnackbarText(label))),
+    );
+    if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+      Navigator.of(context).maybePop();
+    }
+  }
+
   Future<void> _showPaymentDialog(
     List<Map<String, dynamic>> tableOrders,
   ) async {
@@ -36164,20 +37200,93 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     required String paymentMethod,
   }) async {
     if (_isSubmitting) return;
+    final moneyReason = MixedServiceOrder.unverifiedOrdersMoney(orders);
+    if (moneyReason != null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(moneyReason)),
+      );
+      return;
+    }
     setState(() => _isSubmitting = true);
     try {
       _tableOrdersFallbackFuture = null;
       widget.onTableCloseOptimistic?.call(widget.tableNumber);
       final closeCompletedAt = DateTime.now();
-      final preCloseSessionOrders = await _storeService.getTableOrdersSnapshot(
-        widget.sellerId,
+      Map<String, dynamic>? tableRow;
+      for (final row in widget.storeTables) {
+        final number = int.tryParse(row['table_number']?.toString() ?? '') ?? 0;
+        if (number != widget.tableNumber) continue;
+        tableRow = Map<String, dynamic>.from(row);
+        break;
+      }
+      final visibleOrderIds = orders
+          .map((order) => order['id']?.toString().trim() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false);
+      final preCloseSessionOrders = await _storeService.getTableCloseSession(
+        sellerId: widget.sellerId,
         tableNumber: widget.tableNumber,
+        tableRow: tableRow,
+        visibleOrderIds: visibleOrderIds,
       );
       final tableLabel =
           widget.tableTitleOverride ?? 'Masa ${widget.tableNumber}';
+      if (preCloseSessionOrders.isEmpty) {
+        if (!mounted) return;
+        if (_optimisticTableOrders.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                garsonUncertainSendKeepsDraftSnackbarText(tableLabel),
+              ),
+            ),
+          );
+          return;
+        }
+        final hadDraft = _draftItems.isNotEmpty;
+        if (hadDraft) {
+          setState(() {
+            _draftItems.clear();
+            _editingOrderId = null;
+            _editingOrderSnapshot = null;
+            _editingBaseItems = const <Map<String, dynamic>>[];
+            _clearSubmitFeedback();
+          });
+          _notifyDraftChanged();
+        }
+        widget.onTableClosed?.call(widget.tableNumber);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              hadDraft
+                  ? garsonDiscardUnsentDraftSnackbarText(tableLabel)
+                  : garsonCloseTableAlreadyEmptySnackbarText(tableLabel),
+            ),
+          ),
+        );
+        if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+          Navigator.of(context).maybePop();
+        }
+        return;
+      }
+      for (final order in preCloseSessionOrders) {
+        if (!garsonTableOrderNeedsRealign(
+          order: order,
+          canonicalTableNumber: widget.tableNumber,
+        )) {
+          continue;
+        }
+        await _storeService.realignTableOrderNumber(
+          sellerId: widget.sellerId,
+          orderId: order['id']?.toString() ?? '',
+          canonicalTableNumber: widget.tableNumber,
+          storedTableNumber: garsonStoredTableNumber(order),
+        );
+      }
       final areaName = _resolveStoreTableAreaName(widget.tableNumber);
       final closeSessionKey = _getOrCreateSessionKey();
-      await _storeService.closeTableWithHistory(
+      final closeResult = await _storeService.closeTableWithHistory(
         sellerId: widget.sellerId,
         tableNumber: widget.tableNumber,
         paymentMethod: paymentMethod,
@@ -36187,13 +37296,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         waiterName: _currentWaiterName(),
         sessionKey: closeSessionKey,
       );
-      await _storeService.closeRestaurantOrdersForTable(
-        sellerId: widget.sellerId,
-        tableNumber: widget.tableNumber,
-      );
-      final sessionOrders = preCloseSessionOrders.isNotEmpty
-          ? preCloseSessionOrders
-          : orders;
+      final sessionOrders = preCloseSessionOrders;
       await _storeService.ensureTableHistoryRecorded(
         sellerId: widget.sellerId,
         tableNumber: widget.tableNumber,
@@ -36205,6 +37308,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         areaName: areaName,
         closedAt: closeCompletedAt,
         sessionKey: closeSessionKey,
+        knownServerHistoryId: serverHistoryIdFromCloseResult(closeResult),
       );
       await _storeService.consolidateDuplicateHistoryChain(
         sellerId: widget.sellerId,
@@ -36223,9 +37327,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           'table=${widget.tableNumber} deleted=$superseded',
         );
       }
-      final remainingActiveOrders = await _storeService.getTableOrdersSnapshot(
-        widget.sellerId,
+      final remainingActiveOrders = await _storeService.getTableCloseSession(
+        sellerId: widget.sellerId,
         tableNumber: widget.tableNumber,
+        tableRow: tableRow,
+        visibleOrderIds: visibleOrderIds,
       );
       if (remainingActiveOrders.isNotEmpty) {
         final allFromOrders = remainingActiveOrders.every(
@@ -36298,11 +37404,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       widget.onTableCloseFailed?.call(widget.tableNumber);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Veritabanı hatası: Masa kapatılamadı. '
-            'Bağlantınızı kontrol edip tekrar deneyin.\n'
-            '(${error.toString().length > 120 ? error.toString().substring(0, 120) : error})',
-          ),
+          content: Text(friendlyTableCloseError(error)),
           duration: const Duration(seconds: 6),
         ),
       );
@@ -36331,14 +37433,31 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   ) async {
     if (!mounted) return;
     final grandTotal = _tableOrdersTotal(tableOrders);
+    var paid = 0.0;
+    try {
+      final rows = await _storeService.getTablePayments(
+        sellerId: widget.sellerId,
+        tableNumber: widget.tableNumber,
+        sessionKey: _getOrCreateSessionKey(),
+      );
+      for (final row in rows) {
+        paid += TablePayment.fromMap(row).amount;
+      }
+    } catch (error) {
+      debugPrint('[PerPerson] payments unread: $error');
+    }
+    final remaining = (grandTotal - paid) < 0 ? 0.0 : grandTotal - paid;
+    if (!mounted) return;
     final controller = TextEditingController(text: '2');
+    var useRemaining = paid > 0;
     await showDialog<void>(
       context: context,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
             final n = int.tryParse(controller.text.trim()) ?? 0;
-            final perPerson = (n > 0) ? grandTotal / n : 0.0;
+            final basis = useRemaining ? remaining : grandTotal;
+            final share = n > 0 ? BillShare.fromAmount(basis, n) : null;
             return AlertDialog(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
@@ -36359,7 +37478,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                   ),
                   const SizedBox(width: 10),
                   const Text(
-                    'Hesabı Böl',
+                    'Kişi Başı Tutar',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
                   ),
                 ],
@@ -36367,6 +37486,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (_draftItems.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(garsonCancelDraftBesideBillDialogText()),
+                    ),
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(14),
@@ -36378,20 +37502,41 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                     child: Column(
                       children: [
                         Text(
-                          'Toplam: ${_formatMoney(grandTotal)}',
+                          useRemaining
+                              ? 'Kalan: ${_formatMoney(remaining)}'
+                              : 'Toplam: ${_formatMoney(grandTotal)}',
                           style: const TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
-                        if (n > 0) ...[
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Yalnız kişi başı tutar. Ödeme kaydı açılmaz ve hesap kapanmaz.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                        if (share != null) ...[
                           const SizedBox(height: 6),
                           Text(
-                            'Kişi başı: ${_formatMoney(perPerson)}',
-                            style: TextStyle(
+                            'Kişi başı: ${_formatMoney(share.eachAmount)}',
+                            style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w900,
                               color: AppColors.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            share.roundingNote,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF64748B),
                             ),
                           ),
                         ],
@@ -36410,6 +37555,14 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                     ),
                     onChanged: (_) => setDialogState(() {}),
                   ),
+                  if (paid > 0)
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Kalan tutar üzerinden hesapla'),
+                      value: useRemaining,
+                      onChanged: (value) =>
+                          setDialogState(() => useRemaining = value),
+                    ),
                 ],
               ),
               actions: [
@@ -36487,6 +37640,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         tableOrders: tableOrders,
         waiterId: _currentWaiterId(),
         waiterName: _currentWaiterName(),
+        waiterTitle: widget.staffJobTitle,
       );
       _orderPrintJobService.debugLogResult(result);
       if (!mounted) return;
@@ -36515,10 +37669,44 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     if (!mounted) return;
     final hasTableOrders = tableOrders.isNotEmpty;
     final orderStatuses = tableOrders.map((o) => o['status']?.toString());
+    bool operationAllowed(String permission) {
+      final granted = widget.grantedOperationPermissions;
+      if (granted == null) return true;
+      return granted.contains(permission);
+    }
+
     final canTransferTable =
-        hasTableOrders && TableLevelPolicy.canTransfer(orderStatuses);
+        hasTableOrders &&
+        operationAllowed('transferTable') &&
+        TableLevelPolicy.canTransfer(orderStatuses);
     final canPayTable =
-        hasTableOrders && TableLevelPolicy.canPay(orderStatuses);
+        hasTableOrders &&
+        operationAllowed('takePartialPayment') &&
+        TableLevelPolicy.canPay(orderStatuses);
+    final hasUnsentDraft = _draftItems.isNotEmpty;
+    final canCloseServerBill =
+        hasTableOrders &&
+        operationAllowed('closeBill') &&
+        TableLevelPolicy.canPay(orderStatuses);
+    final canCancelUnsentDraft =
+        hasUnsentDraft && !hasTableOrders && operationAllowed('closeBill');
+    final canCloseTable = canCloseServerBill || canCancelUnsentDraft;
+    final canViewBill = operationAllowed('viewOrders') ||
+        operationAllowed('manageOrders');
+    final canShowPerPerson = TableLevelPolicy.canShowPerPersonTotal(
+      orderStatuses: orderStatuses,
+      canViewBill: canViewBill,
+    );
+    String blockedReason({
+      required bool allowed,
+      required bool ordersReady,
+      required String readyText,
+      required String emptyText,
+    }) {
+      if (!allowed) return 'Bu işlem için kayıtlı yetkiniz yok.';
+      if (!ordersReady) return emptyText;
+      return readyText;
+    }
     final canReprintKitchen =
         hasTableOrders && TableLevelPolicy.canReprint(orderStatuses);
     await showModalBottomSheet<void>(
@@ -36631,7 +37819,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Masa ${widget.tableNumber} için operasyon aksiyonları',
+                  '${(widget.tableTitleOverride?.trim().isNotEmpty ?? false) ? widget.tableTitleOverride!.trim() : 'Masa ${widget.tableNumber}'} için operasyon aksiyonları',
                   style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                 ),
                 const SizedBox(height: 14),
@@ -36643,13 +37831,42 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                     child: Column(
                       children: [
                         actionTile(
+                          icon: Icons.verified_user_outlined,
+                          title: 'Masa Konum Onayı',
+                          subtitle: operationAllowed('manageOrders')
+                              ? 'Müşteriyi masada gördüğünüzü onaylayın.'
+                              : 'Bu işlem için yetkiniz yok.',
+                          onTap: operationAllowed('manageOrders')
+                              ? () => runAction(
+                                  () => showCustomerTablePresenceGrant(
+                                    context,
+                                    sellerId: widget.sellerId,
+                                    tableNumber: widget.tableNumber,
+                                  ),
+                                )
+                              : null,
+                        ),
+                        const SizedBox(height: 8),
+                        actionTile(
                           icon: Icons.payments_outlined,
                           title: 'Ara Ödeme Al',
-                          subtitle: canPayTable
-                              ? TableLevelPolicy.payEnabled
-                              : TableLevelPolicy.payBlocked,
+                          subtitle: blockedReason(
+                            allowed: operationAllowed('takePartialPayment'),
+                            ordersReady: hasTableOrders &&
+                                TableLevelPolicy.canPay(orderStatuses),
+                            readyText: TableLevelPolicy.payEnabled,
+                            emptyText: TableLevelPolicy.payBlocked,
+                          ),
                           onTap: canPayTable
                               ? () => runAction(() async {
+                                  final moneyReason =
+                                      MixedServiceOrder.unverifiedOrdersMoney(
+                                    tableOrders,
+                                  );
+                                  if (moneyReason != null) {
+                                    await _showOperationInfo(message: moneyReason);
+                                    return;
+                                  }
                                   final grandTotal = _tableOrdersTotal(
                                     tableOrders,
                                   );
@@ -36674,33 +37891,91 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                         existingPayments: payments,
                                       );
                                   if (result == null || !mounted) return;
-                                  if (result.isClosing) {
-                                    await _closeTableAfterPayment(
-                                      tableOrders,
-                                      paymentMethod: result.method.value,
+                                  if (result.isClosing ||
+                                      result.method !=
+                                          TablePaymentMethod.cash) {
+                                    await _showOperationInfo(
+                                      message:
+                                          'Ara ödeme masayı kapatmaz. Yalnız nakit kasa kaydı yazılır.',
                                     );
+                                    return;
+                                  }
+                                  final sessionKey = _getOrCreateSessionKey();
+                                  final scope =
+                                      'pay:${widget.sellerId}:${widget.tableNumber}';
+                                  final payload =
+                                      '$sessionKey|${(result.amount * 100).round()}|cash';
+                                  final savedIdentity =
+                                      await _paymentIdentity.read(scope);
+                                  late final String requestId;
+                                  if (savedIdentity != null) {
+                                    if (savedIdentity.payload != payload) {
+                                      await _showOperationInfo(
+                                        message:
+                                            'Önceki ödeme sonucu belirsiz. Aynı tutarla tekrar deneyin.',
+                                      );
+                                      return;
+                                    }
+                                    requestId = savedIdentity.key;
                                   } else {
-                                    await _storeService.recordTablePayment(
+                                    requestId = stableStaffPaymentRequestId(
+                                      tableNumber: widget.tableNumber,
+                                      sessionKey: sessionKey,
+                                      amount: result.amount,
+                                      method: 'cash',
+                                      attemptToken: DateTime.now()
+                                          .microsecondsSinceEpoch
+                                          .toString(),
+                                    );
+                                    await _paymentIdentity.save(
+                                      scope,
+                                      WaiterSubmitIdentity(
+                                        key: requestId,
+                                        payload: payload,
+                                      ),
+                                    );
+                                  }
+                                  try {
+                                    final saved = await _storeService
+                                        .recordTablePayment(
                                       sellerId: widget.sellerId,
                                       tableNumber: widget.tableNumber,
                                       amount: result.amount,
-                                      method: result.method.value,
+                                      method: 'cash',
                                       waiterId: _currentWaiterId(),
                                       waiterName: _currentWaiterName(),
-                                      sessionKey: _getOrCreateSessionKey(),
+                                      sessionKey: sessionKey,
                                       note: result.note,
+                                      clientRequestId: requestId,
                                     );
+                                    await _paymentIdentity.clear(scope);
                                     if (!mounted) return;
+                                    final replay =
+                                        saved['idempotent_replay'] == true;
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: Text(
-                                          'Ara ödeme kaydedildi: '
-                                          '${_formatMoney(result.amount)}',
-                                        ),
-                                        backgroundColor: const Color(
-                                          0xFF0F766E,
+                                          replay
+                                              ? 'Bu nakit kaydı zaten vardı. İkinci tahsilat yazılmadı.'
+                                              : 'Nakit kasa kaydı yazıldı: ${_formatMoney(result.amount)}. Elektronik tahsilat yapılmadı.',
                                         ),
                                       ),
+                                    );
+                                  } catch (error) {
+                                    debugPrint('[PartialPayment] $error');
+                                    final raw = error.toString();
+                                    final uncertain = raw.contains('belirsiz') ||
+                                        raw.contains('Timeout') ||
+                                        OrderPrintJobService
+                                            .commitFailureIsUnreachable(error);
+                                    if (!uncertain) {
+                                      await _paymentIdentity.clear(scope);
+                                    }
+                                    if (!mounted) return;
+                                    await _showOperationInfo(
+                                      message: uncertain
+                                          ? 'Ödeme sonucu belirsiz. Aynı kayıt tekrar denenebilir.'
+                                          : 'Nakit kaydı yazılamadı. Tahsilat yapılmadı.',
                                     );
                                   }
                                 })
@@ -36710,11 +37985,15 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                         const SizedBox(height: 8),
                         actionTile(
                           icon: Icons.call_split_rounded,
-                          title: 'Hesabı Böl',
-                          subtitle: canPayTable
-                              ? TableLevelPolicy.splitEnabled
-                              : TableLevelPolicy.splitBlocked,
-                          onTap: canPayTable
+                          title: 'Kişi Başı Tutar',
+                          subtitle: blockedReason(
+                            allowed: canViewBill,
+                            ordersReady: hasTableOrders &&
+                                TableLevelPolicy.canPay(orderStatuses),
+                            readyText: TableLevelPolicy.splitEnabled,
+                            emptyText: TableLevelPolicy.splitBlocked,
+                          ),
+                          onTap: canShowPerPerson
                               ? () => runAction(
                                   () => _showSplitBillDialog(tableOrders),
                                 )
@@ -36725,12 +38004,22 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                         actionTile(
                           icon: Icons.point_of_sale_rounded,
                           title: 'Hesabı Kes',
-                          subtitle: canPayTable
-                              ? TableLevelPolicy.closeEnabled
-                              : TableLevelPolicy.closeBlocked,
-                          onTap: canPayTable
+                          subtitle: canCancelUnsentDraft
+                              ? garsonCancelUnsentDraftDialogText()
+                              : blockedReason(
+                                  allowed: operationAllowed('closeBill'),
+                                  ordersReady: hasTableOrders &&
+                                      TableLevelPolicy.canPay(orderStatuses),
+                                  readyText: hasUnsentDraft
+                                      ? garsonCancelDraftBesideBillDialogText()
+                                      : TableLevelPolicy.closeEnabled,
+                                  emptyText: TableLevelPolicy.closeBlocked,
+                                ),
+                          onTap: canCloseTable
                               ? () => runAction(
-                                  () => _showPaymentDialog(tableOrders),
+                                  () => canCancelUnsentDraft
+                                      ? _confirmCancelUnsentDraft()
+                                      : _showPaymentDialog(tableOrders),
                                 )
                               : null,
                           accentColor: const Color(0xFF16A34A),
@@ -36739,11 +38028,16 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                         actionTile(
                           icon: Icons.compare_arrows_rounded,
                           title: 'Masa Aktar',
-                          subtitle: canTransferTable
-                              ? TableLevelPolicy.transferEnabled
-                              : TableLevelPolicy.transferBlocked,
+                          subtitle: blockedReason(
+                            allowed: operationAllowed('transferTable'),
+                            ordersReady: hasTableOrders &&
+                                TableLevelPolicy.canTransfer(orderStatuses),
+                            readyText: TableLevelPolicy.transferEnabled,
+                            emptyText: TableLevelPolicy.transferBlocked,
+                          ),
                           onTap: canTransferTable
                               ? () => runAction(() async {
+                                  if (_tableTransferBusy) return;
                                   // Prefer the pre-loaded store table rows
                                   // passed from the parent (avoids an extra API
                                   // call that can fail silently on some RLS
@@ -36802,15 +38096,61 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                     sourceLabel: sourceLabel,
                                   );
                                   if (result == null || !mounted) return;
-                                  await _storeService.transferTableOrders(
-                                    sellerId: widget.sellerId,
-                                    fromTable: widget.tableNumber,
-                                    toTable: result.toTable,
-                                    transferType: result.transferType.name,
-                                    itemIds: result.selectedItemIds,
-                                    waiterId: _currentWaiterId(),
-                                    note: result.note,
+                                  if (_tableTransferBusy) return;
+                                  _tableTransferBusy = true;
+                                  var transferDialogOpen = true;
+                                  unawaited(
+                                    showDialog<void>(
+                                      context: context,
+                                      barrierDismissible: false,
+                                      builder: (_) => const Center(
+                                        child: GarsonCenterBusy(
+                                          label: 'Masa aktarılıyor...',
+                                        ),
+                                      ),
+                                    ).whenComplete(() {
+                                      transferDialogOpen = false;
+                                    }),
                                   );
+                                  try {
+                                    final transferred = await _storeService
+                                        .transferTableOrders(
+                                      sellerId: widget.sellerId,
+                                      fromTable: widget.tableNumber,
+                                      toTable: result.toTable,
+                                      transferType: result.transferType.name,
+                                      itemIds: result.selectedItemIds,
+                                      waiterId: _currentWaiterId(),
+                                      note: result.note,
+                                    );
+                                    final moved = transferred['moved_count'];
+                                    if (transferred['success'] == false ||
+                                        (moved is num && moved <= 0)) {
+                                      throw StateError(
+                                        'Masa aktarılmadı. Siparişler yerinde kaldı.',
+                                      );
+                                    }
+                                  } catch (error) {
+                                    debugPrint(
+                                      '[TransferTable] failed '
+                                      'from=${widget.tableNumber} '
+                                      'to=${result.toTable} error=$error',
+                                    );
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          friendlyTableTransferError(error),
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  } finally {
+                                    _tableTransferBusy = false;
+                                    if (transferDialogOpen && mounted) {
+                                      Navigator.of(context).pop();
+                                    }
+                                  }
                                   if (!mounted) return;
                                   // Use the real area labels (e.g. "Bahçe 3 →
                                   // Bahçe 1") rather than legacy "Masa N".
@@ -36838,8 +38178,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                       backgroundColor: const Color(0xFF2563EB),
                                     ),
                                   );
-                                  widget.onTableClosed?.call(
+                                  widget.onTableTransferred?.call(
                                     widget.tableNumber,
+                                    result.toTable,
                                   );
                                   if (mounted) {
                                     Navigator.of(context).maybePop();
@@ -36898,14 +38239,21 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                         actionTile(
                           icon: Icons.person_search_outlined,
                           title: 'Müşteri Seç',
-                          subtitle:
-                              'Müşteri eşleme akışı işlemler menüsüne ayrıldı.',
-                          onTap: () => runAction(
-                            () => _showOperationInfo(
-                              message:
-                                  'Müşteri seçimi bu sürümde henüz bağlanmadı.',
-                            ),
-                          ),
+                          subtitle: operationAllowed('viewOrders') ||
+                                  operationAllowed('manageOrders')
+                              ? 'İsim veya telefonla bu işletmenin müşterisini bağla.'
+                              : 'Bu işlem için kayıtlı yetkiniz yok.',
+                          onTap: operationAllowed('viewOrders') ||
+                                  operationAllowed('manageOrders')
+                              ? () => runAction(
+                                  () => showStoreCustomerPicker(
+                                    context: context,
+                                    storeId: widget.sellerId,
+                                    tableNumber: widget.tableNumber,
+                                    canEdit: operationAllowed('manageOrders'),
+                                  ),
+                                )
+                              : null,
                           accentColor: const Color(0xFF4F46E5),
                         ),
                         const SizedBox(height: 8),
@@ -38513,7 +39861,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                   fallbackSnapshot.data ?? const <Map<String, dynamic>>[];
               final rawTableOrders = _extractTableOrders(allOrders);
               final displayTableOrders = _displayTableOrders(rawTableOrders);
-              _tryApplyInitialOrder(displayTableOrders);
               return _buildBody(displayTableOrders);
             },
           );
@@ -38529,7 +39876,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           final allOrders = snapshot.data ?? const <Map<String, dynamic>>[];
           final rawTableOrders = _extractTableOrders(allOrders);
           tableOrders = _displayTableOrders(rawTableOrders);
-          _tryApplyInitialOrder(tableOrders);
           body = _buildBody(tableOrders);
         }
 
@@ -38539,12 +39885,26 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
             ? widget.tableTitleOverride!.trim()
             : 'Masa ${widget.tableNumber}';
 
-        return Scaffold(
+        return PopScope(
+          canPop: true,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) widget.onLeaveToGarsonList?.call();
+          },
+          child: Scaffold(
           backgroundColor: const Color(0xFFF3F4F6),
           appBar: AppBar(
             elevation: 0,
             backgroundColor: const Color(0xFFF3F4F6),
             foregroundColor: const Color(0xFF111827),
+            automaticallyImplyLeading: false,
+            leading: IconButton(
+              tooltip: 'Garson',
+              onPressed: () {
+                widget.onLeaveToGarsonList?.call();
+                Navigator.of(context).pop();
+              },
+              icon: const BackButtonIcon(),
+            ),
             titleSpacing: isNarrowHeader ? 12 : 16,
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -38639,6 +39999,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                 ],
               ),
             ],
+          ),
           ),
         );
       },

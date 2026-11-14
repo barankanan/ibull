@@ -197,6 +197,30 @@ class TableOrderHistoryUtils {
     return _firstNonEmptyLabel(row).isEmpty && areaName(row).isEmpty;
   }
 
+  static Set<String> archivedOrderIds(Map<dynamic, dynamic> row) {
+    final ids = <String>{};
+    final direct = row['original_order_id']?.toString().trim() ?? '';
+    if (direct.isNotEmpty) ids.add(direct);
+    for (final archived in parseJsonList(row['archived_orders'])) {
+      final id = archived['id']?.toString().trim() ?? '';
+      if (id.isNotEmpty) ids.add(id);
+    }
+    return ids;
+  }
+
+  /// True only when [candidate] archives no order that [keeper] does not
+  /// already archive. A different original order is not a copy. Payments are
+  /// not history rows and are never passed here.
+  static bool historyRowIsRedundantCopy({
+    required Map<dynamic, dynamic> keeper,
+    required Map<dynamic, dynamic> candidate,
+  }) {
+    final keeperIds = archivedOrderIds(keeper);
+    final candidateIds = archivedOrderIds(candidate);
+    if (keeperIds.isEmpty || candidateIds.isEmpty) return false;
+    return candidateIds.every(keeperIds.contains);
+  }
+
   /// Groups rows that belong to the same close chain (RPC may insert one row
   /// per active order with an identical [session_key]).
   static String historyChainKey(Map<dynamic, dynamic> row) {

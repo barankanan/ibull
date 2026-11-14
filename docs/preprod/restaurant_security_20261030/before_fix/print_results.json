@@ -1,0 +1,40 @@
+{
+  "scope": "offline mocks; no physical paper observation",
+  "results": [
+    {
+      "name": "successful dispatch / 1 failed completion ACK(s)",
+      "status": "PASS",
+      "detail": "No pending reset; same-process duplicate suppressed. If both ACKs fail DB remains printing; no durable completion receipt."
+    },
+    {
+      "name": "successful dispatch / 2 failed completion ACK(s)",
+      "status": "PASS",
+      "detail": "No pending reset; same-process duplicate suppressed. If both ACKs fail DB remains printing; no durable completion receipt."
+    },
+    {
+      "name": "timeout after possible byte write",
+      "status": "FAIL",
+      "detail": "statuses=['printing', 'pending', 'printing', 'pending']; simulated dispatch calls=2; physical outcome unknown"
+    },
+    {
+      "name": "log exception after possible spool acceptance",
+      "status": "FAIL",
+      "detail": "statuses=['printing', 'pending', 'printing', 'pending']; simulated dispatch calls=2; physical outcome unknown"
+    },
+    {
+      "name": "printing-state update failure before dispatch",
+      "status": "PASS",
+      "detail": "No bytes dispatched in this path; a claimed job can remain stuck."
+    },
+    {
+      "name": "queue retry of ambiguous transient transport failure",
+      "status": "FAIL",
+      "detail": "transport calls=2; predicate used by caller decides whether ambiguous errors can be retried"
+    },
+    {
+      "name": "durable duplicate evidence across process restart",
+      "status": "FAIL",
+      "detail": "Memory-only record lost at restart. Restart alone does not reset DB printing status; replay requires pending reset/other sender."
+    }
+  ]
+}

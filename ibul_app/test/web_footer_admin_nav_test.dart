@@ -47,7 +47,7 @@ void main() {
     );
   }
 
-  testWidgets('WebFooter Admin Paneli linki gorunur', (
+  testWidgets('WebFooter satıcı ve admin giriş kapılarını göstermez', (
     WidgetTester tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 900));
@@ -75,8 +75,10 @@ void main() {
 
     await tester.pumpAndSettle();
     expect(find.text('HOME_PAGE'), findsOneWidget);
-    expect(find.text('Admin Paneli'), findsOneWidget);
-    expect(find.text('AVM\'nizi İBUL\'a Ekleyin'), findsWidgets);
+    expect(find.text('Admin Paneli'), findsNothing);
+    expect(find.text('Satıcı Girişi'), findsNothing);
+    expect(find.text('Satıcı Ol'), findsWidgets);
+    expect(find.text('AVM İşlemleri'), findsWidgets);
   });
 
   testWidgets('WebFooter Ihiz linki profesyonel landing acar', (

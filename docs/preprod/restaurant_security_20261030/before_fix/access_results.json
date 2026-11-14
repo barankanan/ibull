@@ -1,0 +1,743 @@
+{
+  "scope": "Isolated PGlite; historical policy expressions; simulated Auth identity; no real JWT verification",
+  "results": [
+    {
+      "name": "finance owner positive control",
+      "status": "PASS"
+    },
+    {
+      "name": "managed active own-branch positive control",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy active own-branch positive control",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy active own-branch positive control",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive order_items SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive order_items UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive order_items DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive print_jobs SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive print_jobs UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive print_jobs DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive table_orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive table_orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive table_orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive orders INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive order_items INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive table_orders INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive print_jobs INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive RPC create_table_order_with_print_jobs",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive RPC create_table_order_with_print_jobs_impl",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive RPC close_table_with_history",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive RPC get_my_staff_access",
+      "status": "PASS"
+    },
+    {
+      "name": "managed inactive RPC finance_get_overview",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive orders SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy inactive orders UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy inactive orders DELETE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy inactive order_items SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy inactive order_items UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy inactive order_items DELETE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy inactive print_jobs SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive print_jobs UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive print_jobs DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive table_orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive table_orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive table_orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive orders INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive order_items INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive table_orders INSERT",
+      "status": "FAIL",
+      "detail": "INSERT succeeded without RETURNING"
+    },
+    {
+      "name": "legacy inactive print_jobs INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive RPC create_table_order_with_print_jobs",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive RPC create_table_order_with_print_jobs_impl",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive RPC close_table_with_history",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive RPC get_my_staff_access",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy inactive RPC finance_get_overview",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive orders SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact inactive orders UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact inactive orders DELETE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact inactive order_items SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact inactive order_items UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact inactive order_items DELETE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact inactive print_jobs SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive print_jobs UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive print_jobs DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive table_orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive table_orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive table_orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive orders INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive order_items INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive table_orders INSERT",
+      "status": "FAIL",
+      "detail": "INSERT succeeded without RETURNING"
+    },
+    {
+      "name": "legacy contact inactive print_jobs INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive RPC create_table_order_with_print_jobs",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive RPC create_table_order_with_print_jobs_impl",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive RPC close_table_with_history",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive RPC get_my_staff_access",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact inactive RPC finance_get_overview",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch order_items SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch order_items UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch order_items DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch print_jobs SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch print_jobs UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch print_jobs DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch table_orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch table_orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch table_orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch RPC create",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch RPC close",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch table_orders INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch print_jobs INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch order_items INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant order_items SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant order_items UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant order_items DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant print_jobs SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant print_jobs UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant print_jobs DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant table_orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant table_orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant table_orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant RPC create",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant RPC close",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant table_orders INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant print_jobs INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch foreign tenant order_items INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "managed branch other branch idempotent replay",
+      "status": "FAIL",
+      "detail": "Missing expected rejection."
+    },
+    {
+      "name": "legacy branch other branch orders SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy branch other branch orders UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy branch other branch orders DELETE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy branch other branch order_items SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy branch other branch order_items UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy branch other branch order_items DELETE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy branch other branch print_jobs SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy branch other branch print_jobs UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy branch other branch print_jobs DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch other branch table_orders SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy branch other branch table_orders UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy branch other branch table_orders DELETE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy branch other branch RPC create",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch other branch RPC close",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch other branch table_orders INSERT",
+      "status": "FAIL",
+      "detail": "INSERT succeeded without RETURNING"
+    },
+    {
+      "name": "legacy branch other branch print_jobs INSERT",
+      "status": "FAIL",
+      "detail": "INSERT succeeded without RETURNING"
+    },
+    {
+      "name": "legacy branch other branch order_items INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant order_items SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant order_items UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant order_items DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant print_jobs SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant print_jobs UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant print_jobs DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant table_orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant table_orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant table_orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant RPC create",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant RPC close",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant table_orders INSERT",
+      "status": "FAIL",
+      "detail": "INSERT succeeded without RETURNING"
+    },
+    {
+      "name": "legacy branch foreign tenant print_jobs INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch foreign tenant order_items INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy branch other branch idempotent replay",
+      "status": "FAIL",
+      "detail": "Missing expected rejection."
+    },
+    {
+      "name": "legacy contact branch other branch orders SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact branch other branch orders UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact branch other branch orders DELETE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact branch other branch order_items SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact branch other branch order_items UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact branch other branch order_items DELETE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact branch other branch print_jobs SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact branch other branch print_jobs UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact branch other branch print_jobs DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch other branch table_orders SELECT",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact branch other branch table_orders UPDATE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact branch other branch table_orders DELETE",
+      "status": "FAIL",
+      "detail": "Access succeeded: 1 row(s)\n\n1 !== 0\n"
+    },
+    {
+      "name": "legacy contact branch other branch RPC create",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch other branch RPC close",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch other branch table_orders INSERT",
+      "status": "FAIL",
+      "detail": "INSERT succeeded without RETURNING"
+    },
+    {
+      "name": "legacy contact branch other branch print_jobs INSERT",
+      "status": "FAIL",
+      "detail": "INSERT succeeded without RETURNING"
+    },
+    {
+      "name": "legacy contact branch other branch order_items INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant order_items SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant order_items UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant order_items DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant print_jobs SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant print_jobs UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant print_jobs DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant table_orders SELECT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant table_orders UPDATE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant table_orders DELETE",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant RPC create",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant RPC close",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant table_orders INSERT",
+      "status": "FAIL",
+      "detail": "INSERT succeeded without RETURNING"
+    },
+    {
+      "name": "legacy contact branch foreign tenant print_jobs INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch foreign tenant order_items INSERT",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy contact branch other branch idempotent replay",
+      "status": "FAIL",
+      "detail": "Missing expected rejection."
+    },
+    {
+      "name": "RPC rejects foreign printer behind own station mapping",
+      "status": "FAIL",
+      "detail": "Foreign printer accepted into print_jobs"
+    }
+  ]
+}

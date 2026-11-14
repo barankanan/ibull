@@ -387,7 +387,7 @@ class _IdleView extends StatelessWidget {
                 child: TextField(
                   controller: ipCtrl,
                   decoration: const InputDecoration(
-                    hintText: '192.168.1.100',
+                    hintText: '192.168.10.100',
                     border: OutlineInputBorder(),
                     contentPadding:
                         EdgeInsets.symmetric(horizontal: 12, vertical: 12),

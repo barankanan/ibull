@@ -2,13 +2,49 @@ import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:http/http.dart' as http;
+
+import '../../core/config/runtime_config.dart';
 
 import '../../core/platform_capabilities.dart';
 import '../../core/runtime_diagnostic_logger.dart';
 import '../../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
 import '../desktop_print_orchestrator.dart';
 import 'restaurant_offline_models.dart';
+
+/// Stops a dead cloud from stacking multi-second waits on every screen.
+///
+/// The first timed-out call still uses its own budget. Later calls fail
+/// immediately until the backoff elapses, then one attempt is allowed.
+class RestaurantCloudGate {
+  RestaurantCloudGate._();
+
+  static DateTime? _blockedUntil;
+  static int _streak = 0;
+
+  static bool get shouldFailFast {
+    final until = _blockedUntil;
+    return until != null && DateTime.now().isBefore(until);
+  }
+
+  static void noteSuccess() {
+    _streak = 0;
+    _blockedUntil = null;
+  }
+
+  static void noteFailure() {
+    _streak += 1;
+    final shift = (_streak - 1).clamp(0, 3);
+    final seconds = (4 * (1 << shift)).clamp(4, 32);
+    _blockedUntil = DateTime.now().add(Duration(seconds: seconds));
+  }
+
+  @visibleForTesting
+  static void resetForTests() {
+    _streak = 0;
+    _blockedUntil = null;
+  }
+}
 
 /// Tracks internet, Supabase reachability, and local print bridge status
 /// for restaurant-only offline mode.
@@ -17,10 +53,12 @@ class RestaurantConnectivityService with ChangeNotifier {
     Connectivity? connectivity,
     DesktopPrintOrchestrator? printOrchestrator,
     Future<bool> Function()? bridgeReachabilityProbe,
+    Future<bool> Function()? supabaseReachabilityProbe,
     Duration supabaseProbeTimeout = const Duration(seconds: 3),
   }) : _connectivity = connectivity ?? Connectivity(),
        _printOrchestrator = printOrchestrator,
        _bridgeReachabilityProbe = bridgeReachabilityProbe,
+       _supabaseReachabilityProbe = supabaseReachabilityProbe,
        _supabaseProbeTimeout = supabaseProbeTimeout {
     _subscription = _connectivity.onConnectivityChanged.listen((results) {
       unawaited(refresh(networkResults: results));
@@ -40,15 +78,17 @@ class RestaurantConnectivityService with ChangeNotifier {
   final Connectivity _connectivity;
   final DesktopPrintOrchestrator? _printOrchestrator;
   final Future<bool> Function()? _bridgeReachabilityProbe;
+  final Future<bool> Function()? _supabaseReachabilityProbe;
   final Duration _supabaseProbeTimeout;
   late final StreamSubscription<List<ConnectivityResult>> _subscription;
 
   bool _hasNetwork = true;
   bool _supabaseReachable = true;
   bool _bridgeReachable = false;
+  bool _lanHostReachable = false;
+  bool _hasConflict = false;
   bool _isSyncing = false;
   DateTime? _lastRefreshAt;
-  int _supabaseFailureStreak = 0;
   bool _loggedBridgeSkip = false;
   @visibleForTesting
   bool debugSkipNetworkProbes = false;
@@ -56,16 +96,19 @@ class RestaurantConnectivityService with ChangeNotifier {
   bool get hasNetwork => _hasNetwork;
   bool get supabaseReachable => _supabaseReachable;
   bool get bridgeReachable => _bridgeReachable;
+  bool get lanHostReachable => _lanHostReachable;
+  bool get hasConflict => _hasConflict;
   bool get isSyncing => _isSyncing;
   DateTime? get lastRefreshAt => _lastRefreshAt;
 
   RestaurantConnectivityMode get mode {
     if (_isSyncing) return RestaurantConnectivityMode.syncing;
-    if (!_hasNetwork) {
-      return _bridgeReachable
-          ? RestaurantConnectivityMode.offlineLocalMode
-          : RestaurantConnectivityMode.offlineLocalMode;
+    if (_hasConflict) return RestaurantConnectivityMode.conflict;
+    final cloudUp = _hasNetwork && _supabaseReachable;
+    if (!cloudUp && _lanHostReachable) {
+      return RestaurantConnectivityMode.offlineLocalMode;
     }
+    if (!_hasNetwork) return RestaurantConnectivityMode.lanUnavailable;
     if (!_supabaseReachable) {
       return RestaurantConnectivityMode.supabaseUnreachable;
     }
@@ -73,6 +116,20 @@ class RestaurantConnectivityService with ChangeNotifier {
       return RestaurantConnectivityMode.bridgeUnreachable;
     }
     return RestaurantConnectivityMode.online;
+  }
+
+  /// The seller machine reports whether its own order host is listening.
+  /// A tablet must not treat Wi-Fi alone as that host.
+  void noteLanHost(bool reachable) {
+    if (_lanHostReachable == reachable) return;
+    _lanHostReachable = reachable;
+    notifyListeners();
+  }
+
+  void noteConflict(bool value) {
+    if (_hasConflict == value) return;
+    _hasConflict = value;
+    notifyListeners();
   }
 
   bool isOfflineRestaurantCapable({
@@ -96,17 +153,9 @@ class RestaurantConnectivityService with ChangeNotifier {
 
     if (!_hasNetwork) {
       _supabaseReachable = false;
-      _supabaseFailureStreak = 0;
     } else {
-      final probeOk = await _probeSupabase();
-      if (probeOk) {
-        _supabaseFailureStreak = 0;
-        _supabaseReachable = true;
-      } else {
-        _supabaseFailureStreak++;
-        // Avoid flipping to offline/local mode on a single transient timeout.
-        _supabaseReachable = _supabaseFailureStreak < 2;
-      }
+      final probeOk = await (_supabaseReachabilityProbe ?? _probeSupabase)();
+      _supabaseReachable = probeOk;
     }
 
     // Mobile customer app (iOS/Android phones) has no local print bridge.
@@ -144,24 +193,38 @@ class RestaurantConnectivityService with ChangeNotifier {
     bool? hasNetwork,
     bool? supabaseReachable,
     bool? bridgeReachable,
+    bool? lanHostReachable,
+    bool? conflict,
     bool? syncing,
   }) {
     if (hasNetwork != null) _hasNetwork = hasNetwork;
     if (supabaseReachable != null) _supabaseReachable = supabaseReachable;
     if (bridgeReachable != null) _bridgeReachable = bridgeReachable;
+    if (lanHostReachable != null) _lanHostReachable = lanHostReachable;
+    if (conflict != null) _hasConflict = conflict;
     if (syncing != null) _isSyncing = syncing;
     notifyListeners();
   }
 
+  /// GoTrue health is a real internet check. A cached session or a Wi-Fi
+  /// association is not treated as Supabase reachability.
   Future<bool> _probeSupabase() async {
+    final base = AppRuntimeConfig.rawSupabaseUrl.trim();
+    if (base.isEmpty) return false;
+    final root = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
     try {
-      final auth = Supabase.instance.client.auth;
-      if (auth.currentSession != null) {
-        return true;
+      final response = await http
+          .get(Uri.parse('$root/auth/v1/health'))
+          .timeout(_supabaseProbeTimeout);
+      final ok = response.statusCode >= 200 && response.statusCode < 500;
+      if (ok) {
+        RestaurantCloudGate.noteSuccess();
+      } else {
+        RestaurantCloudGate.noteFailure();
       }
-      final refreshed = await auth.refreshSession().timeout(_supabaseProbeTimeout);
-      return refreshed.session != null;
+      return ok;
     } catch (_) {
+      RestaurantCloudGate.noteFailure();
       return false;
     }
   }

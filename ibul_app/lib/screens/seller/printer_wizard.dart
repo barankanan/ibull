@@ -1818,7 +1818,7 @@ class _Step3ConnectionDetails extends StatelessWidget {
                 flex: 3,
                 child: _WizardField(
                   label: 'IP Adresi',
-                  hint: '192.168.1.100',
+                  hint: '192.168.10.100',
                   controller: hostCtrl,
                   keyboardType: TextInputType.number,
                 ),

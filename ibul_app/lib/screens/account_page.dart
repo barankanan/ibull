@@ -26,7 +26,6 @@ import '../app/account_sections.dart';
 import '../core/home_navigation.dart';
 import 'login_page.dart';
 import 'register_page.dart';
-import 'seller_login_page.dart';
 import '../app/site_info_routes.dart';
 import '../services/order_service.dart';
 import '../services/auth_service.dart';
@@ -246,49 +245,6 @@ class _AccountPageState extends State<AccountPage> {
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       fontSize: 14,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              SizedBox(
-                                width: double.infinity,
-                                height: 48,
-                                child: OutlinedButton.icon(
-                                  onPressed: () {
-                                    Navigator.push(
-                                      context,
-                                      PageRouteBuilder(
-                                        pageBuilder:
-                                            (
-                                              context,
-                                              animation,
-                                              secondaryAnimation,
-                                            ) => const SellerLoginPage(),
-                                        transitionDuration: Duration.zero,
-                                        reverseTransitionDuration:
-                                            Duration.zero,
-                                      ),
-                                    );
-                                  },
-                                  icon: const Icon(
-                                    Icons.storefront_outlined,
-                                    size: 18,
-                                  ),
-                                  label: const Text(
-                                    'Satıcı Girişi',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: const Color(0xFF111827),
-                                    side: BorderSide(
-                                      color: Colors.grey.shade300,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
                                     ),
                                   ),
                                 ),
@@ -1317,16 +1273,6 @@ class _AccountPageState extends State<AccountPage> {
                   context,
                   SiteInfoRoutes.terms,
                 ),
-              ),
-            ]),
-            const SizedBox(height: 16),
-            _mobileGroup('İşletme araçları', [
-              _buildMenuItem(
-                Icons.storefront_outlined,
-                'Satıcı Girişi',
-                subtitle: 'Mağaza panelinize ayrı oturumla girin',
-                showDivider: false,
-                onTap: () => _pushAccountPage(const SellerLoginPage()),
               ),
             ]),
           ],

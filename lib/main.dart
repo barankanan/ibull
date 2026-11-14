@@ -14,6 +14,7 @@ import 'package:ibul_app/app/web_path_url_strategy_stub.dart'
 import 'package:ibul_app/app/ibul_safe_boot_app.dart';
 import 'package:ibul_app/core/config/runtime_config.dart';
 import 'package:ibul_app/core/ibul_boot_stage.dart';
+import 'package:ibul_app/core/secure_local_store.dart';
 import 'package:ibul_app/core/qr_initial_params.dart';
 import 'package:ibul_app/core/route_observer.dart';
 import 'package:ibul_app/core/web_boot.dart';
@@ -25,6 +26,7 @@ import 'package:ibul_app/core/web_boot_step_profiler.dart';
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
+  SecureLocalStore.useCustomerMacOsAccount();
   WidgetsFlutterBinding.ensureInitialized();
   enableIbulPathUrlStrategy();
   WebBootLogger.log('main', detail: 'entered');

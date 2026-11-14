@@ -6,7 +6,9 @@ import 'restaurant_connectivity_service.dart';
 import 'restaurant_local_cache_service.dart';
 import 'restaurant_local_order_queue_service.dart';
 import 'restaurant_local_print_queue_service.dart';
+import 'restaurant_lan_host.dart';
 import 'restaurant_offline_models.dart';
+import '../staff_login_policy.dart';
 
 class RestaurantOfflineOrderRouter {
   RestaurantOfflineOrderRouter({
@@ -15,17 +17,22 @@ class RestaurantOfflineOrderRouter {
     RestaurantLocalOrderQueueService? orderQueueService,
     RestaurantLocalPrintQueueService? printQueueService,
     OrderPrintJobService? orderPrintJobService,
+    DateTime Function()? clock,
   }) : _connectivity = connectivityService ?? RestaurantConnectivityService.instance,
        _cacheService = cacheService ?? RestaurantLocalCacheService(),
        _orderQueue = orderQueueService ?? RestaurantLocalOrderQueueService(),
        _printQueue = printQueueService ?? RestaurantLocalPrintQueueService(),
-       _orderPrintJobService = orderPrintJobService;
+       _orderPrintJobService = orderPrintJobService,
+       _clock = clock ?? DateTime.now;
 
   final RestaurantConnectivityService _connectivity;
   final RestaurantLocalCacheService _cacheService;
   final RestaurantLocalOrderQueueService _orderQueue;
   final RestaurantLocalPrintQueueService _printQueue;
   final OrderPrintJobService? _orderPrintJobService;
+  DateTime? _routeHeldUntil;
+  String? _heldRoute;
+  final DateTime Function() _clock;
 
   OrderPrintJobService get _orderPrintJobServiceOrCreate =>
       _orderPrintJobService ?? OrderPrintJobService();
@@ -38,10 +45,7 @@ class RestaurantOfflineOrderRouter {
     if (skipOfflineFallback) return false;
     if (!canUseRestaurantPrinterSystem(storeCategory)) return false;
     await _connectivity.refresh();
-    if (_connectivity.hasNetwork && _connectivity.supabaseReachable) {
-      return false;
-    }
-    return _cacheService.hasCache(restaurantId);
+    return _route(restaurantId) == 'lan';
   }
 
   /// Hot-path offline hint: last-known connectivity only (no refresh await).
@@ -53,10 +57,33 @@ class RestaurantOfflineOrderRouter {
   }) async {
     if (skipOfflineFallback) return false;
     if (!canUseRestaurantPrinterSystem(storeCategory)) return false;
-    if (_connectivity.hasNetwork && _connectivity.supabaseReachable) {
-      return false;
+    return _route(restaurantId) == 'lan';
+  }
+
+  String _route(String restaurantId) {
+    final now = _clock();
+    if (_heldRoute != null &&
+        _routeHeldUntil != null &&
+        now.isBefore(_routeHeldUntil!)) {
+      return _heldRoute!;
     }
-    return _cacheService.hasCache(restaurantId);
+    final host = RestaurantLanHostRegistry.current;
+    final hostHere = host != null &&
+        host.listening &&
+        host.restaurantId == restaurantId;
+    final hostReady = hostHere && host.lanIdentityVerified;
+    final pairedTablet =
+        RestaurantLanPairing.transport != null && !hostHere;
+    final route = restaurantOrderRoute(
+      supabaseReachable:
+          _connectivity.hasNetwork && _connectivity.supabaseReachable,
+      lanReachable: hostReady || pairedTablet,
+      lanIdentityVerified: hostReady || pairedTablet,
+      pairedTablet: pairedTablet,
+    );
+    _heldRoute = route;
+    _routeHeldUntil = now.add(const Duration(seconds: 2));
+    return route;
   }
 
   Future<OrderPrintJobDispatchResult> dispatchOfflineOrder({
@@ -65,9 +92,11 @@ class RestaurantOfflineOrderRouter {
     required List<Map<String, dynamic>> items,
     String? waiterId,
     String? waiterName,
+    String? waiterTitle,
     String? notes,
     String? tableName,
     String? storeCategory,
+    String? localOrderId,
   }) async {
     final cache = await _cacheService.read(restaurantId);
     if (cache == null) {
@@ -85,10 +114,12 @@ class RestaurantOfflineOrderRouter {
       productMappings: _productMappingsFromCache(cache),
     );
 
-    final localOrderId = newRestaurantLocalOrderId();
+    final localOrderIdValue = localOrderId?.trim().isNotEmpty == true
+        ? localOrderId!.trim()
+        : newRestaurantLocalOrderId();
     final now = DateTime.now();
     final order = RestaurantLocalOrderRecord(
-      localOrderId: localOrderId,
+      localOrderId: localOrderIdValue,
       restaurantId: restaurantId,
       tableId: tableNumber.toString(),
       tableName: tableName?.trim().isNotEmpty == true
@@ -107,6 +138,58 @@ class RestaurantOfflineOrderRouter {
       updatedAt: now,
     );
 
+    final host = RestaurantLanHostRegistry.current;
+    final hostHere = host != null &&
+        host.listening &&
+        host.restaurantId == restaurantId;
+    final transport = RestaurantLanPairing.transport;
+    if (transport == null && !hostHere) {
+      throw StateError(
+        'Yerel sunucu kapalı. Sipariş gönderilmedi.',
+      );
+    }
+    if (transport != null && !hostHere) {
+      var saved = false;
+      var reachable = true;
+      try {
+        saved = await transport.submit(order);
+      } catch (error) {
+        if (error.toString().contains('Ana bilgisayar kapalı') ||
+            error.toString().contains('sertifikası doğrulanamadı')) {
+          reachable = false;
+        } else {
+          rethrow;
+        }
+      }
+      final decision = decideLanOrderSubmit(
+        paired: true,
+        hostReachable: reachable,
+        hostSaved: saved,
+      );
+      if (!decision.showSuccess) {
+        await _orderQueue.enqueue(order: order);
+        throw StateError('Sipariş gönderilemedi. Cihazda bekliyor.');
+      }
+      await _orderQueue.enqueue(order: order);
+      return OrderPrintJobDispatchResult(
+        orderId: localOrderIdValue,
+        orderNumber: localOrderIdValue,
+        printJobCount: 0,
+        printJobIds: const <String>[],
+        raw: <String, dynamic>{
+          'offline': true,
+          'lan_host': true,
+          'local_order_id': localOrderIdValue,
+          'message': 'Sipariş ana bilgisayara kaydedildi.',
+        },
+        dispatchedJobCount: 0,
+        failedJobCount: 0,
+        physicallyDispatched: false,
+        dispatchPath: 'lan_host',
+        traceId: '',
+      );
+    }
+
     final persisted = await _orderQueue.enqueue(order: order);
 
     final immediate = await _orderPrintJobServiceOrCreate
@@ -116,14 +199,19 @@ class RestaurantOfflineOrderRouter {
           items: items,
           waiterId: waiterId,
           waiterName: waiterName,
+          waiterTitle: waiterTitle,
           canUseLocalPrintFastPath: true,
           tableAreaName: tableName,
         );
 
+    final printStatus = localPrintStatusFromDispatch(
+      physicallyDispatched: immediate.physicallyDispatched,
+      error: immediate.error,
+    );
     final localPrintJob = RestaurantLocalPrintJobRecord(
       localJobId: newRestaurantLocalPrintJobId(),
       restaurantId: restaurantId,
-      localOrderId: localOrderId,
+      localOrderId: localOrderIdValue,
       tableId: tableNumber.toString(),
       tableName: order.tableName,
       documentType: 'kitchen',
@@ -137,11 +225,13 @@ class RestaurantOfflineOrderRouter {
       payloadSnapshot: <String, dynamic>{
         'table_number': tableNumber,
         'items': items,
-        'local_order_id': localOrderId,
+        'local_order_id': localOrderIdValue,
         'trace_id': immediate.traceId,
       },
-      status: immediate.physicallyDispatched
+      status: printStatus == 'printed'
           ? RestaurantLocalPrintJobStatus.printed
+          : printStatus == 'uncertain'
+          ? RestaurantLocalPrintJobStatus.dispatching
           : RestaurantLocalPrintJobStatus.failed,
       attempts: 1,
       lastError: immediate.physicallyDispatched
@@ -156,19 +246,19 @@ class RestaurantOfflineOrderRouter {
     await _printQueue.enqueue(job: localPrintJob);
 
     final updatedOrder = persisted.copyWith(
-      printStatus: immediate.physicallyDispatched ? 'printed' : 'failed',
+      printStatus: printStatus,
       updatedAt: DateTime.now(),
     );
     await _orderQueue.update(restaurantId: restaurantId, order: updatedOrder);
 
     return OrderPrintJobDispatchResult(
-      orderId: localOrderId,
-      orderNumber: localOrderId,
+      orderId: localOrderIdValue,
+      orderNumber: localOrderIdValue,
       printJobCount: 1,
       printJobIds: <String>[localPrintJob.localJobId],
       raw: <String, dynamic>{
         'offline': true,
-        'local_order_id': localOrderId,
+        'local_order_id': localOrderIdValue,
         'sync_status': RestaurantLocalOrderSyncStatus.pendingSync.name,
         'message':
             'Sipariş yerel olarak kaydedildi. İnternet gelince senkronlanacak.',

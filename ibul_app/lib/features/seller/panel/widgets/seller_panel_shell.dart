@@ -188,11 +188,13 @@ class SellerPanelSidebar extends StatelessWidget {
     required this.items,
     required this.onLogoutTap,
     this.collapsed = false,
+    this.roleLabel,
   });
 
   final List<SellerPanelMenuEntry> items;
   final VoidCallback onLogoutTap;
   final bool collapsed;
+  final String? roleLabel;
 
   static const double _collapsedWidth = 56;
 
@@ -217,7 +219,10 @@ class SellerPanelSidebar extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _SellerPanelBrandHeader(collapsed: collapsed),
+                _SellerPanelBrandHeader(
+                  collapsed: collapsed,
+                  roleLabel: roleLabel,
+                ),
                 const SizedBox(height: 8),
                 Expanded(
                   child: ListView(
@@ -480,10 +485,12 @@ class SellerPanelMobileDrawer extends StatelessWidget {
     super.key,
     required this.items,
     required this.onLogoutTap,
+    this.roleLabel,
   });
 
   final List<SellerPanelMenuEntry> items;
   final VoidCallback onLogoutTap;
+  final String? roleLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -494,8 +501,9 @@ class SellerPanelMobileDrawer extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const _SellerPanelBrandHeader(
-                padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+              _SellerPanelBrandHeader(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                roleLabel: roleLabel,
               ),
               const SizedBox(height: 6),
               Expanded(
@@ -529,10 +537,12 @@ class _SellerPanelBrandHeader extends StatelessWidget {
   const _SellerPanelBrandHeader({
     this.padding = const EdgeInsets.all(18),
     this.collapsed = false,
+    this.roleLabel,
   });
 
   final EdgeInsetsGeometry padding;
   final bool collapsed;
+  final String? roleLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -558,11 +568,27 @@ class _SellerPanelBrandHeader extends StatelessWidget {
         children: [
           iconBox,
           const SizedBox(width: 7),
-          Text(
-            'Satıcı Paneli',
-            style: theme.textTheme.titleMedium?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Satıcı Paneli',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (roleLabel != null && roleLabel!.trim().isNotEmpty)
+                  Text(
+                    roleLabel!.trim(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFFD1D5DB),
+                    ),
+                  ),
+              ],
             ),
           ),
         ],

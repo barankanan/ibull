@@ -136,6 +136,14 @@ class DefaultFirebaseOptions {
     ),
   );
 
+  /// iOS already ships `GoogleService-Info.plist`. An empty dart-define must
+  /// not demand a second copy of that key. Callers then use
+  /// `Firebase.initializeApp()` so the native plist is the source.
+  static bool get iosUsesBundledServiceFile =>
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.iOS &&
+      _kFirebaseIosApiKey.trim().isEmpty;
+
   static FirebaseOptions get ios => FirebaseOptions(
     apiKey: _requireValue('IBUL_FIREBASE_IOS_API_KEY', _kFirebaseIosApiKey),
     appId: _requireValue('IBUL_FIREBASE_IOS_APP_ID', _kFirebaseIosAppId),

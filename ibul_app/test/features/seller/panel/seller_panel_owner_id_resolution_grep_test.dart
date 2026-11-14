@@ -9,7 +9,7 @@ void main() {
   test('seller panel persists and restores resolved restaurant owner id', () {
     final source = sellerPanelFile.readAsStringSync();
     expect(source, contains('_sellerDataOwnerPrefKey'));
-    expect(source, contains('_restorePersistedSellerDataOwnerId()'));
+    expect(source, contains('_restorePersistedSellerDataOwnerIdWithReload('));
     expect(source, contains('_rememberSellerDataOwnerId('));
     expect(source, contains('_bestSellerDataOwnerIdCandidate('));
   });

@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
 import '../../features/seller/panel/printer_center/printer_assignment_state.dart';
+import '../../features/seller/panel/printer_center/printer_center_operations.dart';
 import '../../features/seller/panel/printer_center/printer_station_test_guard.dart';
 import '../../features/seller/panel/printer_center/widgets/printer_center_layout.dart';
 import '../../features/seller/panel/printer_center/widgets/printer_center_sections.dart';
@@ -34,6 +35,7 @@ import '../../services/kitchen_print_trace_log.dart';
 import '../../services/kitchen_product_mapping_cache_store.dart';
 import '../../services/kitchen_routing_service.dart';
 import '../../services/restaurant_offline/restaurant_connectivity_service.dart';
+import '../../services/restaurant_offline/restaurant_lan_host.dart';
 import '../../services/restaurant_offline/restaurant_offline_snapshot_sync.dart';
 import '../../services/restaurant_offline/restaurant_local_cache_service.dart';
 import '../../widgets/restaurant_offline_banner.dart';
@@ -139,7 +141,8 @@ class _KitchenPrintManagementPageState
   String? _selectedReceiptPrinterLabel;
   String? _selectedKitchenPrinterLabel;
   String _selectedPrintStationPlatform = '';
-  bool _printSystemEnabled = true;
+  bool _stationPlatformTouched = false;
+  bool _printSystemEnabled = false;
   bool _printSystemEnabledLoaded = false;
   bool? _localPrintSystemEnabled;
   bool? _remotePrintSystemEnabled;
@@ -273,22 +276,12 @@ class _KitchenPrintManagementPageState
         remoteConfig: remoteConfig,
       );
       if (localPrintSystemEnabled != null &&
+          remotePrintSystemEnabled != null &&
           remotePrintSystemEnabled != localPrintSystemEnabled) {
-        try {
-          remoteConfig = await _printStationService.patchStationConfiguration(
-            restaurantId: widget.restaurantId,
-            fields: <String, dynamic>{
-              'print_system_enabled': localPrintSystemEnabled,
-              'updated_at': DateTime.now().toIso8601String(),
-            },
-          );
-          remotePrintSystemEnabled = localPrintSystemEnabled;
-          syncNotice =
-              'Yerel bridge runtime değeri ile bulut ayarı farklıydı. Bridge runtime değeri buluta senkronlandı.';
-        } catch (_) {
-          syncNotice ??=
-              'Yerel bridge runtime değeri gösteriliyor. Bulut ayarı senkronlanamadı.';
-        }
+        syncNotice =
+            'Yerel yazıcı servisi ${_printSystemStateLabel(localPrintSystemEnabled)} · '
+            'bulut kaydı ${_printSystemStateLabel(remotePrintSystemEnabled)}. '
+            'Fiziksel baskı yerel servis onayına bağlıdır.';
       }
       final bridgePrinters = enrichedPrinters
           .map(_printerToLegacyMap)
@@ -308,13 +301,9 @@ class _KitchenPrintManagementPageState
             ].join('|'),
           )
           .join('||');
-      final selectedPlatform = _printStationService.normalizeStationPlatform(
-        remoteConfig?['device_platform']?.toString(),
-      );
       final shouldRefreshPrinterViews =
           nextBridgePrinterRefreshKey != _lastBridgePrinterRefreshKey;
       if (!mounted) return;
-      final queueDisabled = _queueRuntimePrintSystemDisabled(queueStatus);
       setState(() {
         _isThisDevicePrintStation = localChoice;
         _bridgeReachable = snapshot.bridgeReachable;
@@ -341,15 +330,18 @@ class _KitchenPrintManagementPageState
             .toList(growable: false);
         _bridgePrinters = bridgePrinters;
         _staleBridgePrinters = staleBridgePrinters;
-        _selectedPrintStationPlatform = _selectedPrintStationPlatform.isEmpty
-            ? selectedPlatform
-            : _selectedPrintStationPlatform;
+        _selectedPrintStationPlatform = _stationPlatformTouched
+            ? _selectedPrintStationPlatform
+            : _printStationService.stationPlatformForThisMachine(
+                remoteConfig?['device_platform']?.toString(),
+              );
         _localPrintSystemEnabled = localPrintSystemEnabled;
         _remotePrintSystemEnabled = remotePrintSystemEnabled;
         _printSystemSourceIsLocalRuntime = localPrintSystemEnabled != null;
-        _printSystemEnabled = localPrintSystemEnabled ??
-            remotePrintSystemEnabled ??
-            (queueDisabled ? false : true);
+        // Bridge confirmation is the physical permission. A missing local
+        // reading or an unreachable bridge stays closed.
+        _printSystemEnabled =
+            snapshot.bridgeReachable && localPrintSystemEnabled == true;
         _printSystemEnabledLoaded = localPrintSystemEnabled != null ||
             remotePrintSystemEnabled != null ||
             queueStatus != null;
@@ -532,25 +524,14 @@ class _KitchenPrintManagementPageState
   Future<void> _loadRecentPrintJobs() async {
     setState(() => _loadingRecentPrintJobs = true);
     try {
-      final failed = await _printJobRepository.fetchJobs(
+      final jobs = await _printJobRepository.fetchJobs(
         widget.restaurantId,
-        status: 'failed',
-        limit: 5,
+        status: 'all',
+        limit: 40,
       );
-      final completed = await _printJobRepository.fetchJobs(
-        widget.restaurantId,
-        status: 'completed',
-        limit: 5,
-      );
-      final merged = <PrintJobModel>[...failed, ...completed];
-      merged.sort((a, b) {
-        final aAt = a.printJobCreatedAt ?? a.orderSavedAt ?? DateTime(2000);
-        final bAt = b.printJobCreatedAt ?? b.orderSavedAt ?? DateTime(2000);
-        return bAt.compareTo(aAt);
-      });
       if (!mounted) return;
       setState(() {
-        _recentPrintJobs = merged.take(5).toList(growable: false);
+        _recentPrintJobs = jobs;
       });
     } catch (_) {
       if (mounted) {
@@ -646,9 +627,24 @@ class _KitchenPrintManagementPageState
     if (_retryingPrintJobIds.contains(job.id) || !job.canManualRetry) {
       return;
     }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Manuel yeniden baskı'),
+        content: Text(
+          'Bu fiş yazıcıya ulaşmış olabilir. Onay, aynı sipariş için ikinci bir fiziksel fiş üretebilir. Bu çift baskı riskidir. Belirsiz baskı otomatik tekrarlanmaz. Yazıcıyı ve çıkan fişi kontrol edin.'
+          '${(job.lastError ?? '').trim().isEmpty ? '' : '\n\nSon durum: ${job.lastError}'}',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Vazgeç')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Kontrol ettim, yeniden bas')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     setState(() => _retryingPrintJobIds.add(job.id));
     try {
-      final started = await _printJobRepository.retryJob(job.id);
+      final started = await _printJobRepository.retryJob(job.id, operatorConfirmed: true);
       if (!mounted) return;
       if (!started) {
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(
@@ -893,6 +889,9 @@ class _KitchenPrintManagementPageState
       return 'Yerel yazıcı servisine ulaşılamıyor. Önce bridge kurulumunu tamamlayın veya servisi başlatın.';
     }
     final printStation = _localBridgeHealth?['print_station'];
+    if (printStation is Map && printStation['enabled'] == false) {
+      return 'Baskı güvenlik nedeniyle durduruldu. Mutfak fişi, istasyon açılmadan gönderilmez.';
+    }
     if (printStation is Map) {
       final stationStatus =
           printStation['status']?.toString().trim().toLowerCase() ?? '';
@@ -1061,10 +1060,6 @@ class _KitchenPrintManagementPageState
     final previousLocalEnabled = _localPrintSystemEnabled;
     final previousRemoteEnabled = _remotePrintSystemEnabled;
     setState(() {
-      _printSystemEnabled = enabled;
-      _localPrintSystemEnabled = previousLocalEnabled == null ? null : enabled;
-      _remotePrintSystemEnabled = enabled;
-      _printSystemSourceIsLocalRuntime = previousLocalEnabled != null;
       _savingPrintSystemEnabled = true;
       _printSystemError = null;
       _printSystemSyncNotice = null;
@@ -1085,8 +1080,8 @@ class _KitchenPrintManagementPageState
         SnackBar(
           content: Text(
             enabled
-                ? 'Baskı sistemi açıldı'
-                : 'Baskı sistemi kapatıldı',
+                ? 'Yazıcı servisi açıldı'
+                : 'Yazıcı servisi kapalı. Yeni fiziksel baskı gönderilmez. Yazıcıya daha önce iletilmiş baytlar geri alınamaz.',
           ),
           backgroundColor: enabled
               ? const Color(0xFF16A34A)
@@ -2198,6 +2193,12 @@ class _KitchenPrintManagementPageState
   bool get _printSystemUiEnabled =>
       !_isQueuePrintSystemDisabled && _printSystemEnabled;
 
+  int _queueBucketCount(String bucket) {
+    return _recentPrintJobs
+        .where((job) => job.operatorQueueBucket == bucket)
+        .length;
+  }
+
   PrinterCenterStatusItem _localServiceStatusItem() {
     const label = 'Yazıcı servisi (bu cihaz)';
     if (!_localServiceStatusKnown) {
@@ -2210,27 +2211,35 @@ class _KitchenPrintManagementPageState
             )
           : const PrinterCenterStatusItem(
               label: label,
-              value: 'Bilinmiyor',
+              value: 'Yazıcı servisi durumu bilinmiyor',
               tone: PrinterCenterTone.neutral,
-              detail: 'Durum okunamadı. Yenile ile tekrar deneyin.',
+              detail: 'Durum okunamadı. Yenile ile tekrar deneyin. Baskı gönderilmez.',
             );
     }
     if (!_bridgeReachable) {
       return const PrinterCenterStatusItem(
         label: label,
-        value: 'Bağlantı yok',
+        value: 'Yazıcı köprüsüne ulaşılamıyor',
         tone: PrinterCenterTone.error,
-        detail: 'Bu cihazdaki yazıcı servisi yanıt vermiyor.',
+        detail: 'Bu cihazdaki yazıcı köprüsü yanıt vermiyor. Baskı kapalı kabul edilir.',
+      );
+    }
+    if (!_printSystemUiEnabled) {
+      return const PrinterCenterStatusItem(
+        label: label,
+        value: 'Yazıcı servisi kapalı',
+        tone: PrinterCenterTone.warning,
+        detail: 'Köprü ayar için ayakta. Fiziksel fiş gönderilmez.',
       );
     }
     if (_localServiceWorking) {
       return PrinterCenterStatusItem(
         label: label,
-        value: 'Çalışıyor',
+        value: 'Yazıcı servisi açık',
         tone: PrinterCenterTone.success,
         detail: _hasDetectedPrinters
             ? 'Taramada ${_bridgePrinters.length} yazıcı görüldü.'
-            : 'Servis yanıt veriyor.',
+            : 'Servis yanıt veriyor ve baskı izni açık.',
       );
     }
     return const PrinterCenterStatusItem(
@@ -2253,8 +2262,9 @@ class _KitchenPrintManagementPageState
     }
     if (!_printSystemUiEnabled) {
       return (
-        short: 'Fişler otomatik basılmaz',
-        long: 'Kapalı. Siparişler alınır ancak fişler otomatik yazdırılmaz.',
+        short: 'Yazıcı servisi kapalı',
+        long:
+            'Yazıcı servisi kapalı. Sipariş kaydı durmaz; yeni fiziksel fiş gönderilmez.',
         tone: PrinterCenterTone.warning,
       );
     }
@@ -2389,8 +2399,10 @@ class _KitchenPrintManagementPageState
     final lastSeenAt =
         _remotePrintStationConfig?['last_seen_at']?.toString() ?? '-';
     final platform = _stationPlatformTitle(
-      _remotePrintStationConfig?['device_platform']?.toString() ??
-          _selectedPrintStationPlatform,
+      _printStationService.stationPlatformForThisMachine(
+        _remotePrintStationConfig?['device_platform']?.toString() ??
+            _selectedPrintStationPlatform,
+      ),
     );
 
     final actions = <Widget>[
@@ -2417,7 +2429,7 @@ class _KitchenPrintManagementPageState
               const title = PrinterCenterSectionTitle(
                 title: 'Yazıcı Merkezi',
                 subtitle:
-                    'Bu restoranın yazıcı servisini, otomatik baskıyı ve kayıtlı yazıcıları buradan yönetin.',
+                    'Bu restoranın yazıcı servisini ve kayıtlı yazıcıları buradan yönetin.',
               );
               if (constraints.maxWidth < 640) {
                 return Column(
@@ -2450,7 +2462,7 @@ class _KitchenPrintManagementPageState
             items: [
               _localServiceStatusItem(),
               PrinterCenterStatusItem(
-                label: 'Otomatik baskı',
+                label: 'Yazıcı servisi',
                 value: printSystemValue,
                 tone: readiness.tone,
                 detail: readiness.short,
@@ -2464,6 +2476,20 @@ class _KitchenPrintManagementPageState
                 detail: _allPrintersCache.isEmpty
                     ? 'Henüz yazıcı eklenmedi.'
                     : '$activeCount aktif kayıt',
+              ),
+              PrinterCenterStatusItem(
+                label: 'Kuyruk',
+                value:
+                    '${_queueBucketCount('pending')} bekliyor · '
+                    '${_queueBucketCount('failed')} başarısız · '
+                    '${_queueBucketCount('uncertain')} belirsiz',
+                tone: _queueBucketCount('failed') + _queueBucketCount('uncertain') > 0
+                    ? PrinterCenterTone.warning
+                    : PrinterCenterTone.neutral,
+                detail:
+                    'TCP yazımı fiziksel çıktı doğrulaması değildir. '
+                    'Kapalı serviste bekleyen: ${_queueBucketCount('paused_closed')}. '
+                    'Karantina: ${_queueBucketCount('quarantine')}.',
               ),
               PrinterCenterStatusItem(
                 label: 'Bu cihazın rolü',
@@ -2487,6 +2513,13 @@ class _KitchenPrintManagementPageState
                 PrinterCenterKeyValue(
                   label: 'İnternet',
                   value: connectivity.hasNetwork ? 'Var' : 'Yok',
+                ),
+                PrinterCenterKeyValue(
+                  label: 'Yerel sipariş merkezi',
+                  value: RestaurantLanHostRegistry.current?.listening == true
+                      ? 'Açık · port ${RestaurantLanHostRegistry.current!.port}'
+                          ' · ${RestaurantLanHostRegistry.current!.deviceCount} tablet'
+                      : 'Kullanılamıyor',
                 ),
                 PrinterCenterKeyValue(
                   label: 'Bulut (Supabase)',
@@ -2567,7 +2600,7 @@ class _KitchenPrintManagementPageState
           tone: PrinterCenterTone.error,
           message:
               '${_staleBridgePrinters.length} kayıtlı yazıcı canlı taramada yok. '
-              'Eski Mac/CUPS eşlemesi aktif rol olarak kullanılamaz; yeni bir Windows yazıcısı seçin.',
+              'Kayıtlar silinmedi. Bu ${_printStationService.defaultPrintStationPlatform() == 'macos' ? 'MacBook' : 'cihaz'} için yazıcıyı yeniden seçin.',
         ),
       );
     }
@@ -2589,9 +2622,9 @@ class _KitchenPrintManagementPageState
         : _printSystemStateLabel(_printSystemEnabled);
 
     return PrinterCenterCard(
-      title: 'Otomatik Baskı',
+      title: 'Yazıcı Servisi',
       subtitle:
-          'Yeni siparişlerin adisyon ve mutfak fişlerinin otomatik yazdırılmasını açar veya kapatır.',
+          'Kapalıyken adisyon, mutfak, otomatik ve test fişi dahil hiçbir fiziksel baskı gönderilmez. Sipariş kaydı durmaz.',
       trailing: _savingPrintSystemEnabled
           ? const Padding(
               padding: EdgeInsets.all(10),
@@ -2745,6 +2778,7 @@ class _KitchenPrintManagementPageState
               onSelectionChanged: (selection) {
                 if (selection.isEmpty) return;
                 setState(() {
+                  _stationPlatformTouched = true;
                   _selectedPrintStationPlatform = selection.first;
                 });
               },
@@ -3111,16 +3145,57 @@ class _KitchenPrintManagementPageState
             mappings: mappings,
             printers: printers.isNotEmpty ? printers : _allPrintersCache,
           );
-          return PrinterCenterTwoColumn(
-            left: PrinterAssignmentSummaryCard(
-              items: summaryItems,
-              onGoToMapping: () => DefaultTabController.of(context).animateTo(3),
-            ),
-            right: PrinterRecentJobsCard(
-              jobs: _recentPrintJobs,
-              loading: _loadingRecentPrintJobs,
-              onShowAll: () => DefaultTabController.of(context).animateTo(6),
-            ),
+          final stationViews = printerCenterStationViews(
+            stations: stations,
+            mappings: mappings,
+            printers: printers.isNotEmpty ? printers : _allPrintersCache,
+            jobs: _recentPrintJobs,
+            printSystemEnabledLoaded: _printSystemEnabledLoaded,
+            printSystemEnabled: _printSystemEnabled,
+            queueRuntimeDisabled: _isQueuePrintSystemDisabled,
+            bridgeReachable: _bridgeReachable,
+            testInFlight: _testingPrintStation,
+          );
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              PrinterCenterTwoColumn(
+                left: PrinterAssignmentSummaryCard(
+                  items: summaryItems,
+                  onGoToMapping: () =>
+                      DefaultTabController.of(context).animateTo(3),
+                ),
+                right: PrinterRecentJobsCard(
+                  jobs: _recentPrintJobs,
+                  loading: _loadingRecentPrintJobs,
+                  onShowAll: () => DefaultTabController.of(context).animateTo(6),
+                ),
+              ),
+              const SizedBox(height: 12),
+              PrinterCenterQueuePanel(
+                jobs: _recentPrintJobs,
+                bridgeReachable: _bridgeReachable,
+                serviceEnabled: _printSystemUiEnabled,
+                serviceKnown: _printSystemEnabledLoaded,
+                autoPrintEnabled: _printSystemUiEnabled && _bridgeReachable,
+              ),
+              const SizedBox(height: 12),
+              PrinterCenterStationCards(
+                views: stationViews,
+                onTest: (view) {
+                  PrinterModel? printer;
+                  for (final row in _allPrintersCache) {
+                    if (row.name == view.printerName) {
+                      printer = row;
+                      break;
+                    }
+                  }
+                  if (printer != null) {
+                    unawaited(_testRegisteredPrinter(printer));
+                  }
+                },
+              ),
+            ],
           );
         },
       ),

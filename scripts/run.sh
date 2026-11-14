@@ -190,4 +190,11 @@ device_name="${NAME_LIST[$choice_index]}"
 
 echo "Seçildi: [$choice_index] $device_name  •  $device_id"
 echo "Uygulama bu cihazda başlatılıyor. Başlatıldıktan sonra aynı terminalde 'r' (hot reload) veya 'R' (hot restart) kullanabilirsiniz."
-flutter run -d "$device_id" --dart-define=ENABLE_TEST_CHECKOUT=true "${DART_DEFINES[@]}"
+
+FLAVOR_ARGS=()
+if [[ "$device_id" == "macos" ]]; then
+  # Customer identity. The seller app stays on the default Runner scheme.
+  FLAVOR_ARGS=(--flavor customer --target lib/main.dart)
+fi
+
+flutter run -d "$device_id" "${FLAVOR_ARGS[@]}" --dart-define=ENABLE_TEST_CHECKOUT=true "${DART_DEFINES[@]}"

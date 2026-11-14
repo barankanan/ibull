@@ -1,0 +1,278 @@
+-- ARCHIVED UNSAFE DRAFT. Not a migration; never execute. Use catalog snapshot generator.
+do $$ begin raise exception 'UNSAFE_ROLLBACK_DRAFT: use restaurant_rollback_snapshot.mjs with verified before/after snapshots'; end $$;
+-- -- ROLLBACK PLAN for 2026102901_restaurant_staff_access.sql and 2026102902_restaurant_order_commit.sql
+-- -- Restores functions, RLS policies, publication state, and table schemas to pre-migration baseline.
+-- -- NEVER RUN ON PRODUCTION WITHOUT CONFIRMATION.
+-- begin;
+-- 
+-- -- 1. DROP RESTRICTIVE AND AUDIT TRIGGERS
+-- drop trigger if exists validate_restaurant_staff on public.store_sub_admins;
+-- drop trigger if exists restaurant_staff_write_guard on public.orders;
+-- drop trigger if exists restaurant_staff_write_guard on public.order_items;
+-- drop trigger if exists restaurant_staff_write_guard on public.print_jobs;
+-- drop trigger if exists restaurant_staff_write_guard on public.table_orders;
+-- drop trigger if exists restaurant_staff_write_guard on public.table_order_history;
+-- 
+-- do $$ declare tbl text; begin
+--   for tbl in select unnest(array[
+--     'products','stores','store_campaigns','support_tickets',
+--     'finance_suppliers','finance_cash_accounts','finance_cash_movements',
+--     'finance_income_records','finance_expenses','finance_debts',
+--     'finance_debt_payments','finance_employees','finance_salary_records',
+--     'finance_salary_payments','finance_reconciliation_notes','finance_company_settings'
+--   ]) loop
+--     if to_regclass('public.'||tbl) is not null then
+--       execute format('drop trigger if exists staff_scoped_write_guard on public.%I', tbl);
+--       execute format('drop policy if exists staff_permission_read on public.%I', tbl);
+--       execute format('drop policy if exists staff_permission_read_guard on public.%I', tbl);
+--       execute format('drop policy if exists staff_permission_insert on public.%I', tbl);
+--       execute format('drop policy if exists staff_permission_update on public.%I', tbl);
+--       execute format('drop policy if exists staff_permission_delete on public.%I', tbl);
+--     end if;
+--   end loop;
+-- end $$;
+-- 
+-- -- 2. DROP MIGRATION RLS POLICIES
+-- drop policy if exists staff_table_orders_branch_guard on public.table_orders;
+-- drop policy if exists staff_history_read_guard on public.table_order_history;
+-- drop policy if exists restaurant_staff_orders_read_guard on public.orders;
+-- drop policy if exists restaurant_staff_orders_write_guard on public.orders;
+-- drop policy if exists restaurant_staff_items_read_guard on public.order_items;
+-- drop policy if exists restaurant_staff_jobs_write_guard on public.print_jobs;
+-- 
+-- drop policy if exists table_orders_read_staff on public.table_orders;
+-- drop policy if exists table_orders_customer_insert on public.table_orders;
+-- drop policy if exists table_orders_update_staff on public.table_orders;
+-- drop policy if exists table_orders_delete_staff on public.table_orders;
+-- drop policy if exists store_sub_admins_active_self_select on public.store_sub_admins;
+-- 
+-- -- 3. RESTORE PRE-MIGRATION POLICIES ON TABLE_ORDERS & SUB_ADMINS
+-- create policy "table_orders_select" on public.table_orders for select to authenticated
+--   using (public.user_can_access_restaurant(case when seller_id ~ '^[0-9a-fA-F-]{36}$' then seller_id::uuid else null end));
+-- create policy "table_orders_insert" on public.table_orders for insert to authenticated
+--   with check (public.user_can_access_restaurant(case when seller_id ~ '^[0-9a-fA-F-]{36}$' then seller_id::uuid else null end));
+-- create policy "table_orders_update" on public.table_orders for update to authenticated
+--   using (public.user_can_access_restaurant(case when seller_id ~ '^[0-9a-fA-F-]{36}$' then seller_id::uuid else null end))
+--   with check (public.user_can_access_restaurant(case when seller_id ~ '^[0-9a-fA-F-]{36}$' then seller_id::uuid else null end));
+-- create policy "table_orders_delete" on public.table_orders for delete to authenticated
+--   using (public.user_can_access_restaurant(case when seller_id ~ '^[0-9a-fA-F-]{36}$' then seller_id::uuid else null end));
+-- 
+-- -- 4. DROP MIGRATION-ADDED FUNCTIONS
+-- drop function if exists public.create_table_order_with_print_jobs_impl(uuid,integer,jsonb,uuid,text,text,text,text,text);
+-- drop function if exists public.guard_restaurant_staff_order_write();
+-- drop function if exists public.guard_restaurant_staff_scoped_write();
+-- drop function if exists public.restaurant_order_access(uuid,text);
+-- drop function if exists public.restaurant_table_number_access(uuid,integer);
+-- drop function if exists public.is_managed_restaurant_staff();
+-- drop function if exists public.validate_restaurant_staff_membership();
+-- drop function if exists public.get_my_staff_access();
+-- drop function if exists public.restaurant_table_access(uuid,uuid);
+-- drop function if exists public.restaurant_has_permission(uuid,text);
+-- 
+-- -- 5. RESTORE BASELINE user_can_access_restaurant
+-- create or replace function public.user_can_access_restaurant(p_restaurant_id uuid)
+-- returns boolean language sql stable security definer set search_path = public
+-- as $$
+--   select
+--     p_restaurant_id is not null
+--     and auth.uid() is not null
+--     and (
+--       auth.uid() = p_restaurant_id
+--       or exists (
+--         select 1
+--         from public.store_sub_admins sa
+--         join public.users u on u.id = auth.uid()
+--         where sa.store_id = p_restaurant_id
+--           and sa.status = 'active'
+--           and (
+--             (
+--               sa.email is not null
+--               and trim(sa.email) <> ''
+--               and lower(trim(u.email)) = lower(trim(sa.email))
+--             )
+--             or (
+--               sa.phone is not null
+--               and trim(sa.phone) <> ''
+--               and trim(coalesce(u.phone, '')) = trim(sa.phone)
+--             )
+--           )
+--       )
+--     );
+-- $$;
+-- 
+-- -- 6. RESTORE 8-PARAMETER create_table_order_with_print_jobs_impl (20260607 version)
+-- create or replace function public.create_table_order_with_print_jobs_impl(
+--   p_restaurant_id uuid,
+--   p_table_number integer,
+--   p_items jsonb,
+--   p_waiter_id uuid default null,
+--   p_waiter_name text default null,
+--   p_notes text default null,
+--   p_job_type text default 'new_order',
+--   p_order_type text default 'table'
+-- )
+-- returns jsonb
+-- language plpgsql
+-- security definer
+-- set search_path = public
+-- as $function$
+-- declare
+--   v_restaurant_name text;
+--   v_waiter_name text;
+--   v_waiter_ref uuid;
+--   v_table_id uuid;
+--   v_table_name text;
+--   v_table_area_name text;
+--   v_area_table_number integer;
+--   v_order_id uuid;
+--   v_order_number text;
+--   v_order_created_at timestamptz := now();
+--   v_daily_order_no integer := 0;
+--   v_printed_at timestamptz := now();
+--   v_print_job_id uuid;
+--   v_print_job_ids jsonb := '[]'::jsonb;
+--   v_item record;
+--   v_item_product_id text;
+--   v_item_name text;
+--   v_item_note text;
+--   v_item_qty integer;
+--   v_item_price numeric;
+--   v_group record;
+--   v_printer_id uuid;
+--   v_printer_name text;
+--   v_printer_code text;
+--   v_printer_connection_type text;
+--   v_printer_ip_address text;
+--   v_printer_port integer;
+--   v_printer_device_identifier text;
+--   v_printer_paper_width_mm integer;
+--   v_items_payload jsonb;
+--   v_job_payload jsonb;
+-- begin
+--   if auth.uid() is null then
+--     raise exception 'Yetkisiz istek.' using errcode = '42501';
+--   end if;
+-- 
+--   if not public.user_can_access_restaurant(p_restaurant_id) then
+--     raise exception 'Bu restoran için işlem yetkiniz yok.' using errcode = '42501';
+--   end if;
+-- 
+--   if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
+--     raise exception 'Sipariş kalemleri boş olamaz.' using errcode = '22023';
+--   end if;
+-- 
+--   select business_name into v_restaurant_name
+--   from public.stores where seller_id = p_restaurant_id limit 1;
+-- 
+--   if v_restaurant_name is null then
+--     raise exception 'Restoran bulunamadı.' using errcode = '22023';
+--   end if;
+-- 
+--   select id,
+--          coalesce(nullif(trim(display_label), ''), nullif(trim(table_name), ''), format('Masa %s', table_number)) as resolved_label,
+--          coalesce(nullif(trim(area_name), ''), '') as resolved_area,
+--          coalesce(area_table_number, table_number) as resolved_area_no
+--   into v_table_id, v_table_name, v_table_area_name, v_area_table_number
+--   from public.store_tables
+--   where seller_id = p_restaurant_id and table_number = p_table_number and is_active = true
+--   order by created_at desc limit 1;
+-- 
+--   if v_table_id is null then
+--     raise exception 'Aktif masa bulunamadı.' using errcode = '22023';
+--   end if;
+-- 
+--   insert into public.restaurant_daily_order_counters (restaurant_id, order_date, last_no)
+--   values (p_restaurant_id, now()::date, 1)
+--   on conflict (restaurant_id, order_date)
+--   do update set last_no = public.restaurant_daily_order_counters.last_no + 1, updated_at = now()
+--   returning last_no into v_daily_order_no;
+-- 
+--   v_waiter_name := coalesce(nullif(trim(coalesce(p_waiter_name, '')), ''), 'Garson');
+--   select u.id into v_waiter_ref from public.users u where u.id = coalesce(p_waiter_id, auth.uid()) limit 1;
+-- 
+--   v_order_number := format('TBL-%s-%s', to_char(now(), 'YYYYMMDDHH24MISS'), upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6)));
+-- 
+--   insert into public.orders (
+--     user_id, order_number, status, payment_method, delivery_type,
+--     subtotal_amount, shipping_amount, discount_amount, total_amount, currency,
+--     restaurant_id, table_id, waiter_id, order_status, order_type, notes
+--   ) values (
+--     auth.uid(), v_order_number, 'confirmed', 'cash', 'table',
+--     0, 0, 0, 0, 'TRY',
+--     p_restaurant_id, v_table_id, v_waiter_ref, 'sent', coalesce(nullif(trim(coalesce(p_order_type, '')), ''), 'table'),
+--     nullif(trim(coalesce(p_notes, '')), '')
+--   ) returning id into v_order_id;
+-- 
+--   for v_item in select value from jsonb_array_elements(p_items) loop
+--     insert into public.order_items (
+--       order_id, product_id, product_name, quantity, item_note, unit_price, station_id
+--     ) values (
+--       v_order_id,
+--       nullif(trim(coalesce(v_item.value ->> 'product_id', '')), ''),
+--       coalesce(nullif(trim(coalesce(v_item.value ->> 'name', '')), ''), 'Ürün'),
+--       greatest(coalesce((v_item.value ->> 'quantity')::int, 1), 1),
+--       nullif(trim(coalesce(v_item.value ->> 'notes', '')), ''),
+--       coalesce((v_item.value ->> 'price')::numeric, 0),
+--       nullif(trim(coalesce(v_item.value ->> 'station_id', '')), '')::uuid
+--     );
+--   end loop;
+-- 
+--   return jsonb_build_object(
+--     'order_id', v_order_id,
+--     'order_number', v_order_number,
+--     'daily_order_no', v_daily_order_no,
+--     'print_job_ids', v_print_job_ids,
+--     'print_job_count', jsonb_array_length(v_print_job_ids)
+--   );
+-- end;
+-- $function$;
+-- 
+-- -- 7. RESTORE FINANCE FUNCTIONS SECURITY DEFINER
+-- do $$ begin
+--   if to_regprocedure('public.finance_get_overview(uuid)') is not null then
+--     alter function public.finance_get_overview(uuid) security definer;
+--   end if;
+--   if to_regprocedure('public.finance_get_monthly_trend(uuid,integer)') is not null then
+--     alter function public.finance_get_monthly_trend(uuid,integer) security definer;
+--   end if;
+-- end $$;
+-- 
+-- -- 8. RESTORE close_table_with_history (STRIP INJECTED PERMISSION GATE)
+-- do $$ declare f record; definition text; gate text; begin
+--   gate:=E'\n  IF NOT public.restaurant_has_permission(p_seller_id, ''manageOrders'') OR NOT public.restaurant_table_number_access(p_seller_id,p_table_number) THEN\n    RAISE EXCEPTION ''Sipariş yönetme yetkisi yok.'' USING ERRCODE=''42501'';\n  END IF;\n';
+--   for f in select oid from pg_proc where pronamespace='public'::regnamespace and proname='close_table_with_history' loop
+--     definition:=pg_get_functiondef(f.oid);
+--     if strpos(definition, gate) > 0 then
+--       definition:=replace(definition, gate, '');
+--       execute definition;
+--     end if;
+--   end loop;
+-- end $$;
+-- 
+-- -- 9. REMOVE TABLES FROM supabase_realtime PUBLICATION
+-- do $$ declare tbl text; begin
+--   if exists(select 1 from pg_publication where pubname='supabase_realtime') then
+--     foreach tbl in array array['print_jobs','printers'] loop
+--       if exists(select 1 from pg_publication_tables where pubname='supabase_realtime'
+--         and schemaname='public' and tablename=tbl) then
+--         execute format('alter publication supabase_realtime drop table public.%I', tbl);
+--       end if;
+--     end loop;
+--   end if;
+-- end $$;
+-- 
+-- -- 10. REMOVE ADDED COLUMNS AND INDEXES
+-- drop index if exists public.store_staff_creation_request;
+-- drop index if exists public.store_staff_auth_identity;
+-- alter table public.store_sub_admins
+--   drop column if exists creation_request_id,
+--   drop column if exists branch_id,
+--   drop column if exists staff_role,
+--   drop column if exists display_name,
+--   drop column if exists auth_user_id;
+-- alter table public.store_tables
+--   drop column if exists branch_id;
+-- 
+-- notify pgrst, 'reload schema';
+-- commit;
+-- 

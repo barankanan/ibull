@@ -403,7 +403,10 @@ class _AdisyonTab extends StatelessWidget {
               ...items.map((item) {
                 final qty = (item['quantity'] as num?)?.toInt() ?? 1;
                 final price = (item['price'] as num?)?.toDouble() ?? 0.0;
-                final lineTotal = qty * price;
+                final storedLine = item['line_total'];
+                final lineTotal = storedLine is num && storedLine > 0
+                    ? storedLine.toDouble()
+                    : qty * price;
                 return _ReceiptItemRow(
                   name: _orderItemPrimaryLabel(item),
                   subtitle: _orderItemSecondaryLabel(item),

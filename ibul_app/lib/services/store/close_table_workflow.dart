@@ -3,9 +3,9 @@
 /// This module is deliberately free of Supabase / Flutter imports so the
 /// algorithm can be unit-tested without mocking the DB client.
 ///
-/// The [StoreTableService._closeTableClientSide] method delegates to
-/// [runCloseTableFallbackWorkflow], injecting the real Supabase operations
-/// as callbacks. Tests inject simple in-memory lambdas instead.
+/// Production close and transfer no longer call this workflow. A failed RPC
+/// must not delete or move `table_orders`. Tests still exercise the algorithm.
+///
 /// Statuses that indicate an order has been fully closed.
 /// Must stay in sync with [garsonTerminalOrderStatuses] in
 /// garson_active_orders_fetch.dart.
