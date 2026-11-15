@@ -91,6 +91,39 @@ class PrintJobModel {
     return value;
   }
 
+  /// Existing queue names only. `sent` is a bridge handoff, not paper proof.
+  String get operatorQueueBucket {
+    switch (status.trim().toLowerCase()) {
+      case 'pending':
+      case 'queued':
+      case 'created':
+        return 'pending';
+      case 'processing':
+      case 'printing':
+      case 'claimed':
+      case 'dispatching':
+      case 'retrying':
+        return 'processing';
+      case 'failed':
+        return 'failed';
+      case 'uncertain':
+      case 'ready_unverified':
+        return 'uncertain';
+      case 'quarantine':
+        return 'quarantine';
+      case 'paused_closed':
+      case 'paused_by_operator':
+      case 'paused':
+        return 'paused_closed';
+      case 'sent':
+      case 'printed':
+      case 'completed':
+        return 'sent';
+      default:
+        return 'uncertain';
+    }
+  }
+
   bool get isCompleted => normalizedStatus == 'completed';
   bool get isFailed => normalizedStatus == 'failed';
   bool get isTerminal => isCompleted || isFailed;

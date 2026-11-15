@@ -80,7 +80,16 @@ class MobileOrderPrintService {
     required Map<String, dynamic> payload,
     required String orderId,
     String flowName = 'waiter_receipt',
+    bool printSystemEnabled = false,
   }) async {
+    if (!printSystemEnabled) {
+      return const EthernetConnectionDiagnostic(
+        ok: false,
+        errorCode: 'print_system_disabled',
+        title: 'Yazıcı servisi kapalı',
+        message: 'Yazıcı servisi kapalı. Yeni fiziksel baskı gönderilmedi.',
+      );
+    }
     final normalizedOrderId = orderId.trim();
     final dedupeKey = '$restaurantId|$normalizedOrderId|$flowName';
     if (normalizedOrderId.isNotEmpty) {

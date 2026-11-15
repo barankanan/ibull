@@ -255,6 +255,28 @@ class _KitchenPrintDispatchOutcome {
   bool get hasFailures => failureMessages.isNotEmpty;
 }
 
+class PrintPathDelayMarks {
+  const PrintPathDelayMarks({
+    required this.orderSavedAt,
+    required this.printJobCreatedAt,
+    required this.rpcSentAt,
+    required this.rpcReceivedAt,
+    this.deviceAckAt,
+  });
+
+  final DateTime orderSavedAt;
+  final DateTime printJobCreatedAt;
+  final DateTime rpcSentAt;
+  final DateTime rpcReceivedAt;
+  final DateTime? deviceAckAt;
+
+  bool get deviceConfirmed => deviceAckAt != null;
+
+  int millisecondsBetween(DateTime start, DateTime end) {
+    return end.difference(start).inMilliseconds;
+  }
+}
+
 class OrderPrintJobService {
   OrderPrintJobService({
     SupabaseClient? client,
@@ -533,6 +555,7 @@ class OrderPrintJobService {
     required List<Map<String, dynamic>> items,
     String? waiterId,
     String? waiterName,
+    String? waiterTitle,
     GarsonKitchenPrinterHint? printerHint,
     bool canUseLocalPrintFastPath = false,
     Map<String, String>? productStationIdByProductId,
@@ -828,8 +851,14 @@ class OrderPrintJobService {
               'station_name': group.stationName,
               'kitchen_ticket_header': group.stationName,
             },
-            if (waiterName != null && waiterName.trim().isNotEmpty)
-              'waiter_name': waiterName.trim(),
+            if (kitchenTicketGarsonLabel(
+              waiterTitle: waiterTitle,
+              waiterName: waiterName,
+            ).isNotEmpty)
+              'waiter_name': kitchenTicketGarsonLabel(
+                waiterTitle: waiterTitle,
+                waiterName: waiterName,
+              ),
             'daily_order_no': dailyOrderNo,
             'kitchen_order_no': dailyOrderNo,
           },
@@ -1008,12 +1037,162 @@ class OrderPrintJobService {
     }
   }
 
+  static String stableOrderEditKey(
+    String orderId,
+    List<Map<String, dynamic>> items,
+  ) {
+    final body = items
+        .map(
+          (item) =>
+              '${item['product_id']}|${item['order_item_id'] ?? item['id']}|${item['quantity']}|${item['name'] ?? item['product_name']}',
+        )
+        .join(';');
+    return '$orderId::$body';
+  }
+
+  static Map<String, dynamic> lineForRestaurantOrderUpdate(
+    Map<String, dynamic> item,
+  ) {
+    final copy = Map<String, dynamic>.from(item);
+    final id = copy['id']?.toString() ?? '';
+    final productId = copy['product_id']?.toString() ?? '';
+    if (id.isNotEmpty && id != productId) {
+      copy['order_item_id'] = copy['order_item_id'] ?? id;
+    }
+    return copy;
+  }
+
+  static bool cancelTicketMatchesRemovedLine({
+    required Map<String, dynamic> removedLine,
+    required Map<String, dynamic> ticketItem,
+  }) {
+    final removedId =
+        (removedLine['order_item_id'] ?? removedLine['id'])?.toString() ?? '';
+    final ticketId = ticketItem['order_item_id']?.toString() ?? '';
+    if (removedId.isEmpty || ticketId.isEmpty || removedId != ticketId) {
+      return false;
+    }
+    final removedQty = removedLine['quantity'];
+    final ticketQty = ticketItem['quantity'];
+    final removedCount = removedQty is num ? removedQty.toInt() : null;
+    final ticketCount = ticketQty is num ? ticketQty.toInt() : null;
+    return removedCount != null && removedCount == ticketCount;
+  }
+
+  static const String orderCommitUnverifiedMessage =
+      'Sipariş sonucu doğrulanamadı';
+
+  static const int commitLookupPolls = 3;
+
+  /// Saved restaurant order in `public.orders`, not a `table_orders` row.
+  /// Prices stay on the server RPC. This does not print and does not report success
+  /// when the RPC fails.
+  Future<OrderPrintJobDispatchResult> updateSavedRestaurantOrder({
+    required String restaurantId,
+    required String orderId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> items,
+    List<Map<String, dynamic>> printItems = const <Map<String, dynamic>>[],
+    String jobType = 'add_item',
+    List<Map<String, dynamic>> extraPrintItems = const <Map<String, dynamic>>[],
+    String extraJobType = 'cancel_item',
+    required String revisionKey,
+    String? waiterId,
+    String? waiterName,
+    String? waiterTitle,
+    bool garsonDesktopFastKitchen = false,
+    bool requiresServerPriceAuthority = false,
+    DateTime? expectedUpdatedAt,
+  }) async {
+    final revision = revisionKey.trim();
+    if (revision.isEmpty) {
+      throw StateError(orderCommitUnverifiedMessage);
+    }
+    final waiter = waiterId?.trim() ?? '';
+    final params = <String, dynamic>{
+      'p_restaurant_id': restaurantId,
+      'p_order_id': orderId,
+      'p_items': items,
+      'p_print_items': printItems,
+      'p_job_type': jobType,
+      'p_extra_print_items': extraPrintItems,
+      'p_extra_job_type': extraJobType,
+      'p_revision_key': revision,
+      'p_waiter_id': waiter.isEmpty ? null : waiter,
+      'p_waiter_name': waiterName,
+    };
+    if (requiresServerPriceAuthority) {
+      params['p_expected_updated_at'] =
+          expectedUpdatedAt?.toUtc().toIso8601String();
+    }
+    final response = await _client.rpc(
+      requiresServerPriceAuthority
+          ? 'update_restaurant_table_order_guarded'
+          : 'update_restaurant_table_order',
+      params: params,
+    );
+    final data = response is Map
+        ? Map<String, dynamic>.from(response)
+        : <String, dynamic>{};
+    final jobIds = _extractPrintJobIds(data['print_job_ids']);
+    debugPrint(
+      '[OrderUpdate] table=$tableNumber order=$orderId '
+      'title=${waiterTitle ?? '-'} fastKitchen=$garsonDesktopFastKitchen '
+      'jobs=${jobIds.length} physical=false',
+    );
+    return OrderPrintJobDispatchResult(
+      orderId: data['order_id']?.toString() ?? orderId,
+      orderNumber: data['order_number']?.toString(),
+      printJobCount: jobIds.length,
+      printJobIds: jobIds,
+      raw: data,
+      physicallyDispatched: false,
+      printerNotPrintedYet: true,
+      dispatchPath: 'restaurant_order_rpc',
+      handoffToHub: jobIds.isNotEmpty,
+      pendingForHubJobIds: jobIds,
+    );
+  }
+
+  static String commitRecoveryAction({
+    required String localOrderId,
+    required bool found,
+    required bool alreadyRetried,
+  }) {
+    if (localOrderId.trim().isEmpty || alreadyRetried) return 'unverified';
+    if (found) return 'recovered';
+    return 'retry_same_key';
+  }
+
+  static bool commitFailureIsUnreachable(Object error) {
+    final text = error.toString();
+    return text.contains('SocketException') ||
+        text.contains('Failed host lookup') ||
+        text.contains('ClientException') ||
+        text.contains('TimeoutException');
+  }
+
+  static List<String> pendingPrintJobIdsForDispatch({
+    required List<String> printJobIds,
+    required Map<String, String> statusById,
+    required bool idempotentReplay,
+  }) {
+    if (!idempotentReplay) return List<String>.from(printJobIds);
+    return printJobIds
+        .where((id) {
+          final status = statusById[id];
+          return status != 'completed' && status != 'printed';
+        })
+        .toList(growable: false);
+  }
+
   Future<OrderPrintJobDispatchResult> dispatchNewOrder({
     required String restaurantId,
     required int tableNumber,
     required List<Map<String, dynamic>> items,
     String? waiterId,
     String? waiterName,
+    String? waiterTitle,
     String? notes,
     String jobType = 'new_order',
     bool garsonDesktopFastKitchen = false,
@@ -1023,6 +1202,10 @@ class OrderPrintJobService {
     String? localOrderId,
     /// Elapsed ms from Garson "Gönder" press until this method entry (T0 base).
     int t0SendPressedElapsedMs = 0,
+    bool suppressPhysicalPrint = false,
+    String? localPrintStatus,
+    Map<String, dynamic>? localPrintEvidence,
+    bool releaseUiAfterQueue = false,
   }) async {
     final t0Watch = Stopwatch()..start();
     int absMs() => t0SendPressedElapsedMs + t0Watch.elapsedMilliseconds;
@@ -1078,21 +1261,33 @@ class OrderPrintJobService {
       'Init',
       'trace=$traceId restaurantId=$restaurantId tableNo=$tableNumber jobType=$jobType '
           'itemCount=${normalized.length} waiterId=${_logValue(waiterId)} '
-          'waiterName=${_logValue(waiterName)}',
+          'waiterName=${_logValue(waiterName)} '
+          'suppressPhysical=$suppressPhysicalPrint releaseUi=$releaseUiAfterQueue',
     );
 
-    // P0: LOCAL PRINT FIRST — fire before connectivity / RPC / printer hydration.
-    // Mac desktop + mobile: always try LAN; garsonDesktopFastKitchen must NOT skip.
+    // Local print starts only when the service is open and this revision
+    // has not already been sent or left uncertain.
     final t1LocalPrintStart = absMs();
-    final lanFuture = _attemptLanDirectKitchenPrint(
-      restaurantId: restaurantId,
-      tableNumber: tableNumber,
-      items: normalized,
-      waiterName: waiterName,
-      pipelineStartedAt: pipelineStartedAt,
-      traceId: traceId,
-      t0ElapsedMs: t0SendPressedElapsedMs,
+    final serviceOpen = _printSystemEnabledCache[restaurantId] != false;
+    final mayStartPhysical = kitchenJobMayStartPhysicalPrint(
+      printSystemEnabled: serviceOpen,
+      suppressPhysicalPrint: suppressPhysicalPrint,
+      localPrintStatus: localPrintStatus,
     );
+    final lanFuture = mayStartPhysical
+        ? _attemptLanDirectKitchenPrint(
+            restaurantId: restaurantId,
+            tableNumber: tableNumber,
+            items: normalized,
+            waiterName: waiterName,
+            waiterTitle: waiterTitle,
+            pipelineStartedAt: pipelineStartedAt,
+            traceId: traceId,
+            t0ElapsedMs: t0SendPressedElapsedMs,
+          )
+        : Future<_LanDirectPrintResult>.value(
+            _LanDirectPrintResult.skipped('physical_print_suppressed'),
+          );
 
     // Offline divert without connectivity.refresh (refresh blocks hot path).
     if (!skipOfflineFallback &&
@@ -1123,6 +1318,7 @@ class OrderPrintJobService {
         items: items,
         waiterId: waiterId,
         waiterName: waiterName,
+        waiterTitle: waiterTitle,
         notes: notes,
         tableName: tableName,
         storeCategory: storeCategory,
@@ -1179,6 +1375,7 @@ class OrderPrintJobService {
           items: items,
           waiterId: waiterId,
           waiterName: waiterName,
+          waiterTitle: waiterTitle,
           notes: notes,
           tableName: tableName,
           storeCategory: storeCategory,
@@ -1196,6 +1393,20 @@ class OrderPrintJobService {
               : <String, dynamic>{});
     final printJobIds = _extractPrintJobIds(data['print_job_ids']);
     final orderIdText = _textValue(data['order_id']);
+    if (suppressPhysicalPrint && printJobIds.isNotEmpty) {
+      await _client
+          .from('print_jobs')
+          .update(<String, dynamic>{
+            'status': 'paused_by_operator',
+            'last_error': localPrintEvidence != null
+                ? 'Fiziksel baskı bastırıldı. Kanıt basıldı sayılmadı.'
+                : localPrintStatus == 'uncertain'
+                ? 'Gönderim belirsiz. Otomatik yeniden baskı yok.'
+                : 'Fiziksel baskı bastırıldı. Basıldı olarak işaretlenmedi.',
+          })
+          .inFilter('id', printJobIds)
+          .eq('status', 'pending');
+    }
 
     // LAN may still complete after the 600ms client budget — settle briefly
     // before enabling hub/fallback so we don't double-print a successful TCP.
@@ -1652,7 +1863,9 @@ class OrderPrintJobService {
     required List<Map<String, dynamic>> items,
     String? waiterId,
     String? waiterName,
+    String? waiterTitle,
     String? notes,
+    String? localOrderId,
   }) {
     return dispatchNewOrder(
       restaurantId: restaurantId,
@@ -1660,7 +1873,9 @@ class OrderPrintJobService {
       items: items,
       waiterId: waiterId,
       waiterName: waiterName,
+      waiterTitle: waiterTitle,
       notes: notes,
+      localOrderId: localOrderId,
       jobType: 'add_item',
     );
   }
@@ -1671,7 +1886,9 @@ class OrderPrintJobService {
     required List<Map<String, dynamic>> items,
     String? waiterId,
     String? waiterName,
+    String? waiterTitle,
     String? notes,
+    String? localOrderId,
   }) {
     return dispatchNewOrder(
       restaurantId: restaurantId,
@@ -1679,7 +1896,9 @@ class OrderPrintJobService {
       items: items,
       waiterId: waiterId,
       waiterName: waiterName,
+      waiterTitle: waiterTitle,
       notes: notes,
+      localOrderId: localOrderId,
       jobType: 'cancel_item',
     );
   }
@@ -1690,7 +1909,9 @@ class OrderPrintJobService {
     required List<Map<String, dynamic>> items,
     String? waiterId,
     String? waiterName,
+    String? waiterTitle,
     String? notes,
+    String? localOrderId,
   }) {
     return dispatchNewOrder(
       restaurantId: restaurantId,
@@ -1698,7 +1919,9 @@ class OrderPrintJobService {
       items: items,
       waiterId: waiterId,
       waiterName: waiterName,
+      waiterTitle: waiterTitle,
       notes: notes,
+      localOrderId: localOrderId,
       jobType: 'reprint',
     );
   }
@@ -1760,7 +1983,9 @@ class OrderPrintJobService {
     required List<Map<String, dynamic>> tableOrders,
     String? waiterId,
     String? waiterName,
+    String? waiterTitle,
     String? notes,
+    String? localOrderId,
   }) async {
     final perf = GarsonPerfTrace('reprint');
     final inFlightKey = reprintInFlightKey(
@@ -1790,7 +2015,9 @@ class OrderPrintJobService {
           items: _flattenTableOrderItems(tableOrders),
           waiterId: waiterId,
           waiterName: waiterName,
+          waiterTitle: waiterTitle,
           notes: notes,
+          localOrderId: localOrderId,
         );
       }
 
@@ -1824,7 +2051,9 @@ class OrderPrintJobService {
           items: _flattenTableOrderItems(tableOrders),
           waiterId: waiterId,
           waiterName: waiterName,
+          waiterTitle: waiterTitle,
           notes: notes,
+          localOrderId: localOrderId,
         );
       }
 
@@ -5138,6 +5367,7 @@ class OrderPrintJobService {
     required int tableNumber,
     required List<Map<String, dynamic>> items,
     String? waiterName,
+    String? waiterTitle,
     required String pipelineStartedAt,
     required String traceId,
     int t0ElapsedMs = 0,
@@ -5243,8 +5473,14 @@ class OrderPrintJobService {
               'station_name': group.stationName,
               'kitchen_ticket_header': group.stationName,
             },
-            if (waiterName != null && waiterName.trim().isNotEmpty)
-              'waiter_name': waiterName.trim(),
+            if (kitchenTicketGarsonLabel(
+              waiterTitle: waiterTitle,
+              waiterName: waiterName,
+            ).isNotEmpty)
+              'waiter_name': kitchenTicketGarsonLabel(
+                waiterTitle: waiterTitle,
+                waiterName: waiterName,
+              ),
             'print_job_id': clientJobId,
             'client_print_job_id': clientJobId,
             'logical_print_key': logicalKey,

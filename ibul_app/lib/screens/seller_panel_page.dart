@@ -14972,7 +14972,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       final tableOrders = sessionOrders;
       final hasLocalDraft =
           _mobileGarsonDraftItemsByTable[tableNumber]?.isNotEmpty == true ||
-          garsonCloseOrdersAreUnsentDraftOnly(existingOrders) ||
+          garsonCloseOrdersAreUnsentDraftOnly(
+            existingOrders ?? const <Map<String, dynamic>>[],
+          ) ||
           (existingOrders?.any(garsonOrderIsUnsentLocalDraft) ?? false);
       final optimisticAt = _mobileGarsonOptimisticSentAtByTable[tableNumber];
       final optimisticFresh =
@@ -14983,39 +14985,19 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         hasUnsentDraft: hasLocalDraft,
         hasServerBill: sessionOrders.isNotEmpty,
         sendResultUncertain: optimisticFresh && sessionOrders.isEmpty,
+        unverifiedMoney:
+            MixedServiceOrder.unverifiedOrdersMoney(sessionOrders) != null,
       );
-      if (closePlan.action == GarsonDraftCloseAction.keepUncertainSend) {
+      if (closePlan.blocked) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              garsonUncertainSendKeepsDraftSnackbarText(tableLabel),
-            ),
-          ),
+          SnackBar(content: Text(closePlan.reason)),
         );
         return;
       }
-      if (closePlan.action == GarsonDraftCloseAction.cancelUnsentDraft ||
-          closePlan.action == GarsonDraftCloseAction.alreadyEmpty) {
+      if (closePlan.action == GarsonDraftCloseAction.alreadyEmpty) {
         if (!mounted) return;
-        if (closePlan.action == GarsonDraftCloseAction.cancelUnsentDraft &&
-            !discardConfirmedDraft) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                garsonDraftCancelNeedsConfirmSnackbarText(tableLabel),
-              ),
-            ),
-          );
-          return;
-        }
         setState(() {
-          if (closePlan.cancelUnsentDraft && discardConfirmedDraft) {
-            _mobileGarsonDraftItemsByTable.remove(tableNumber);
-            _mobileGarsonDraftUpdatedAtByTable.remove(tableNumber);
-            _mobileGarsonOptimisticSentAtByTable.remove(tableNumber);
-            _mobileGarsonOptimisticItemsByTable.remove(tableNumber);
-          }
           _dropGarsonTableFromVisibleState(
             tableNumber: tableNumber,
             tableRow: tableRow,
@@ -15023,11 +15005,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              closePlan.action == GarsonDraftCloseAction.cancelUnsentDraft
-                  ? garsonDiscardUnsentDraftSnackbarText(tableLabel)
-                  : garsonCloseTableAlreadyEmptySnackbarText(tableLabel),
-            ),
+            content: Text(garsonCloseTableAlreadyEmptySnackbarText(tableLabel)),
           ),
         );
         return;
@@ -15276,12 +15254,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           tableNumber,
           source: 'close_table_success',
         );
-        if (discardConfirmedDraft) {
-          _mobileGarsonDraftItemsByTable.remove(tableNumber);
-          _mobileGarsonDraftUpdatedAtByTable.remove(tableNumber);
-          _mobileGarsonOptimisticSentAtByTable.remove(tableNumber);
-          _mobileGarsonOptimisticItemsByTable.remove(tableNumber);
-        }
       });
       _applyOptimisticClosedTableSession(
         tableNumber: tableNumber,
@@ -15621,7 +15593,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final hasLocalDraft =
         _mobileGarsonDraftItemsByTable[tableNumber]?.isNotEmpty == true ||
         (existingOrders?.any(garsonOrderIsUnsentLocalDraft) ?? false);
-    final hasServerBill = garsonCloseHasServerBill(existingOrders);
+    final hasServerBill = garsonCloseHasServerBill(
+      existingOrders ?? const <Map<String, dynamic>>[],
+    );
     final draftOnly = hasLocalDraft && !hasServerBill;
     final draftBesideBill = hasLocalDraft && hasServerBill;
     final shouldClose = await showDialog<String?>(
@@ -15685,13 +15659,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 FilledButton(
                   onPressed: () => Navigator.pop(
                     ctx,
-                    draftOnly ? 'cancel_unsent_draft' : selectedMethod,
+                    hasLocalDraft ? 'cancel_unsent_draft' : selectedMethod,
                   ),
                   style: FilledButton.styleFrom(
                     backgroundColor: Colors.red.shade600,
                   ),
                   child: Text(
-                    draftOnly ? 'Taslağı iptal et' : 'Evet, Kapat',
+                    hasLocalDraft ? 'Taslağı iptal et' : 'Evet, Kapat',
                   ),
                 ),
               ],
@@ -15700,15 +15674,29 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         );
       },
     );
+    if (shouldClose == 'cancel_unsent_draft') {
+      final decision = confirmGarsonDraftCancel();
+      if (!decision.closesTable && decision.removedLocalDraft && mounted) {
+        setState(() {
+          _mobileGarsonDraftItemsByTable.remove(tableNumber);
+          _mobileGarsonDraftUpdatedAtByTable.remove(tableNumber);
+          _mobileGarsonOptimisticSentAtByTable.remove(tableNumber);
+          _mobileGarsonOptimisticItemsByTable.remove(tableNumber);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(garsonDiscardUnsentDraftSnackbarText(tableLabel)),
+          ),
+        );
+      }
+      return;
+    }
     if (shouldClose != null && shouldClose.isNotEmpty) {
       await _closeGarsonTable(
         tableNumber: tableNumber,
         tableLabel: tableLabel,
-        paymentMethod: shouldClose == 'cancel_unsent_draft'
-            ? 'cash'
-            : shouldClose,
+        paymentMethod: shouldClose,
         existingOrders: existingOrders,
-        discardConfirmedDraft: draftOnly || draftBesideBill,
       );
     }
   }
@@ -37246,23 +37234,24 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         }
         final hadDraft = _draftItems.isNotEmpty;
         if (hadDraft) {
-          setState(() {
-            _draftItems.clear();
-            _editingOrderId = null;
-            _editingOrderSnapshot = null;
-            _editingBaseItems = const <Map<String, dynamic>>[];
-            _clearSubmitFeedback();
-          });
-          _notifyDraftChanged();
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                planGarsonTableClose(
+                  hasUnsentDraft: true,
+                  hasServerBill: false,
+                  sendResultUncertain: false,
+                ).reason,
+              ),
+            ),
+          );
+          return;
         }
         widget.onTableClosed?.call(widget.tableNumber);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              hadDraft
-                  ? garsonDiscardUnsentDraftSnackbarText(tableLabel)
-                  : garsonCloseTableAlreadyEmptySnackbarText(tableLabel),
-            ),
+            content: Text(garsonCloseTableAlreadyEmptySnackbarText(tableLabel)),
           ),
         );
         if (mounted && ModalRoute.of(context)?.isCurrent == true) {

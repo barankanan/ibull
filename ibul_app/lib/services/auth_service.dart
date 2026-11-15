@@ -17,6 +17,7 @@ import '../core/secure_local_store.dart';
 import '../features/seller/domain/store_vertical.dart';
 import 'google_sign_in_gateway.dart' deferred as google_sign_in_gateway;
 import 'google_sign_in_result.dart';
+import 'staff_login_policy.dart';
 import 'store_service.dart' deferred as store_service_lib;
 
 enum LoginResolvedRole { seller, waiter, admin, user, unknown }
@@ -826,6 +827,40 @@ class AuthService {
         'userId=${user.id} error=$error',
       );
     }
+  }
+
+  Future<StaffMenuGate> loadStaffMenuGate() async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) return const StaffMenuGate.revoked();
+    final managed = user.appMetadata['managed_restaurant_staff'] == true;
+    final store = await _supabase
+        .from('stores')
+        .select('seller_id')
+        .eq('seller_id', user.id)
+        .maybeSingle();
+    if (store != null && !managed) return const StaffMenuGate.owner();
+    final row = await _supabase
+        .from('store_sub_admins')
+        .select('status, staff_role, permissions, job_title, visible_modules')
+        .eq('auth_user_id', user.id)
+        .maybeSingle();
+    final status = row?['status']?.toString() ?? '';
+    if (row == null || status != 'active') {
+      return managed ? const StaffMenuGate.revoked() : const StaffMenuGate.owner();
+    }
+    final rawPermissions = row['permissions'];
+    final permissions = rawPermissions is List
+        ? rawPermissions.map((item) => item.toString()).toSet()
+        : <String>{};
+    final modules = row['visible_modules'];
+    return StaffMenuGate.staff(
+      role: row['staff_role']?.toString(),
+      permissions: permissions,
+      jobTitle: row['job_title']?.toString(),
+      visibleModules: modules is List
+          ? modules.map((item) => item.toString()).toSet()
+          : null,
+    );
   }
 
   // Update User Profile (Weight/Height/Name/etc)

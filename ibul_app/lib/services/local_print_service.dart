@@ -5,11 +5,13 @@ import 'package:flutter/foundation.dart'
     show debugPrint, debugPrintStack, kIsWeb;
 import 'package:http/http.dart' as http;
 
+import '../core/config/runtime_config.dart';
 import '../core/platform_capabilities.dart';
 import '../core/runtime_diagnostic_logger.dart';
 import '../models/printer_model.dart';
 import '../models/printer_profile.dart';
 import '../models/turkish_encoding_calibration.dart';
+import 'bridge_manager.dart';
 
 class LocalPrintHealthStatus {
   const LocalPrintHealthStatus({
@@ -80,7 +82,9 @@ class LocalPrintService {
     Duration? timeout,
     this.allowWebAgent = false,
   })  : _client = client ?? http.Client(),
-        _baseUri = baseUri ?? Uri.parse('http://127.0.0.1:3001'),
+        _baseUri = AppRuntimeConfig.coercePrintBridgeUri(
+          baseUri ?? AppRuntimeConfig.localPrintBridgeUri(),
+        ),
         _timeout = timeout ?? const Duration(milliseconds: 2500) {
     _log(
       'Init',
@@ -100,7 +104,14 @@ class LocalPrintService {
   final bool allowWebAgent;
 
   /// Ethernet / LAN hot-path: CONNECT→WRITE→CLOSE, never wait 5s for a response.
-  static const Duration ethernetHotPathTimeout = Duration(milliseconds: 600);
+  static const Duration ethernetSocketBudget = Duration(milliseconds: 600);
+
+  /// Kept so existing call sites still name the socket budget.
+  static const Duration ethernetHotPathTimeout = ethernetSocketBudget;
+
+  /// Render plus the bridge socket budget, plus a small HTTP margin.
+  /// This waits for the bridge's result. It does not wait for a printer ACK.
+  static const Duration ethernetPrintHttpTimeout = Duration(milliseconds: 4000);
 
   /// Scan may cover a /24; keep UI responsive (<=2s bridge budget + HTTP slack).
   static const Duration ethernetScanClientTimeout = Duration(seconds: 4);
@@ -159,7 +170,7 @@ class LocalPrintService {
         testMode == 'ethernet_test' ||
         testMode == 'ethernet' ||
         testMode == 'tcp_test') {
-      return ethernetHotPathTimeout;
+      return ethernetPrintHttpTimeout;
     }
     return _timeout;
   }
@@ -257,6 +268,12 @@ class LocalPrintService {
           response.statusCode >= 200 &&
           response.statusCode < 300 &&
           responseOk != false;
+      final httpReached =
+          response.statusCode >= 200 && response.statusCode < 300;
+      BridgeManager.noteBridgeHealth(
+        health: httpReached ? jsonBody : null,
+        reachable: true,
+      );
       if (isAvailable) {
         _log(
           'Health',
@@ -300,6 +317,7 @@ class LocalPrintService {
         error: error,
         stackTrace: stackTrace,
       );
+      BridgeManager.noteBridgeHealth(health: null, reachable: false);
       return LocalPrintHealthStatus(
         isAvailable: false,
         reason: 'timeout',
@@ -313,6 +331,10 @@ class LocalPrintService {
       // message "XMLHttpRequest error." — there is no further signal from the
       // browser.  Use a distinct reason so the UI can show a PNA/CORS hint.
       final failureReason = kIsWeb ? 'web_cors_blocked' : 'connection_error';
+      BridgeManager.noteBridgeHealth(
+        health: null,
+        reachable: !kIsWeb ? false : true,
+      );
       _log(
         'Health',
         'checkFail routeUrl=$url durationMs=${watch.elapsedMilliseconds} '
@@ -329,6 +351,7 @@ class LocalPrintService {
         details: error,
       );
     } catch (error, stackTrace) {
+      BridgeManager.noteBridgeHealth(health: null, reachable: false);
       _log(
         'Health',
         'checkFail routeUrl=$url durationMs=${watch.elapsedMilliseconds} '

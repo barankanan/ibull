@@ -6,6 +6,9 @@ import 'package:flutter/foundation.dart'
     show debugPrint, kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
 
+import '../core/config/runtime_config.dart';
+import 'bridge_recovery_policy.dart';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // BridgeSetupResult
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,8 +118,9 @@ typedef BridgeProgressCallback = void Function(String message);
 ///   - Install the macOS LaunchAgent so it auto-starts on login
 ///   - Trigger POST /setup (one-shot auto-discover + configure)
 class BridgeManager {
-  static const String _baseUrl = 'http://127.0.0.1:3001';
-  static const int _bridgePort = 3001;
+  static String get _baseUrl =>
+      AppRuntimeConfig.localPrintBridgeUri().toString();
+  static int get _bridgePort => AppRuntimeConfig.localPrintBridgeUri().port;
   static const Duration _healthTimeout = Duration(milliseconds: 900);
   static const Duration _portProbeTimeout = Duration(milliseconds: 600);
   static const Duration _startPollInterval = Duration(milliseconds: 400);
@@ -141,15 +145,78 @@ class BridgeManager {
     return 'cd "$parent"\n$module';
   }
 
+  static String _agentStatusLine = 'Kontrol edilemiyor';
+
+  /// Last observed bridge health. Connection is not a printed ticket.
+  static String get agentStatusLine => _agentStatusLine;
+
+  @visibleForTesting
+  static String describeBridgeAgentStatus({
+    required Map<String, dynamic>? health,
+    required bool reachable,
+  }) {
+    if (!reachable) return 'Bağlantı yok';
+    if (health == null || health['ok'] != true) return 'Kontrol edilemiyor';
+    final station = health['print_station'];
+    final serviceClosed = station is Map &&
+        (station['print_system_enabled'] == false ||
+            station['printSystemEnabled'] == false);
+    if (serviceClosed) {
+      return 'Bağlı. Yazıcı servisi kapalı. Fiziksel baskı yolu çalışmaz.';
+    }
+    return 'Bağlı. Köprü yanıtı fiziksel yazıcının çalıştığını göstermez.';
+  }
+
+  static void noteBridgeHealth({
+    required Map<String, dynamic>? health,
+    required bool reachable,
+  }) {
+    _agentStatusLine = describeBridgeAgentStatus(
+      health: health,
+      reachable: reachable,
+    );
+  }
+
+  /// Continues a stopped bridge process. Pid 0 and a running process are refused.
+  static Future<bool> resumeStoppedPid(int pid, {required String stat}) async {
+    if (pid <= 1 || classifyProcessStat(stat) != 'stopped') return false;
+    if (kIsWeb) return false;
+    try {
+      final result = await Process.run('kill', <String>['-CONT', '$pid']);
+      return result.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Returns true if the bridge is reachable right now.
   static Future<bool> isAlive({Duration? timeout}) async {
-    if (kIsWeb) return false;
+    if (kIsWeb) {
+      noteBridgeHealth(health: null, reachable: false);
+      _agentStatusLine = 'Kontrol edilemiyor';
+      return false;
+    }
     try {
       final resp = await _client
           .get(Uri.parse('$_baseUrl/health'))
           .timeout(timeout ?? _healthTimeout);
-      return resp.statusCode == 200;
+      Map<String, dynamic>? health;
+      try {
+        final decoded = jsonDecode(resp.body);
+        if (decoded is Map) {
+          health = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {
+        health = null;
+      }
+      final reachable = resp.statusCode == 200;
+      noteBridgeHealth(health: health, reachable: reachable);
+      if (!reachable) {
+        _agentStatusLine = 'Kontrol edilemiyor';
+      }
+      return reachable && health?['ok'] == true;
     } catch (_) {
+      noteBridgeHealth(health: null, reachable: false);
       return false;
     }
   }
@@ -226,6 +293,15 @@ class BridgeManager {
   static Future<BridgeStartResult> _ensureReadyInternal({
     BridgeProgressCallback? onProgress,
   }) async {
+    if (AppRuntimeConfig.isolatedDesktop) {
+      return BridgeStartResult.failed(
+        message: 'İzole test production yazıcı köprüsünü başlatmaz.',
+        details: const <String, dynamic>{
+          'isolatedDesktop': true,
+          'productionBridgeBlocked': true,
+        },
+      );
+    }
     if (kIsWeb) {
       return BridgeStartResult.failed(
         message: 'Web üzerinde yerel yazıcı servisi otomatik başlatılamıyor.',

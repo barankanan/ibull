@@ -25,6 +25,27 @@ import 'store/store_table_service.dart';
 import 'store/store_upload_progress_details.dart';
 import 'store_service_mappers.dart';
 
+String? staffTemporaryPasswordError(String password) {
+  if (password.trim().length < 8) {
+    return 'Geçici şifre en az 8 karakter olmalı.';
+  }
+  return null;
+}
+
+String? staffTemporaryPasswordAdvice(String password) {
+  if (staffTemporaryPasswordError(password) != null) return null;
+  if (password.trim().length < 12) {
+    return 'Geçici şifre için 12 karakter önerilir.';
+  }
+  return null;
+}
+
+class StaffLinkConfirmationRequired implements Exception {
+  StaffLinkConfirmationRequired(this.message);
+
+  final String message;
+}
+
 class StoreService {
   final SupabaseClient _supabase = Supabase.instance.client;
   static final Map<String, ({DateTime expiresAt, Map<String, dynamic> data})>
@@ -1947,6 +1968,36 @@ class StoreService {
     );
   }
 
+  /// Same close-session read the table service already implements.
+  /// The panel calls the store facade, not the table service directly.
+  Future<List<Map<String, dynamic>>> getTableCloseSession({
+    required String sellerId,
+    required int tableNumber,
+    Map<String, dynamic>? tableRow,
+    List<String> visibleOrderIds = const <String>[],
+  }) {
+    return _tableService.getTableCloseSession(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      tableRow: tableRow,
+      visibleOrderIds: visibleOrderIds,
+    );
+  }
+
+  Future<Map<String, dynamic>> issueCustomerProximityGrant({
+    required String sellerId,
+    required int tableNumber,
+    required String customerSessionId,
+    required bool staffConfirmed,
+  }) {
+    return _tableService.issueCustomerProximityGrant(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      customerSessionId: customerSessionId,
+      staffConfirmed: staffConfirmed,
+    );
+  }
+
   Future<Map<String, dynamic>?> updateTableOrder(
     String orderId, {
     String? status,
@@ -1992,6 +2043,7 @@ class StoreService {
     DateTime? closedAt,
     String? areaName,
     String? sessionKey,
+    String? knownServerHistoryId,
   }) {
     return _tableService.ensureTableHistoryRecorded(
       sellerId: sellerId,
@@ -2005,6 +2057,7 @@ class StoreService {
       closedAt: closedAt,
       areaName: areaName,
       sessionKey: sessionKey,
+      knownServerHistoryId: knownServerHistoryId,
     );
   }
 
@@ -2037,7 +2090,7 @@ class StoreService {
     );
   }
 
-  Future<void> closeTableWithHistory({
+  Future<Map<String, dynamic>> closeTableWithHistory({
     required String sellerId,
     required int tableNumber,
     required String paymentMethod,
@@ -2070,6 +2123,7 @@ class StoreService {
     String? waiterName,
     String? sessionKey,
     String? note,
+    String? clientRequestId,
   }) {
     return _tableService.recordTablePayment(
       sellerId: sellerId,
@@ -2080,6 +2134,21 @@ class StoreService {
       waiterName: waiterName,
       sessionKey: sessionKey ?? 'default',
       note: note,
+      clientRequestId: clientRequestId,
+    );
+  }
+
+  Future<void> realignTableOrderNumber({
+    required String sellerId,
+    required String orderId,
+    required int canonicalTableNumber,
+    required int storedTableNumber,
+  }) {
+    return _tableService.realignTableOrderNumber(
+      sellerId: sellerId,
+      orderId: orderId,
+      canonicalTableNumber: canonicalTableNumber,
+      storedTableNumber: storedTableNumber,
     );
   }
 
@@ -2368,16 +2437,132 @@ class StoreService {
 
   Future<void> updateSubAdminPermissions(
     String subAdminId,
-    List<SellerPermission> permissions,
-  ) async {
-    await _supabase
-        .from('store_sub_admins')
-        .update({'permissions': permissions.map((e) => e.name).toList()})
-        .eq('id', subAdminId);
+    List<SellerPermission> permissions, {
+    String? staffRole,
+    String? branchId,
+    String? jobTitle,
+    List<String>? visibleModules,
+    List<SellerPermission> revokedPermissions = const <SellerPermission>[],
+  }) async {
+    await _invokeStaffFunction(<String, dynamic>{
+      'operation': 'permissions',
+      'id': subAdminId,
+      'permissions': permissions.map((item) => item.name).toList(growable: false),
+      if (staffRole != null) 'staff_role': staffRole,
+      if (branchId != null) 'branch_id': branchId,
+      if (jobTitle != null) 'job_title': jobTitle,
+      if (visibleModules != null) 'visible_modules': visibleModules,
+      'revoked_permissions': revokedPermissions
+          .map((item) => item.name)
+          .toList(growable: false),
+    });
   }
 
   Future<void> removeSubAdmin(String subAdminId) async {
-    await _supabase.from('store_sub_admins').delete().eq('id', subAdminId);
+    await _invokeStaffFunction(<String, dynamic>{
+      'operation': 'deactivate',
+      'id': subAdminId,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getStaffBranches() async {
+    final storeId = currentUserId;
+    if (storeId == null || storeId.isEmpty) return const <Map<String, dynamic>>[];
+    final rows = await _supabase
+        .from('store_branches')
+        .select('id, name, status')
+        .eq('store_id', storeId)
+        .eq('status', 'active');
+    return List<Map<String, dynamic>>.from(rows as List);
+  }
+
+  Future<Map<String, dynamic>> createStaffAccount({
+    required String name,
+    required String email,
+    required String password,
+    required String staffRole,
+    required String? branchId,
+    required String requestId,
+    required List<SellerPermission> permissions,
+    String? jobTitle,
+    List<String>? visibleModules,
+    required bool confirmLink,
+  }) {
+    return _invokeStaffFunction(<String, dynamic>{
+      'operation': 'create',
+      'name': name,
+      'email': email,
+      'password': password,
+      'staff_role': staffRole,
+      'branch_id': branchId,
+      'request_id': requestId,
+      'permissions': permissions.map((item) => item.name).toList(growable: false),
+      'confirm_link': confirmLink,
+      if (jobTitle != null) 'job_title': jobTitle,
+      if (visibleModules != null) 'visible_modules': visibleModules,
+    });
+  }
+
+  Future<void> deleteStaffRecord(String id) {
+    return _invokeStaffFunction(<String, dynamic>{
+      'operation': 'delete',
+      'id': id,
+    });
+  }
+
+  Future<void> activateStaffAccount(String id) {
+    return _invokeStaffFunction(<String, dynamic>{
+      'operation': 'activate',
+      'id': id,
+    });
+  }
+
+  Future<void> setStaffTemporaryPassword({
+    required String subAdminId,
+    required String password,
+  }) {
+    return _invokeStaffFunction(<String, dynamic>{
+      'operation': 'set_temporary_password',
+      'id': subAdminId,
+      'password': password,
+    });
+  }
+
+  Future<Map<String, dynamic>> _invokeStaffFunction(
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final response = await _supabase.functions.invoke(
+        'manage-restaurant-staff',
+        body: body,
+      );
+      final data = response.data;
+      final map = data is Map
+          ? Map<String, dynamic>.from(data)
+          : <String, dynamic>{};
+      if (map['ok'] != true) {
+        _throwStaffFailure(map);
+      }
+      return map;
+    } on StaffLinkConfirmationRequired {
+      rethrow;
+    } on FunctionException catch (error) {
+      final details = error.details;
+      final map = details is Map
+          ? Map<String, dynamic>.from(details)
+          : <String, dynamic>{'message': error.reasonPhrase ?? error.toString()};
+      _throwStaffFailure(map);
+    }
+  }
+
+  Never _throwStaffFailure(Map<String, dynamic> map) {
+    final message = map['message']?.toString().trim().isNotEmpty == true
+        ? map['message'].toString()
+        : 'Personel işlemi reddedildi.';
+    if (map['link_available'] == true) {
+      throw StaffLinkConfirmationRequired(message);
+    }
+    throw StateError(message);
   }
 
   Future<List<Map<String, dynamic>>> getAllStores() async {

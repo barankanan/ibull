@@ -330,7 +330,20 @@ class MobileEthernetPrinterService {
     bool autoCut = true,
     int charsPerLine = 32,
     DateTime? now,
+    bool physicalPrintAllowed = false,
   }) {
+    if (!physicalPrintAllowed) {
+      return Future.value(
+        EthernetConnectionDiagnostic(
+          ok: false,
+          errorCode: 'print_system_disabled',
+          title: 'Yazıcı servisi kapalı',
+          message: 'Yazıcı servisi kapalı. Yeni fiziksel baskı gönderilmedi.',
+          host: host,
+          port: port,
+        ),
+      );
+    }
     final bytes = MobileEscPosTestReceipt.build(
       sellerName: sellerName,
       host: host,
