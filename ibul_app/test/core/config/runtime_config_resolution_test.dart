@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/core/config/runtime_config.dart';
 
@@ -299,6 +301,118 @@ void main() {
     test('secret içermeyen metni değiştirmeden döner', () {
       const plain = 'plain error with no secrets';
       expect(AppRuntimeConfig.maskSecrets(plain), plain);
+    });
+  });
+
+  group('isolated desktop guard', () {
+    const generatedUrl = 'https://generated.supabase.co';
+    const generatedKey = 'generated-key';
+
+    test('production hâlâ generated Supabase değerine düşer', () {
+      final url = AppRuntimeConfig.resolveSupabaseValue(
+        isolatedDesktop: false,
+        primaryDefine: '',
+        legacyDefine: '',
+        generated: generatedUrl,
+      );
+      final key = AppRuntimeConfig.resolveSupabaseValue(
+        isolatedDesktop: false,
+        primaryDefine: '',
+        legacyDefine: '',
+        generated: generatedKey,
+      );
+      expect(url.value, generatedUrl);
+      expect(url.source, 'generated');
+      expect(key.value, generatedKey);
+      expect(key.source, 'generated');
+      expect(
+        AppRuntimeConfig.localPrintBridgeUri(isolatedDesktop: false).port,
+        3001,
+      );
+    });
+
+    test('izole mod generated Supabase adresine ve anahtarına düşmez', () {
+      final url = AppRuntimeConfig.resolveSupabaseValue(
+        isolatedDesktop: true,
+        primaryDefine: '',
+        legacyDefine: '',
+        generated: generatedUrl,
+      );
+      final key = AppRuntimeConfig.resolveSupabaseValue(
+        isolatedDesktop: true,
+        primaryDefine: '',
+        legacyDefine: '',
+        generated: generatedKey,
+      );
+      expect(url.value, isEmpty);
+      expect(url.source, 'missing');
+      expect(key.value, isEmpty);
+      expect(key.value.contains('generated'), isFalse);
+      expect(url.value.contains('supabase.co'), isFalse);
+    });
+
+    test('izole mod supabase.co dart-define değerini de reddeder', () {
+      final url = AppRuntimeConfig.resolveSupabaseValue(
+        isolatedDesktop: true,
+        primaryDefine: 'https://example.supabase.co',
+        generated: generatedUrl,
+      );
+      expect(url.value, isEmpty);
+      expect(url.source, 'isolated_refused');
+    });
+
+    test('izole mod yalnız erişilemeyen test adresini ve 3001 dışını bırakır', () {
+      final url = AppRuntimeConfig.resolveSupabaseValue(
+        isolatedDesktop: true,
+        primaryDefine: AppRuntimeConfig.isolatedProbeUrl,
+        generated: generatedUrl,
+      );
+      expect(url.value, 'http://127.0.0.1:9');
+      expect(url.source, 'dart_define');
+      expect(
+        AppRuntimeConfig.localPrintBridgeUri(isolatedDesktop: true).port,
+        9,
+      );
+      expect(
+        AppRuntimeConfig.coercePrintBridgeUri(
+          Uri.parse('http://127.0.0.1:3001/print'),
+          isolatedDesktop: true,
+        ).port,
+        9,
+      );
+      expect(
+        AppRuntimeConfig.coercePrintBridgeUri(
+          Uri.parse('http://127.0.0.1:3001/print'),
+          isolatedDesktop: false,
+        ).port,
+        3001,
+      );
+    });
+
+    test('izole LaunchAgent production kimliğini taşımaz ve açılışta başlamaz', () {
+      final file = File(
+        '../macos/Runner/Library/LaunchAgents/com.ibul.localprint.isolated-test.plist',
+      );
+      expect(file.existsSync(), isTrue);
+      final text = file.readAsStringSync();
+      expect(text.contains('<string>com.ibul.sellerdesktop</string>'), isFalse);
+      expect(
+        text.contains('<string>com.ibul.sellerdesktop.offlinetest</string>'),
+        isTrue,
+      );
+      expect(text.contains('<key>RunAtLoad</key>'), isTrue);
+      final runAtLoad = RegExp(
+        r'<key>RunAtLoad</key>\s*<false/>',
+      ).hasMatch(text);
+      expect(runAtLoad, isTrue);
+
+      final live = File(
+        '../macos/Runner/Library/LaunchAgents/com.ibul.localprint.plist',
+      );
+      expect(
+        live.readAsStringSync().contains('<string>com.ibul.sellerdesktop</string>'),
+        isTrue,
+      );
     });
   });
 }
