@@ -3,6 +3,7 @@
 import {readFile,writeFile} from 'node:fs/promises';
 import {stripTypeScriptTypes} from 'node:module';
 import assert from 'node:assert/strict';
+const fxPw = (k, n) => `Aa1!${k}-fixture-fixture-fixture`.slice(0, n); // test-only deterministic fake, not a real password
 const {PGlite}=await import(process.env.IBUL_PGLITE_MODULE || '@electric-sql/pglite');
 const db=new PGlite();
 const read=(p)=>readFile(new URL(p,import.meta.url),'utf8');
@@ -68,7 +69,7 @@ for(const operation of ['create','permissions','deactivate'])await test(`manage-
 for(const operation of ['permissions','deactivate'])await test(`manage-restaurant-staff owner foreign member ${operation}`,async()=>{
  const before=writes;assert.equal((await request(owner,{operation,id:'foreign-member',permissions:[]})).status,400);assert.equal(writes,before);
 });
-await test('manage-restaurant-staff owner foreign branch create',async()=>assert.equal((await request(owner,{operation:'create',name:'Fixture',email:'fixture@example.test',password:'dummy-password-123',staff_role:'waiter',permissions:[],request_id:'fixture',branch_id:'foreign-branch'})).status,400));
+await test('manage-restaurant-staff owner foreign branch create',async()=>assert.equal((await request(owner,{operation:'create',name:'Fixture',email:'fixture@example.test',password:fxPw('p1', 18),staff_role:'waiter',permissions:[],request_id:'fixture',branch_id:'foreign-branch'})).status,400));
 await test('manage-restaurant-staff owner own member positive control',async()=>assert.equal((await request(owner,{operation:'deactivate',id:'own-member'})).status,200));
 for(const name of ['manage-restaurant-staff','seller_accept_order','create_order']) {
  await load(name);

@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import assert from 'node:assert/strict';
+const fxPw = (k, n) => `Aa1!${k}-fixture-fixture-fixture`.slice(0, n); // test-only deterministic fake, not a real password
 
 const psql = process.env.IBUL_PSQL;
 const host = process.env.IBUL_PGHOST;
@@ -284,8 +285,8 @@ const check = (name, ok) => {
   return ok;
 };
 
-const password = 'gecici-sifre-12';
-const nextPassword = 'yeni-sifre-1234';
+const password = fxPw('p1', 15);
+const nextPassword = fxPw('p2', 15);
 const created = await callAs(owner, {
   operation: 'create', name: 'Ayse Test', email: 'staff@isolated.invalid', password,
   staff_role: 'waiter', branch_id: branch, request_id: 'isolated-1',
@@ -327,7 +328,7 @@ const login = await fetch('http://127.0.0.1.invalid/auth/v1/token?grant_type=pas
   method: 'POST', body: JSON.stringify({ email: 'staff@isolated.invalid', password }),
 });
 const wrongLogin = await fetch('http://127.0.0.1.invalid/auth/v1/token?grant_type=password', {
-  method: 'POST', body: JSON.stringify({ email: 'staff@isolated.invalid', password: 'yanlis-sifre-00' }),
+  method: 'POST', body: JSON.stringify({ email: 'staff@isolated.invalid', password: fxPw('p3', 15) }),
 });
 const opened = accessAs(staffId);
 check('LOGIN', login.ok && !wrongLogin.ok && meta.must_change_password === true && opened.includes(owner) && !opened.includes(other));

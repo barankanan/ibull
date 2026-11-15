@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -21,7 +22,9 @@ const branchA = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const ocak = '11111111-1111-1111-1111-111111111111';
 const firin = '22222222-2222-2222-2222-222222222222';
 const kasap = '33333333-3333-3333-3333-333333333333';
-const jwtSecret = 'isolated-jwt-secret-not-production';
+final jwtSecret = base64Url.encode(
+  List<int>.generate(32, (_) => Random.secure().nextInt(256)),
+); // test-only random per run, never a real secret
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
