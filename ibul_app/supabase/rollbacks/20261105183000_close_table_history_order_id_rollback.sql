@@ -1,0 +1,19 @@
+-- Emergency rollback for 20261105183000_close_table_history_order_id.sql.
+-- Do not apply unless that migration was applied and must be undone.
+-- Do not run this on production without naming the file and saying
+-- Bu migration'ı production'a uygula.
+--
+-- This does not delete table_order_history, orders, or table_payments.
+-- It only puts back the close function that was live on 2026-11-06
+-- before 20261105183000. That live function omits original_order_id,
+-- so applying this rollback brings PostgreSQL 23502 back.
+--
+-- Before applying 20261105183000, save the current function:
+--   select pg_get_functiondef('public.close_table_with_history(uuid,integer,text,text,uuid,text,text)'::regprocedure);
+-- The body read on 2026-11-06 is the function to restore. Its history
+-- insert columns are seller_id, table_number, session_key, payment_method,
+-- payment_note, waiter_id, waiter_name, grand_total, archived_orders,
+-- archived_at. It still takes the same seven arguments.
+--
+-- Restore by running that saved CREATE OR REPLACE FUNCTION statement.
+-- History rows already written by 20261105183000 stay. Payments stay.
