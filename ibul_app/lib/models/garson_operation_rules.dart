@@ -310,6 +310,19 @@ abstract final class TableLevelPolicy {
   static bool canReprint(Iterable<String?> orderStatuses) =>
       orderStatuses.any(KitchenPrintPolicy.canReprint);
 
+  /// Person split is a view of the bill. It is not permission to take payment.
+  static bool canShowPerPersonTotal({
+    required Iterable<String?> orderStatuses,
+    required bool canViewBill,
+  }) {
+    if (!canViewBill) return false;
+    return orderStatuses.any((status) {
+      final normalized = GarsonOrderStatus.normalise(status);
+      return normalized != GarsonOrderStatus.closed &&
+          normalized != GarsonOrderStatus.completed;
+    });
+  }
+
   // ── Action tile subtitles ─────────────────────────────────────────────────
   static const String transferEnabled =
       'Siparişleri başka bir masaya taşı.';
@@ -422,4 +435,72 @@ List<String> validateTablePaymentPayload(Map<String, dynamic> payload) {
   }
 
   return errors;
+}
+
+/// Kuruş split of a bill. The first [extraPeople] shares receive one extra kuruş.
+/// Parts sum to the source amount. This does not record a payment.
+class BillShare {
+  const BillShare({
+    required this.totalCents,
+    required this.people,
+    required this.eachCents,
+    required this.extraPeople,
+  });
+
+  final int totalCents;
+  final int people;
+  final int eachCents;
+  final int extraPeople;
+
+  double get eachAmount => eachCents / 100;
+
+  String get roundingNote {
+    final total = _tl(totalCents);
+    if (extraPeople <= 0) {
+      return '$people kişi × ${_tl(eachCents)}. Toplam $total.';
+    }
+    final higherCount = extraPeople;
+    final lowerCount = people - extraPeople;
+    return '$higherCount kişi ${_tl(eachCents + 1)}, '
+        '$lowerCount kişi ${_tl(eachCents)}. Toplam $total.';
+  }
+
+  static BillShare fromAmount(num amount, int people) {
+    if (people < 1) {
+      throw ArgumentError('Kişi sayısı geçersiz.');
+    }
+    if (amount.isNaN || amount.isInfinite || amount < 0) {
+      throw ArgumentError('Tutar geçersiz.');
+    }
+    final scaled = amount * 100;
+    final cents = scaled.round();
+    if ((scaled - cents).abs() > 0.001 || cents < 0) {
+      throw ArgumentError('Tutar kuruşa indirgenemedi.');
+    }
+    return BillShare(
+      totalCents: cents,
+      people: people,
+      eachCents: cents ~/ people,
+      extraPeople: cents % people,
+    );
+  }
+
+  static String _tl(int cents) {
+    final whole = cents ~/ 100;
+    final fraction = (cents.abs() % 100).toString().padLeft(2, '0');
+    return '$whole,$fraction TL';
+  }
+}
+
+String garsonSubmitSavedLabel({
+  required bool isUpdate,
+  required bool physicallyDispatched,
+  required bool printFailed,
+}) {
+  if (isUpdate && !physicallyDispatched && !printFailed) {
+    return 'Sipariş kaydedildi';
+  }
+  if (physicallyDispatched && !printFailed) return 'Yazıcıya iletildi';
+  if (printFailed) return 'Baskı başarısız, sipariş kayıtlı';
+  return 'Kuyruğa alındı';
 }

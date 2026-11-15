@@ -8,17 +8,40 @@ import '../services/restaurant_offline/restaurant_local_cache_service.dart';
 import '../services/restaurant_offline/restaurant_offline_models.dart';
 import '../services/restaurant_offline/restaurant_offline_sync_service.dart';
 
+String waiterConnectionLabel({
+  required bool internet,
+  required bool localServerListening,
+  required bool printerReady,
+  required int pendingSync,
+}) {
+  if (!internet && !localServerListening) {
+    return 'Yerel sipariş merkezi kullanılamıyor';
+  }
+  if (internet && pendingSync > 0) return 'Senkronize ediliyor...';
+  if (internet) return 'Çevrimiçi';
+  if (localServerListening) {
+    return printerReady
+        ? 'Çevrimdışı — Yerel sistem aktif'
+        : 'Çevrimdışı — Yerel sistem aktif';
+  }
+  return 'Yerel sipariş merkezi kullanılamıyor';
+}
+
 class RestaurantOfflineBanner extends StatefulWidget {
   const RestaurantOfflineBanner({
     super.key,
     required this.restaurantId,
     required this.storeCategory,
     this.compact = false,
+    this.showAdvancedActions = true,
   });
 
   final String restaurantId;
   final String? storeCategory;
   final bool compact;
+
+  /// Manual recheck. Garson and kitchen banners keep it. A caller can hide it.
+  final bool showAdvancedActions;
 
   @override
   State<RestaurantOfflineBanner> createState() => _RestaurantOfflineBannerState();
@@ -112,6 +135,18 @@ class _RestaurantOfflineBannerState extends State<RestaurantOfflineBanner> {
             lines.add('İnternet yok. Yerel restoran modunda çalışıyorsunuz.');
             background = const Color(0xFFEA580C);
             foreground = Colors.white;
+          case RestaurantConnectivityMode.lanUnavailable:
+            lines.add(
+              'Yerel ağ yok. Sipariş ve yazıcı yolu bu cihazdan kullanılamaz.',
+            );
+            background = const Color(0xFFEA580C);
+            foreground = Colors.white;
+          case RestaurantConnectivityMode.conflict:
+            lines.add(
+              'Kayıt çakışması var. Otomatik kapatma ve yeniden baskı yapılmaz.',
+            );
+            background = const Color(0xFFDC2626);
+            foreground = Colors.white;
         }
 
         if (_pendingSyncCount > 0) {
@@ -156,7 +191,8 @@ class _RestaurantOfflineBannerState extends State<RestaurantOfflineBanner> {
                       ),
                     ),
                   ),
-                  if (mode != RestaurantConnectivityMode.online)
+                  if (widget.showAdvancedActions &&
+                      mode != RestaurantConnectivityMode.online)
                     TextButton(
                       onPressed: () =>
                           unawaited(_refreshConnectivityAndCounts()),

@@ -262,13 +262,17 @@ List<Map<String, dynamic>> normalizeRestaurantOrderItems(
         final lineTotal = _parseMoney(
           item['line_total'] ?? item['total_price'] ?? (unitPrice * safeQty),
         );
+        final lineId = item['id']?.toString() ?? '';
+        final productId = item['product_id']?.toString() ?? '';
         return <String, dynamic>{
           'id': item['id'],
           'product_id': item['product_id'],
+          if (lineId.isNotEmpty && lineId != productId) 'order_item_id': lineId,
           'name': item['product_name'] ?? item['name'] ?? 'Ürün',
           'quantity': safeQty,
           'price': unitPrice,
           'line_total': lineTotal,
+          if (item['station_id'] != null) 'station_id': item['station_id'],
           if (item['item_note'] case final note?)
             if (note.toString().trim().isNotEmpty) 'notes': note,
         };

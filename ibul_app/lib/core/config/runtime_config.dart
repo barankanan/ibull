@@ -12,6 +12,10 @@ const String _kLegacySupabaseUrl = String.fromEnvironment('SUPABASE_URL');
 const String _kLegacySupabaseAnonKey = String.fromEnvironment(
   'SUPABASE_ANON_KEY',
 );
+
+/// Set only by the macOS SellerOfflinetest configuration.
+/// Production builds leave this false, so their generated fallback stays.
+const bool _kIsolatedDesktop = bool.fromEnvironment('IBUL_ISOLATED_DESKTOP');
 const String _kIbulGoogleClientId = String.fromEnvironment(
   'IBUL_GOOGLE_CLIENT_ID',
 );
@@ -146,18 +150,92 @@ class AppRuntimeConfig {
     return const ResolvedRuntimeValue('', 'missing');
   }
 
-  static ResolvedRuntimeValue get supabaseUrlResolved => resolveWithFallback(
-    primaryDefine: _kIbulSupabaseUrl,
-    legacyDefine: _kLegacySupabaseUrl,
-    generated: gen.generatedIbulSupabaseUrl,
-  );
+  static const String isolatedProbeUrl = 'http://127.0.0.1:9';
+  static const int productionPrintBridgePort = 3001;
 
-  static ResolvedRuntimeValue get supabaseAnonKeyResolved =>
-      resolveWithFallback(
+  static bool get isolatedDesktop => _kIsolatedDesktop;
+
+  /// Isolated seller builds never read the generated Supabase URL or key.
+  /// A dart-define that itself points at supabase.co is refused as well.
+  @visibleForTesting
+  static ResolvedRuntimeValue resolveSupabaseValue({
+    required bool isolatedDesktop,
+    required String primaryDefine,
+    String legacyDefine = '',
+    String generated = '',
+  }) {
+    final resolved = resolveWithFallback(
+      primaryDefine: primaryDefine,
+      legacyDefine: legacyDefine,
+      generated: isolatedDesktop ? '' : generated,
+    );
+    if (!isolatedDesktop) return resolved;
+    if (resolved.source == 'generated' ||
+        hostIsProductionSupabase(resolved.value)) {
+      return const ResolvedRuntimeValue('', 'isolated_refused');
+    }
+    return resolved;
+  }
+
+  @visibleForTesting
+  static bool hostIsProductionSupabase(String value) {
+    final host = Uri.tryParse(value.trim())?.host.toLowerCase() ?? '';
+    return host == 'supabase.co' || host.endsWith('.supabase.co');
+  }
+
+  /// Production keeps port 3001. The isolated desktop build cannot use it.
+  @visibleForTesting
+  static Uri localPrintBridgeUri({bool? isolatedDesktop}) {
+    final blocked = isolatedDesktop ?? _kIsolatedDesktop;
+    if (blocked) return Uri.parse(isolatedProbeUrl);
+    return Uri.parse('http://127.0.0.1:$productionPrintBridgePort');
+  }
+
+  @visibleForTesting
+  static Uri coercePrintBridgeUri(Uri uri, {bool? isolatedDesktop}) {
+    final blocked = isolatedDesktop ?? _kIsolatedDesktop;
+    if (!blocked) return uri;
+    final host = uri.host.toLowerCase();
+    final local = host == '127.0.0.1' || host == 'localhost' || host == '::1';
+    if (local && uri.port == productionPrintBridgePort) {
+      return Uri.parse(isolatedProbeUrl);
+    }
+    return uri;
+  }
+
+  static ResolvedRuntimeValue get supabaseUrlResolved {
+    if (_kIsolatedDesktop) {
+      return resolveSupabaseValue(
+        isolatedDesktop: true,
+        primaryDefine: _kIbulSupabaseUrl,
+        legacyDefine: _kLegacySupabaseUrl,
+        generated: '',
+      );
+    }
+    return resolveSupabaseValue(
+      isolatedDesktop: false,
+      primaryDefine: _kIbulSupabaseUrl,
+      legacyDefine: _kLegacySupabaseUrl,
+      generated: gen.generatedIbulSupabaseUrl,
+    );
+  }
+
+  static ResolvedRuntimeValue get supabaseAnonKeyResolved {
+    if (_kIsolatedDesktop) {
+      return resolveSupabaseValue(
+        isolatedDesktop: true,
         primaryDefine: _kIbulSupabaseAnonKey,
         legacyDefine: _kLegacySupabaseAnonKey,
-        generated: gen.generatedIbulSupabaseAnonKey,
+        generated: '',
       );
+    }
+    return resolveSupabaseValue(
+      isolatedDesktop: false,
+      primaryDefine: _kIbulSupabaseAnonKey,
+      legacyDefine: _kLegacySupabaseAnonKey,
+      generated: gen.generatedIbulSupabaseAnonKey,
+    );
+  }
 
   static ResolvedRuntimeValue get firebaseAndroidApiKeyResolved =>
       resolveWithFallback(
@@ -221,6 +299,16 @@ class AppRuntimeConfig {
   static String get supabaseAnonKey =>
       _requireEnv('IBUL_SUPABASE_ANON_KEY', rawSupabaseAnonKey);
 
+  static String get _generatedSupabaseUrlPresent {
+    if (_kIsolatedDesktop) return 'false';
+    return '${sanitizeEnvValue(gen.generatedIbulSupabaseUrl).isNotEmpty}';
+  }
+
+  static String get _generatedSupabaseAnonKeyLength {
+    if (_kIsolatedDesktop) return '0';
+    return '${sanitizeEnvValue(gen.generatedIbulSupabaseAnonKey).length}';
+  }
+
   /// Güvenli boot diagnostiği: key'in kendisini ASLA loglamaz.
   /// Sadece varlık, host, uzunluk ve kaynak bilgisi yazar.
   static void logSupabaseConfigDiagnostics() {
@@ -274,10 +362,8 @@ class AppRuntimeConfig {
       'configSource': url.source == key.source
           ? url.source
           : 'url=${url.source},key=${key.source}',
-      'generatedUrlPresent':
-          '${sanitizeEnvValue(gen.generatedIbulSupabaseUrl).isNotEmpty}',
-      'generatedAnonKeyLength':
-          '${sanitizeEnvValue(gen.generatedIbulSupabaseAnonKey).length}',
+      'generatedUrlPresent': _generatedSupabaseUrlPresent,
+      'generatedAnonKeyLength': _generatedSupabaseAnonKeyLength,
       'dartDefineUrlPresent': '${sanitizeEnvValue(_kIbulSupabaseUrl).isNotEmpty}',
       'legacyUrlPresent': '${sanitizeEnvValue(_kLegacySupabaseUrl).isNotEmpty}',
       'missingKey': missing,

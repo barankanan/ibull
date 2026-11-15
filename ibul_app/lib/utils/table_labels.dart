@@ -550,3 +550,165 @@ String garsonCloseTableSnackbarText(String label) => '$label kapatıldı.';
 
 String garsonCloseTableAlreadyEmptySnackbarText(String label) =>
     '$label zaten boş.';
+
+enum GarsonDraftCloseAction { alreadyEmpty, blocked, closeVerified }
+
+/// Close planning only. It does not delete a draft or write a payment.
+class GarsonTableClosePlan {
+  const GarsonTableClosePlan({
+    required this.action,
+    required this.recordsPayment,
+    required this.writesHistory,
+    required this.cancelUnsentDraft,
+    required this.blocked,
+    this.reason = '',
+  });
+
+  final GarsonDraftCloseAction action;
+  final bool recordsPayment;
+  final bool writesHistory;
+  final bool cancelUnsentDraft;
+  final bool blocked;
+  final String reason;
+
+  /// The client may call the close RPC only for a verified server bill.
+  bool get allowsServerCloseRpc => action == GarsonDraftCloseAction.closeVerified;
+}
+
+GarsonTableClosePlan planGarsonTableClose({
+  required bool hasUnsentDraft,
+  required bool hasServerBill,
+  required bool sendResultUncertain,
+  bool unverifiedMoney = false,
+}) {
+  if (hasUnsentDraft) {
+    return const GarsonTableClosePlan(
+      action: GarsonDraftCloseAction.blocked,
+      recordsPayment: false,
+      writesHistory: false,
+      cancelUnsentDraft: false,
+      blocked: true,
+      reason: 'Gönderilmemiş taslak varken masa kapatılmaz.',
+    );
+  }
+  if (sendResultUncertain) {
+    return const GarsonTableClosePlan(
+      action: GarsonDraftCloseAction.blocked,
+      recordsPayment: false,
+      writesHistory: false,
+      cancelUnsentDraft: false,
+      blocked: true,
+      reason: 'Gönderim sonucu belirsiz. Kayıtlar mutabık değil.',
+    );
+  }
+  if (unverifiedMoney) {
+    return const GarsonTableClosePlan(
+      action: GarsonDraftCloseAction.blocked,
+      recordsPayment: false,
+      writesHistory: false,
+      cancelUnsentDraft: false,
+      blocked: true,
+      reason: 'Doğrulanmamış tutar varken masa kapatılmaz.',
+    );
+  }
+  if (!hasServerBill) {
+    return const GarsonTableClosePlan(
+      action: GarsonDraftCloseAction.alreadyEmpty,
+      recordsPayment: false,
+      writesHistory: false,
+      cancelUnsentDraft: false,
+      blocked: false,
+    );
+  }
+  return const GarsonTableClosePlan(
+    action: GarsonDraftCloseAction.closeVerified,
+    recordsPayment: false,
+    writesHistory: false,
+    cancelUnsentDraft: false,
+    blocked: false,
+  );
+}
+
+/// Explicit draft cancel never closes the table.
+class GarsonDraftCancelDecision {
+  const GarsonDraftCancelDecision({
+    required this.removedLocalDraft,
+    required this.closesTable,
+  });
+
+  final bool removedLocalDraft;
+  final bool closesTable;
+}
+
+GarsonDraftCancelDecision confirmGarsonDraftCancel() {
+  return const GarsonDraftCancelDecision(
+    removedLocalDraft: true,
+    closesTable: false,
+  );
+}
+
+/// A failed close RPC keeps both the local draft and the server orders.
+bool garsonCloseFailurePreservesOrders({required bool rpcSucceeded}) {
+  return !rpcSucceeded;
+}
+
+bool garsonOrderIsUnsentLocalDraft(Map<String, dynamic> order) {
+  final status = order['status']?.toString().trim().toLowerCase() ?? '';
+  return status == 'draft' || status == 'local_draft' || status == 'unsent';
+}
+
+bool garsonCloseOrdersAreUnsentDraftOnly(List<Map<String, dynamic>> orders) {
+  return orders.isNotEmpty && orders.every(garsonOrderIsUnsentLocalDraft);
+}
+
+bool garsonCloseHasServerBill(List<Map<String, dynamic>> orders) {
+  return orders.any((order) => !garsonOrderIsUnsentLocalDraft(order));
+}
+
+int garsonStoredTableNumber(Map<String, dynamic> order) {
+  final raw = order['table_number'];
+  if (raw is num) return raw.toInt();
+  return int.tryParse(raw?.toString() ?? '') ?? 0;
+}
+
+bool garsonTableOrderNeedsRealign({
+  required Map<String, dynamic> order,
+  required int canonicalTableNumber,
+}) {
+  final stored = garsonStoredTableNumber(order);
+  return stored > 0 &&
+      canonicalTableNumber > 0 &&
+      stored != canonicalTableNumber;
+}
+
+bool garsonOrderBelongsToCloseTable({
+  Map<String, dynamic>? table,
+  required int canonicalTableNumber,
+  required Map<String, dynamic> order,
+}) {
+  if (garsonStoredTableNumber(order) == canonicalTableNumber) return true;
+  final area = table?['area_name']?.toString().trim() ?? '';
+  final areaNo = table?['area_table_number'];
+  final orderArea = order['area_name']?.toString().trim() ?? '';
+  final orderAreaNo = order['area_table_number'];
+  return area.isNotEmpty &&
+      orderArea == area &&
+      areaNo != null &&
+      areaNo == orderAreaNo;
+}
+
+String garsonUncertainSendKeepsDraftSnackbarText(String label) =>
+    '$label kapatılmadı. Gönderim sonucu belirsiz; taslak duruyor.';
+
+String garsonDraftCancelNeedsConfirmSnackbarText(String label) =>
+    '$label taslağı ancak ayrı bir iptal işlemiyle silinir.';
+
+String garsonDiscardUnsentDraftSnackbarText(String label) =>
+    '$label taslağı iptal edildi. Masa kapatılmadı.';
+
+String garsonCancelUnsentDraftDialogText() =>
+    'Bu gönderilmemiş taslak silinir. Masa kapanmaz ve ödeme alınmaz.';
+
+String garsonCancelDraftBesideBillDialogText() =>
+    'Sunucudaki adisyon açık kalır. Taslak silinirse kapanış ayrıca değerlendirilir.';
+

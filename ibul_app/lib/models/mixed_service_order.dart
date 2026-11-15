@@ -590,7 +590,85 @@ class MixedServiceOrder {
   }
 
   static bool usesPlateGrouping(Map<String, dynamic> item) {
-    return serviceRoundCountForItem(item) > 0;
+    if (serviceRoundCountForItem(item) > 0) return true;
+    for (final child in normalizeChildItems(item['child_items'])) {
+      final raw = child['service_round'];
+      final parsed = raw is num ? raw.toInt() : int.tryParse('${raw ?? ''}');
+      if (parsed != null && parsed > 1 && supportedServiceRounds.contains(parsed)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static final RegExp _strictStoredMoney = RegExp(
+    r'^(?:₺\s*)?([0-9]+(?:\.[0-9]+)?)(?:\s*TL)?$',
+  );
+
+  /// Accepts a JSON number or an unambiguous currency label such as `₺544`
+  /// or `1500 TL`. Display text is not a stored price.
+  static double? tryStrictMoney(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is num) {
+      if (raw.isNaN || raw.isInfinite) return null;
+      return raw.toDouble();
+    }
+    final text = raw.toString().trim();
+    if (text.isEmpty) return null;
+    final match = _strictStoredMoney.firstMatch(text);
+    if (match == null) return null;
+    return double.tryParse(match.group(1)!);
+  }
+
+  /// Rewrites price fields to numbers. Quantity is left unchanged.
+  /// An explicit numeric line total is kept. A missing line total is the
+  /// unit price times the existing quantity. Garbage prices throw.
+  static Map<String, dynamic> persistNumericItemPrices(
+    Map<String, dynamic> item,
+  ) {
+    final copy = Map<String, dynamic>.from(item);
+    final rawPrice = copy['price'];
+    final priceWasDisplay = rawPrice is String;
+    if (copy.containsKey('price') && rawPrice != null) {
+      final parsed = tryStrictMoney(rawPrice);
+      if (parsed == null) {
+        throw FormatException('Sipariş fiyatı sayı olarak kaydedilemedi.');
+      }
+      copy['price'] = parsed;
+    }
+    final hasLineTotal =
+        copy.containsKey('line_total') &&
+        copy['line_total'] != null &&
+        copy['line_total'].toString().trim().isNotEmpty;
+    if (hasLineTotal) {
+      final parsed = tryStrictMoney(copy['line_total']);
+      if (parsed == null) {
+        throw FormatException(
+          'Sipariş satır toplamı sayı olarak kaydedilemedi.',
+        );
+      }
+      copy['line_total'] = parsed;
+    } else if (priceWasDisplay && copy['price'] is num) {
+      final rawQuantity = copy['quantity'];
+      final quantity = rawQuantity is num
+          ? rawQuantity.toDouble()
+          : double.tryParse(rawQuantity?.toString() ?? '') ?? 1;
+      final price = (copy['price'] as num).toDouble();
+      copy['line_total'] = double.parse((price * quantity).toStringAsFixed(2));
+    }
+    for (final key in <String>[
+      'calculatedLineTotal',
+      'unitPriceSnapshot',
+      'unit_price_snapshot',
+    ]) {
+      if (!copy.containsKey(key) || copy[key] == null) continue;
+      final parsed = tryStrictMoney(copy[key]);
+      if (parsed == null) {
+        throw FormatException('Sipariş fiyatı sayı olarak kaydedilemedi.');
+      }
+      copy[key] = parsed;
+    }
+    return copy;
   }
 
   static double parsePrice(dynamic raw) {
@@ -614,6 +692,54 @@ class MixedServiceOrder {
     }
 
     return double.tryParse(normalized) ?? 0;
+  }
+
+  static String? unverifiedOrdersMoney(List<Map<String, dynamic>> orders) {
+    for (final order in orders) {
+      final raw = order['items'];
+      if (raw is! List) continue;
+      for (final item in raw.whereType<Map>()) {
+        final reason = unverifiedOrderMoneyReason(
+          Map<String, dynamic>.from(item),
+        );
+        if (reason != null) return reason;
+      }
+    }
+    return null;
+  }
+
+  /// Null when the stored amount can be read. A garbage price blocks payment
+  /// and table close instead of being guessed.
+  static String? unverifiedOrderMoneyReason(Map<String, dynamic> item) {
+    const fields = <String>[
+      'price',
+      'line_total',
+      'total_price',
+      'unitPriceSnapshot',
+      'unit_price_snapshot',
+    ];
+    for (final key in fields) {
+      if (!item.containsKey(key) || item[key] == null) continue;
+      final raw = item[key];
+      if (raw is num) {
+        if (raw.isNaN || raw.isInfinite) {
+          return 'Hesap tutarı doğrulanamadı. Ödeme ve masa kapatma yapılmadı.';
+        }
+        continue;
+      }
+      final text = raw.toString().trim();
+      if (text.isEmpty) continue;
+      if (tryStrictMoney(text) == null && parsePrice(text) <= 0) {
+        return 'Hesap tutarı doğrulanamadı. Ödeme ve masa kapatma yapılmadı.';
+      }
+    }
+    final quantity = item['quantity'];
+    if (quantity != null &&
+        quantity is! num &&
+        int.tryParse(quantity.toString()) == null) {
+      return 'Ürün adedi doğrulanamadı. Ödeme ve masa kapatma yapılmadı.';
+    }
+    return null;
   }
 
   static double itemLineTotal(Map<String, dynamic> item) {

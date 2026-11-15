@@ -691,12 +691,15 @@ GarsonBoardState removeClosedTableOrdersFromBoardState({
   required GarsonBoardState current,
   required int tableNumber,
   required String closedOrderId,
+  Map<String, dynamic>? table,
 }) {
   if (tableNumber <= 0) return current;
   bool matchesTable(Map<String, dynamic> order) {
-    final n = order['table_number'];
-    final parsed = n is num ? n.toInt() : int.tryParse(n?.toString() ?? '') ?? 0;
-    return parsed == tableNumber;
+    return garsonOrderBelongsToCloseTable(
+      table: table,
+      canonicalTableNumber: tableNumber,
+      order: order,
+    );
   }
 
   final nextOrders =
@@ -715,4 +718,90 @@ GarsonBoardState removeClosedTableOrdersFromBoardState({
     lastAppliedSource: 'close_table_remove_orders',
     lastUpdateAt: DateTime.now(),
   );
+}
+
+String floorOrderKey(Map<String, dynamic> order) {
+  final local = order['local_order_id']?.toString().trim() ?? '';
+  if (local.isNotEmpty) return local;
+  return order['id']?.toString().trim() ?? '';
+}
+
+Map<String, dynamic> lanFloorOrderFromRecord({
+  required String localOrderId,
+  required int tableNumber,
+  required String tableName,
+  required List<Map<String, dynamic>> items,
+  required num total,
+  required String printStatus,
+  required DateTime updatedAt,
+}) {
+  return <String, dynamic>{
+    'id': localOrderId,
+    'local_order_id': localOrderId,
+    'table_number': tableNumber,
+    'table_name': tableName,
+    'display_table_label': tableName,
+    'items': items,
+    'total_amount': total,
+    'print_status': printStatus,
+    'status': 'sent',
+    'updated_at': updatedAt.toUtc().toIso8601String(),
+  };
+}
+
+DateTime? _floorOrderUpdatedAt(Map<String, dynamic> order) {
+  return DateTime.tryParse(order['updated_at']?.toString() ?? '');
+}
+
+GarsonBoardState reconcileLanFloorOrders({
+  required GarsonBoardState current,
+  required List<Map<String, dynamic>> incoming,
+}) {
+  final byKey = <String, Map<String, dynamic>>{};
+  void take(Map<String, dynamic> order) {
+    final key = floorOrderKey(order);
+    if (key.isEmpty) return;
+    final previous = byKey[key];
+    if (previous == null) {
+      byKey[key] = Map<String, dynamic>.from(order);
+      return;
+    }
+    final previousAt = _floorOrderUpdatedAt(previous);
+    final nextAt = _floorOrderUpdatedAt(order);
+    if (previousAt != null && nextAt != null && nextAt.isBefore(previousAt)) {
+      return;
+    }
+    if (previousAt != null && nextAt == null) return;
+    byKey[key] = Map<String, dynamic>.from(order);
+  }
+
+  for (final order in current.orders) {
+    take(order);
+  }
+  for (final order in incoming) {
+    take(order);
+  }
+  return current.copyWith(
+    orders: byKey.values.toList(growable: false),
+    lastAppliedSource: 'lan_floor',
+    lastUpdateAt: DateTime.now(),
+  );
+}
+
+List<Map<String, dynamic>> retargetGarsonOrdersAfterTransfer({
+  required List<Map<String, dynamic>> orders,
+  required int fromTable,
+  required int toTable,
+  String? toTableId,
+}) {
+  return orders
+      .map((order) {
+        if (garsonStoredTableNumber(order) != fromTable) return order;
+        final copy = Map<String, dynamic>.from(order);
+        copy['table_number'] = toTable;
+        final target = toTableId?.trim() ?? '';
+        if (target.isNotEmpty) copy['table_id'] = target;
+        return copy;
+      })
+      .toList(growable: false);
 }

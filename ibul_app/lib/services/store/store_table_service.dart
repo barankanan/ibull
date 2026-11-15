@@ -16,6 +16,19 @@ import 'close_table_rpc_args.dart';
 import 'table_close_history_fallback.dart';
 import 'table_order_history_utils.dart';
 
+/// Columns present on `table_orders` in the checked migrations.
+/// A missing column fails the read instead of being treated as zero.
+const String garsonTableOrdersSnapshotColumns =
+    'id, seller_id, table_number, items, status, created_at, updated_at, '
+    'revision, last_edit_summary, last_edit_note, display_table_label, '
+    'table_display_name, table_name, table_area_name, area_name, '
+    'area_table_number, placement_source';
+
+/// Columns present on `table_payments` in the checked migrations.
+const String garsonTablePaymentsColumns =
+    'id, seller_id, table_number, session_key, amount, method, paid_by, '
+    'waiter_id, waiter_name, note, is_closing, created_at, client_request_id';
+
 class StoreTableService {
   StoreTableService({
     required SupabaseClient supabase,

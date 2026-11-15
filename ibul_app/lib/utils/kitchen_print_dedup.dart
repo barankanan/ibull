@@ -102,6 +102,7 @@ class KitchenLanPrintBarrier {
   KitchenLanPrintBarrier._();
 
   static final Map<String, DateTime> _recent = <String, DateTime>{};
+  static final Set<String> _durablePrinted = <String>{};
   static const Duration _ttl = Duration(seconds: 90);
 
   static void remember(String logicalKey) {
@@ -111,9 +112,18 @@ class KitchenLanPrintBarrier {
     _recent[key] = DateTime.now();
   }
 
+  /// Survives the 90s race window. A timeout is not stored here.
+  /// Process restart reloads this set from the local order queue.
+  static void rememberDurable(String logicalKey) {
+    final key = logicalKey.trim();
+    if (key.isEmpty) return;
+    _durablePrinted.add(key);
+  }
+
   static bool alreadyPrinted(String logicalKey) {
     final key = logicalKey.trim();
     if (key.isEmpty) return false;
+    if (_durablePrinted.contains(key)) return true;
     _purge();
     return _recent.containsKey(key);
   }
@@ -125,7 +135,10 @@ class KitchenLanPrintBarrier {
   }
 
   @visibleForTesting
-  static void clearForTest() => _recent.clear();
+  static void clearForTest() {
+    _recent.clear();
+    _durablePrinted.clear();
+  }
 }
 
 void logPrintDedup({
@@ -214,6 +227,14 @@ String kitchenPrintIdempotencyKeyFromJob({
   );
 }
 
+/// Text beside the Garson label. Job title wins. An empty title uses the name.
+/// Callers must not put this string into an idempotency or queue key.
+String kitchenTicketGarsonLabel({String? waiterTitle, String? waiterName}) {
+  final title = waiterTitle?.trim() ?? '';
+  if (title.isNotEmpty) return title;
+  return waiterName?.trim() ?? '';
+}
+
 ({
   List<String> primaryJobIds,
   Map<String, String> duplicateOfByJobId,
@@ -240,5 +261,102 @@ String kitchenPrintIdempotencyKeyFromJob({
   return (
     primaryJobIds: primaryJobIds,
     duplicateOfByJobId: duplicateOfByJobId,
+  );
+}
+
+/// Physical bytes may start only when the service is open and this revision
+/// was not already sent or left uncertain. A later pause write is not the gate.
+bool kitchenJobMayStartPhysicalPrint({
+  required bool printSystemEnabled,
+  required bool suppressPhysicalPrint,
+  String? localPrintStatus,
+}) {
+  if (!printSystemEnabled || suppressPhysicalPrint) return false;
+  switch ((localPrintStatus ?? '').trim()) {
+    case 'printed':
+    case 'forwarded':
+    case 'uncertain':
+      return false;
+    default:
+      return true;
+  }
+}
+
+class KitchenFastDispatchReport {
+  const KitchenFastDispatchReport({
+    required this.printedJobIds,
+    required this.failedJobIds,
+    required this.unclaimedJobIds,
+    required this.closedWithoutPrintJobIds,
+    required this.claimWaveMs,
+  });
+
+  final List<String> printedJobIds;
+  final List<String> failedJobIds;
+  final List<String> unclaimedJobIds;
+  final List<String> closedWithoutPrintJobIds;
+  final int claimWaveMs;
+}
+
+Future<KitchenFastDispatchReport> runKitchenFastDispatch({
+  required List<String> jobIds,
+  required Future<bool> Function(String id) claim,
+  required Future<bool> Function(String id) prepare,
+  required bool Function(String id) alreadyPrinted,
+  required Future<void> Function(String id) markPrinting,
+  required Future<bool> Function(String id) printTcp,
+  required Future<void> Function(String id) markCompleted,
+  required Future<void> Function(String id, Object error) markFailed,
+  Map<String, bool> claimedAhead = const <String, bool>{},
+  int claimAheadMs = 0,
+}) async {
+  final claimWatch = Stopwatch()..start();
+  final claims = await Future.wait(jobIds.map((id) async {
+    if (claimedAhead.containsKey(id)) {
+      return MapEntry(id, claimedAhead[id]!);
+    }
+    return MapEntry(id, await claim(id));
+  }));
+  final claimWaveMs = claimedAhead.length == jobIds.length
+      ? claimAheadMs
+      : claimWatch.elapsedMilliseconds;
+  final claimedById = Map<String, bool>.fromEntries(claims);
+  await Future.wait(jobIds.map((id) async {
+    if (claimedById[id] != true || alreadyPrinted(id)) return;
+    await prepare(id);
+  }));
+
+  final printed = <String>[];
+  final failed = <String>[];
+  final unclaimed = <String>[];
+  final closed = <String>[];
+  final background = <Future<void>>[];
+  for (final id in jobIds) {
+    if (claimedById[id] != true) {
+      unclaimed.add(id);
+      continue;
+    }
+    if (alreadyPrinted(id)) {
+      closed.add(id);
+      background.add(markCompleted(id));
+      continue;
+    }
+    background.add(markPrinting(id));
+    final ok = await printTcp(id);
+    if (ok) {
+      printed.add(id);
+      background.add(markCompleted(id));
+    } else {
+      failed.add(id);
+      background.add(markFailed(id, StateError('tcp_failed')));
+    }
+  }
+  await Future.wait(background);
+  return KitchenFastDispatchReport(
+    printedJobIds: printed,
+    failedJobIds: failed,
+    unclaimedJobIds: unclaimed,
+    closedWithoutPrintJobIds: closed,
+    claimWaveMs: claimWaveMs,
   );
 }
