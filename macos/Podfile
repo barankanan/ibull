@@ -8,6 +8,7 @@ project 'Runner', {
   'Profile' => :release,
   'Release' => :release,
   'Debug-Customer' => :debug,
+  'Debug-Offlinetest' => :debug,
   'Profile-Customer' => :release,
   'Release-Customer' => :release,
 }
