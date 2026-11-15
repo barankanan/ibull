@@ -66,6 +66,10 @@ class PrintStationService implements PrintStationServicePort {
     return 'ibul-$platform-device';
   }
 
+  String stationPlatformForThisMachine(String? remotePlatform) {
+    return normalizeStationPlatform(remotePlatform);
+  }
+
   String defaultPrintStationPlatform() {
     switch (defaultTargetPlatform) {
       case TargetPlatform.macOS:

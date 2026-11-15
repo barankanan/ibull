@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart'
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/config/runtime_config.dart';
 import '../models/desktop_printer_setup_models.dart';
 import '../models/print_job_model.dart';
 import '../models/printer_model.dart';
@@ -556,7 +557,11 @@ class DesktopPrintHub extends ChangeNotifier {
   /// Resets DB status to `pending`, then re-dispatches through the standard
   /// pipeline.  The job is optimistically removed from [failedJobs]; it will
   /// be re-added if it fails again.
-  Future<void> retryJob(String jobId) async {
+  Future<void> retryJob(String jobId, {bool operatorConfirmed = false}) async {
+    if (!operatorConfirmed) {
+      debugPrint('[PrintHub] retryJob refused without operator confirmation');
+      return;
+    }
     if (_retryingJobIds.contains(jobId)) {
       debugPrint('[PrintHub] retryJob skipped — already retrying jobId=$jobId');
       return;
@@ -2684,10 +2689,10 @@ class DesktopPrintHub extends ChangeNotifier {
     final stored = payload['printer_base_url']?.toString().trim() ?? '';
     if (stored.isNotEmpty) {
       try {
-        return Uri.parse(stored);
+        return AppRuntimeConfig.coercePrintBridgeUri(Uri.parse(stored));
       } catch (_) {}
     }
-    return Uri.parse('http://127.0.0.1:3001');
+    return AppRuntimeConfig.localPrintBridgeUri();
   }
 
   /// Resolves the HTTP route to call on the bridge.
@@ -2889,7 +2894,7 @@ class DesktopPrintHub extends ChangeNotifier {
 
     // 1. Pre-create the dispatch HTTP client to the default bridge URI.
     //    This ensures the first real dispatch doesn't pay for client creation.
-    final defaultUri = Uri.parse('http://127.0.0.1:3001');
+    final defaultUri = AppRuntimeConfig.localPrintBridgeUri();
     _getOrCreatePrintService(defaultUri);
     debugPrint(
       '[PrintHub] warm-up: dispatch HTTP client pre-created '

@@ -1045,8 +1045,14 @@ class KitchenRoutingItem {
     }
     if (plates.isNotEmpty) {
       map['plates'] = plates;
+      map['child_items'] = <Map<String, dynamic>>[
+        for (final plate in plates)
+          for (final child in (plate['items'] as List? ?? const <dynamic>[]))
+            if (child is Map) Map<String, dynamic>.from(child),
+      ];
     } else if (serviceChildren.isNotEmpty) {
       map['service_children'] = serviceChildren;
+      map['child_items'] = serviceChildren;
     }
     return map;
   }

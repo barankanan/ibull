@@ -66,7 +66,11 @@ class PrintJobRepository {
     ).map(PrintJobModel.fromMap).toList(growable: false);
   }
 
-  Future<bool> retryJob(String printJobId) async {
+  Future<bool> retryJob(
+    String printJobId, {
+    bool operatorConfirmed = false,
+  }) async {
+    if (!operatorConfirmed) return false;
     if (_retryingJobIds.contains(printJobId)) {
       return false;
     }

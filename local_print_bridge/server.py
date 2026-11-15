@@ -4042,6 +4042,17 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         target_port: int | None,
         selected_printer: dict[str, object] | None,
     ) -> None:
+        if not self.settings.print_system_enabled:
+            self._send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "ok": False,
+                    "error": "Baskı sistemi şu anda kapalı. Siparişler alınır ancak fişler otomatik yazdırılmaz.",
+                    "errorCode": "print_system_disabled",
+                    "print_system_enabled": False,
+                },
+            )
+            return
         import time as _time
 
         t_start = _time.monotonic()
