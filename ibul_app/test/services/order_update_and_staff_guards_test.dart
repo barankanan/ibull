@@ -151,7 +151,7 @@ void main() {
     expect(staffTemporaryPasswordError('1234567'), isNotNull);
     expect(staffTemporaryPasswordError('12345678'), isNull);
     expect(staffTemporaryPasswordAdvice('12345678'), isNotNull);
-    expect(staffTemporaryPasswordError('gecici-sifre-12'), isNull);
-    expect(staffTemporaryPasswordAdvice('gecici-sifre-12'), isNull);
+    expect(staffTemporaryPasswordError('Aa1!p5-fixtur-9'), isNull);
+    expect(staffTemporaryPasswordAdvice('Aa1!p5-fixtur-9'), isNull);
   });
 }
