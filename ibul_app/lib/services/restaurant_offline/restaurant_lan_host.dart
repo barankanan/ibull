@@ -1,3 +1,4 @@
+import 'offline_catalog_pricing.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -768,7 +769,11 @@ class RestaurantLanHost {
       return;
     }
     final catalog = productsOverride ?? cache?.products ?? const <Map<String, dynamic>>[];
-    final priced = _pricedItems(_items(body['items']), catalog, stationId);
+    final priced = pricedOfflineItems(
+      items: _items(body['items']),
+      catalog: catalog,
+      requestStationId: stationId,
+    );
     if (priced.error != null) {
       await _send(request, 409, <String, Object?>{
         'ok': false,
@@ -1069,89 +1074,6 @@ class RestaurantLanHost {
     if (bytes.isEmpty) return <String, dynamic>{};
     final decoded = jsonDecode(utf8.decode(bytes));
     return decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
-  }
-
-  _PricedItems _pricedItems(
-    List<Map<String, dynamic>> items,
-    List<Map<String, dynamic>> catalog,
-    String requestStationId,
-  ) {
-    if (items.isEmpty) {
-      return const _PricedItems(items: <Map<String, dynamic>>[], total: 0, error: 'Sipariş kalemi yok.');
-    }
-    final priced = <Map<String, dynamic>>[];
-    var total = 0.0;
-    for (final item in items) {
-      final name = item['name']?.toString().trim() ?? '';
-      final productId = item['product_id']?.toString().trim() ?? '';
-      Map<String, dynamic>? product;
-      for (final row in catalog) {
-        final rowId = row['id']?.toString().trim() ?? '';
-        final rowName = row['name']?.toString().trim() ?? '';
-        if (productId.isNotEmpty && rowId == productId) {
-          product = row;
-          break;
-        }
-        if (name.isNotEmpty && rowName == name) {
-          product = row;
-          break;
-        }
-      }
-      if (product == null) {
-        return _PricedItems(
-          items: const <Map<String, dynamic>>[],
-          total: 0,
-          error: 'Ürün yerel katalogda yok: $name',
-        );
-      }
-      final catalogPrice = product['price'];
-      if (catalogPrice is! num) {
-        return const _PricedItems(
-          items: <Map<String, dynamic>>[],
-          total: 0,
-          error: 'Ürün fiyatı yerel katalogda doğrulanamadı.',
-        );
-      }
-      final offered = item['price'];
-      if (offered is num && (offered - catalogPrice).abs() > 0.009) {
-        return const _PricedItems(
-          items: <Map<String, dynamic>>[],
-          total: 0,
-          error: 'Ürün fiyatı yerel katalogla uyuşmuyor.',
-        );
-      }
-      final productStation = product['station_id']?.toString().trim() ?? '';
-      final itemStation = item['station_id']?.toString().trim() ?? '';
-      if (itemStation.isNotEmpty &&
-          productStation.isNotEmpty &&
-          itemStation != productStation) {
-        return const _PricedItems(
-          items: <Map<String, dynamic>>[],
-          total: 0,
-          error: 'Ürün bu istasyona ait değil.',
-        );
-      }
-      final station = itemStation.isNotEmpty
-          ? itemStation
-          : (productStation.isNotEmpty ? productStation : requestStationId);
-      final qty = (item['quantity'] as num?)?.toDouble() ?? 1;
-      if (qty <= 0) {
-        return const _PricedItems(
-          items: <Map<String, dynamic>>[],
-          total: 0,
-          error: 'Ürün adedi geçersiz.',
-        );
-      }
-      final copy = Map<String, dynamic>.from(item);
-      copy['price'] = catalogPrice;
-      copy['line_total'] = double.parse(
-        (catalogPrice.toDouble() * qty).toStringAsFixed(2),
-      );
-      if (station.isNotEmpty) copy['station_id'] = station;
-      total += catalogPrice.toDouble() * qty;
-      priced.add(copy);
-    }
-    return _PricedItems(items: priced, total: total);
   }
 
   String _contentKey(RestaurantLocalOrderRecord order) {
@@ -1664,6 +1586,10 @@ class RestaurantLanHost {
     if (staffBranch.isEmpty) return null;
     if (table == null) return 'Bu masada işlem yetkiniz yok.';
     final tableBranch = table['branch_id']?.toString().trim() ?? '';
+    // A table without a branch (created before branches existed) stays inside
+    // the store for every member, exactly as the server rule
+    // restaurant_staff_branch_can_see_table does. Only a different branch is closed.
+    if (tableBranch.isEmpty) return null;
     if (tableBranch != staffBranch) return 'Bu masada işlem yetkiniz yok.';
     return null;
   }
@@ -1908,7 +1834,11 @@ class RestaurantLanHost {
     if (catalog.isEmpty) {
       throw StateError(LanPilotContract.menuMissingMessage);
     }
-    final priced = _pricedItems(items, catalog, '');
+    final priced = pricedOfflineItems(
+      items: items,
+      catalog: catalog,
+      requestStationId: '',
+    );
     if (priced.error != null) {
       throw StateError(
         '${priced.error} ${LanPilotContract.notSentMessage}',
@@ -2408,15 +2338,4 @@ document.getElementById('order').onclick = async () => {
 </html>
 ''';
 
-class _PricedItems {
-  const _PricedItems({
-    required this.items,
-    required this.total,
-    this.error,
-  });
-
-  final List<Map<String, dynamic>> items;
-  final double total;
-  final String? error;
-}
 

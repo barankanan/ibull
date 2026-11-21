@@ -127,6 +127,8 @@ class RestaurantLocalOrderRecord {
     String? remoteOrderId,
     String? syncError,
     DateTime? updatedAt,
+    List<Map<String, dynamic>>? items,
+    double? total,
   }) {
     return RestaurantLocalOrderRecord(
       localOrderId: localOrderId,
@@ -136,9 +138,9 @@ class RestaurantLocalOrderRecord {
       tableNumber: tableNumber,
       waiterId: waiterId,
       waiterName: waiterName,
-      items: items,
+      items: items ?? this.items,
       notes: notes,
-      total: total,
+      total: total ?? this.total,
       stationGroups: stationGroups,
       printStatus: printStatus ?? this.printStatus,
       syncStatus: syncStatus ?? this.syncStatus,

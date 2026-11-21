@@ -1,3 +1,4 @@
+import 'offline_catalog_pricing.dart';
 import '../../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
 import '../bridge_print_dispatch_verification.dart';
 import '../kitchen_routing_service.dart';
@@ -7,6 +8,7 @@ import 'restaurant_local_cache_service.dart';
 import 'restaurant_local_order_queue_service.dart';
 import 'restaurant_local_print_queue_service.dart';
 import 'restaurant_lan_host.dart';
+import 'paired_lan_transport.dart';
 import 'restaurant_offline_models.dart';
 import '../staff_login_policy.dart';
 
@@ -18,7 +20,8 @@ class RestaurantOfflineOrderRouter {
     RestaurantLocalPrintQueueService? printQueueService,
     OrderPrintJobService? orderPrintJobService,
     DateTime Function()? clock,
-  }) : _connectivity = connectivityService ?? RestaurantConnectivityService.instance,
+  }) : _connectivity =
+           connectivityService ?? RestaurantConnectivityService.instance,
        _cacheService = cacheService ?? RestaurantLocalCacheService(),
        _orderQueue = orderQueueService ?? RestaurantLocalOrderQueueService(),
        _printQueue = printQueueService ?? RestaurantLocalPrintQueueService(),
@@ -41,10 +44,19 @@ class RestaurantOfflineOrderRouter {
     required String restaurantId,
     required String? storeCategory,
     bool skipOfflineFallback = false,
+    bool priorCloudFailure = false,
   }) async {
     if (skipOfflineFallback) return false;
     if (!canUseRestaurantPrinterSystem(storeCategory)) return false;
-    await _connectivity.refresh();
+    await _connectivity.refresh(priorCloudFailure: priorCloudFailure);
+    if (RestaurantLanPairing.transport != null &&
+        !RestaurantLanPairing.centerReachable) {
+      // The center may be back since it last failed to answer.
+      try {
+        await RestaurantLanPairing.recheck?.call();
+      } catch (_) {}
+    }
+    _heldRoute = null;
     return _route(restaurantId) == 'lan';
   }
 
@@ -68,12 +80,13 @@ class RestaurantOfflineOrderRouter {
       return _heldRoute!;
     }
     final host = RestaurantLanHostRegistry.current;
-    final hostHere = host != null &&
-        host.listening &&
-        host.restaurantId == restaurantId;
+    final hostHere =
+        host != null && host.listening && host.restaurantId == restaurantId;
     final hostReady = hostHere && host.lanIdentityVerified;
     final pairedTablet =
-        RestaurantLanPairing.transport != null && !hostHere;
+        RestaurantLanPairing.transport != null &&
+        RestaurantLanPairing.centerReachable &&
+        !hostHere;
     final route = restaurantOrderRoute(
       supabaseReachable:
           _connectivity.hasNetwork && _connectivity.supabaseReachable,
@@ -139,14 +152,11 @@ class RestaurantOfflineOrderRouter {
     );
 
     final host = RestaurantLanHostRegistry.current;
-    final hostHere = host != null &&
-        host.listening &&
-        host.restaurantId == restaurantId;
+    final hostHere =
+        host != null && host.listening && host.restaurantId == restaurantId;
     final transport = RestaurantLanPairing.transport;
     if (transport == null && !hostHere) {
-      throw StateError(
-        'Yerel sunucu kapalı. Sipariş gönderilmedi.',
-      );
+      throw StateError('Yerel sunucu kapalı. Sipariş gönderilmedi.');
     }
     if (transport != null && !hostHere) {
       var saved = false;
@@ -180,6 +190,9 @@ class RestaurantOfflineOrderRouter {
           'offline': true,
           'lan_host': true,
           'local_order_id': localOrderIdValue,
+          'print_status': transport is PairedLanTransport
+              ? transport.lastPrintStatus
+              : null,
           'message': 'Sipariş ana bilgisayara kaydedildi.',
         },
         dispatchedJobCount: 0,
@@ -190,18 +203,67 @@ class RestaurantOfflineOrderRouter {
       );
     }
 
-    final persisted = await _orderQueue.enqueue(order: order);
+    // A repeat of an order that is already in the local journal (double tap,
+    // retry after a timeout) is answered from the journal: no second record
+    // and no second kitchen ticket. Only a ticket that certainly did not
+    // print ('failed') is tried again, under the same print key.
+    final already = await _orderQueue.getByLocalId(
+      restaurantId: restaurantId,
+      localOrderId: localOrderIdValue,
+    );
+    if (already != null && already.printStatus != 'failed') {
+      final printed = already.printStatus == 'printed';
+      return OrderPrintJobDispatchResult(
+        orderId: localOrderIdValue,
+        orderNumber: localOrderIdValue,
+        printJobCount: 0,
+        printJobIds: const <String>[],
+        raw: <String, dynamic>{
+          'offline': true,
+          'duplicate': true,
+          'local_order_id': localOrderIdValue,
+          'sync_status': already.syncStatus.name,
+          'message':
+              'Bu sipariş zaten yerel olarak kayıtlı. Yeniden yazdırılmadı.',
+          'table_number': already.tableNumber,
+          'table_name': already.tableName,
+        },
+        dispatchedJobCount: 0,
+        failedJobCount: 0,
+        physicallyDispatched: printed,
+        dispatchPath: 'offline_local_queue_duplicate',
+        traceId: '',
+      );
+    }
+
+    // Merkezin kendi çevrimdışı siparişi: cihaz siparişleriyle AYNI katalog doğrulaması.
+    // İstemci fiyatı güvenilmez; katalogda olmayan / fiyatı doğrulanamayan ürün
+    // satılmaz ve hiçbir kayıt yazılmaz (sahte başarı yok).
+    var lineItems = items;
+    RestaurantLocalOrderRecord? pricedOrder;
+    if (already == null) {
+      final priced = priceLocalOfflineOrder(cache: cache, items: items);
+      if (priced.error != null) {
+        throw StateError('${priced.error} Sipariş kaydedilmedi.');
+      }
+      lineItems = priced.items;
+      pricedOrder = order.copyWith(items: priced.items, total: priced.total);
+    }
+
+    final persisted =
+        already ?? await _orderQueue.enqueue(order: pricedOrder ?? order);
 
     final immediate = await _orderPrintJobServiceOrCreate
         .dispatchGarsonKitchenImmediateFromItems(
           restaurantId: restaurantId,
           tableNumber: tableNumber,
-          items: items,
+          items: lineItems,
           waiterId: waiterId,
           waiterName: waiterName,
           waiterTitle: waiterTitle,
           canUseLocalPrintFastPath: true,
           tableAreaName: tableName,
+          orderKey: localOrderIdValue,
         );
 
     final printStatus = localPrintStatusFromDispatch(
@@ -224,7 +286,7 @@ class RestaurantOfflineOrderRouter {
       },
       payloadSnapshot: <String, dynamic>{
         'table_number': tableNumber,
-        'items': items,
+        'items': lineItems,
         'local_order_id': localOrderIdValue,
         'trace_id': immediate.traceId,
       },
@@ -238,7 +300,8 @@ class RestaurantOfflineOrderRouter {
           ? null
           : (immediate.error ??
                 (_connectivity.bridgeReachable
-                    ? BridgePrintDispatchVerification.dispatchNotDeliveredMessage
+                    ? BridgePrintDispatchVerification
+                          .dispatchNotDeliveredMessage
                     : 'Yazıcı köprüsü çalışmıyor. Yerel yazdırma yapılamaz.')),
       createdAt: now,
       printedAt: immediate.physicallyDispatched ? DateTime.now() : null,
@@ -332,4 +395,24 @@ class RestaurantOfflineOrderRouter {
     }
     return total;
   }
+}
+
+/// Merkezin kendi çevrimdışı siparişi için güvenilir yerel katalogla fiyatlama.
+/// Katalog boşsa (hiç senkronize edilmemiş) ürün sessizce istemci fiyatıyla satılmaz.
+PricedOfflineItems priceLocalOfflineOrder({
+  required RestaurantLocalCacheSnapshot cache,
+  required List<Map<String, dynamic>> items,
+}) {
+  if (cache.products.isEmpty) {
+    return const PricedOfflineItems(
+      items: <Map<String, dynamic>>[],
+      total: 0,
+      error: 'Yerel ürün kataloğu hazır değil.',
+    );
+  }
+  return pricedOfflineItems(
+    items: items,
+    catalog: cache.products,
+    requestStationId: '',
+  );
 }

@@ -136,6 +136,8 @@ import '../widgets/customer_table_presence_grant.dart';
 import '../widgets/restaurant_local_ops_page.dart';
 import '../features/seller/panel/helpers/seller_panel_module_helpers.dart';
 import '../services/staff_login_policy.dart';
+import '../features/seller/panel/helpers/offline_page_policy.dart';
+import '../features/seller/panel/widgets/offline_page_widgets.dart';
 import '../features/seller/staff/staff_permission_summary.dart';
 import '../features/seller/panel/models/seller_panel_types.dart';
 import '../features/seller/panel/widgets/seller_desktop_app_banner.dart';
@@ -758,6 +760,14 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       );
       _announceStaffModuleDenied();
       return;
+    }
+    if (_offlineBlocked(nextModule)) {
+      final fallback = offlineFallbackModule(_permittedSellerModules());
+      if (fallback != null) {
+        controller.restoreParent(fallback, source: 'offline_page_blocked');
+        _announceOfflineBlocked(nextModule);
+        return;
+      }
     }
     final nextHasUserSelected = controller.hasUserSelected;
     final changed =
@@ -2525,6 +2535,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     if (!mounted) return false;
     final controller = _navigationController;
     if (controller == null) return false;
+    // İnternet yokken yalnız Genel Bakış, Garson ve Sistem açılır (menü, derin bağlantı, kod).
+    if (_offlineBlocked(next)) {
+      _announceOfflineBlocked(next);
+      return false;
+    }
     final previous = controller.activeModule;
     final hasUserSelected = controller.hasUserSelected;
     final navigationSource = _navigationSourceCategory(
@@ -9240,6 +9255,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       );
       debugPrint(StackTrace.current.toString());
       return _buildMobileGarsonModule();
+    }
+    if (_offlineBlocked(_selectedModule)) {
+      return OfflineBlockedModuleView(moduleLabel: _moduleLabel(_selectedModule));
+    }
+    if (_cloudDownForRestaurant && _selectedModule == SellerModule.dashboard) {
+      return OfflineOverviewLoader(restaurantId: _tableAdminSellerId);
     }
     switch (_selectedModule) {
       case SellerModule.dashboard:
@@ -17426,17 +17447,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   List<SellerPanelMenuEntry> _buildPanelMenuEntries({
     VoidCallback? beforeSelect,
   }) {
-    return _visibleSellerModules()
+    return _permittedSellerModules()
         .map(
-          (module) => SellerPanelMenuEntry(
-            icon: _moduleIcon(module),
-            label: _moduleLabel(module),
-            isActive: _selectedModule == module,
-            onTap: () {
-              beforeSelect?.call();
-              _setSelectedModule(module);
-            },
-          ),
+          (module) => _offlineBlocked(module)
+              ? SellerPanelMenuEntry(
+                  icon: Icons.wifi_off_rounded,
+                  label: '${_moduleLabel(module)} · İnternet gerekir',
+                  isActive: false,
+                  onTap: () => _announceOfflineBlocked(module),
+                )
+              : SellerPanelMenuEntry(
+                  icon: _moduleIcon(module),
+                  label: _moduleLabel(module),
+                  isActive: _selectedModule == module,
+                  onTap: () {
+                    beforeSelect?.call();
+                    _setSelectedModule(module);
+                  },
+                ),
         )
         .toList(growable: false);
   }
@@ -17490,6 +17518,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       return _buildGarsonModule();
     }
 
+    if (_offlineBlocked(_selectedModule)) {
+      return OfflineBlockedModuleView(moduleLabel: _moduleLabel(_selectedModule));
+    }
+    if (_cloudDownForRestaurant && _selectedModule == SellerModule.dashboard) {
+      return OfflineOverviewLoader(restaurantId: _tableAdminSellerId);
+    }
     switch (_selectedModule) {
       case SellerModule.dashboard:
         return _buildDashboard();
@@ -17709,13 +17743,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       );
   }
 
-  List<SellerModule> _visibleSellerModules() {
+  /// Hesabın sahip olduğu sayfalar (çevrimdışı daraltma YOK): menüde gösterilir.
+  List<SellerModule> _permittedSellerModules() {
     final modules = visibleSellerModules(
       _storeCategory,
       garsonOnly: _isWaiterEntry,
     );
     final gate = _staffMenuGate;
-    final permitted = (gate == null || !gate.restrict)
+    return (gate == null || !gate.restrict)
         ? modules
         : modulesForStaff(
             modules: modules,
@@ -17724,12 +17759,39 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             permissions: gate.permissions,
             visibleModules: gate.visibleModules,
           );
-    // Without the cloud only Garson and Sistem work. This narrows the menu;
-    // it never adds a section the account does not already have.
-    if (!_offlineOperationActive) return permitted;
-    return permitted
-        .where((module) => offlineOperationModuleNames.contains(module.name))
-        .toList(growable: false);
+  }
+
+  /// Şu an AÇILABİLEN sayfalar. İnternet yokken yalnız Genel Bakış, Garson ve Sistem;
+  /// bu yalnız daraltır, hesabın sahip olmadığı sayfa eklemez.
+  List<SellerModule> _visibleSellerModules() => openableModules(
+    permitted: _permittedSellerModules(),
+    offline: _cloudDownForRestaurant,
+  );
+
+  /// Restoran için bulut erişilemiyor mu (ağ yok ya da Supabase'e ulaşılamıyor).
+  bool get _cloudDownForRestaurant {
+    if (_offlineStartActive) return true;
+    if (!_isFoodStoreCategory(_storeCategory)) return false;
+    final service = RestaurantConnectivityService.instance;
+    return !service.hasNetwork || !service.supabaseReachable;
+  }
+
+  bool _offlineBlocked(SellerModule module) => moduleBlockedByOffline(
+    module: module,
+    offline: _cloudDownForRestaurant,
+  );
+
+  void _announceOfflineBlocked(SellerModule module) {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            '${_moduleLabel(module)}: $offlineRequiresInternetMessage.',
+          ),
+        ),
+      );
   }
 
   /// True after an offline start, or while the cloud is down and the local

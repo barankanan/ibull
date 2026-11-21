@@ -240,7 +240,11 @@ OfflineStartDecision decideOfflineStart({
 }
 
 /// The two sections that work without the cloud.
-const Set<String> offlineOperationModuleNames = <String>{'garson', 'system'};
+const Set<String> offlineOperationModuleNames = <String>{
+  'dashboard',
+  'garson',
+  'system',
+};
 
 /// Where the sealed record itself is kept. It needs no secrecy: the seal
 /// makes an edited copy worthless.
