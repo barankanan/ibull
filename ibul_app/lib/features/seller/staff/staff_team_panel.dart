@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../models/sub_admin.dart';
+import '../../../services/store_service.dart';
+import '../../../utils/text_normalizer.dart';
 import 'staff_account_dialog.dart';
 import 'staff_business_catalog.dart';
 
@@ -32,6 +34,7 @@ class StaffTeamPanel extends StatefulWidget {
     required this.onActivate,
     required this.canDelete,
     required this.canManage,
+    this.onSetPassword,
   });
 
   final StaffBusinessKind kind;
@@ -46,6 +49,9 @@ class StaffTeamPanel extends StatefulWidget {
   final Future<void> Function(SubAdmin member) onActivate;
   final String? Function(SubAdmin member) canDelete;
   final bool canManage;
+
+  /// Owner only: the server refuses password changes from a sub-admin.
+  final Future<void> Function(SubAdmin member, String password)? onSetPassword;
 
   @override
   State<StaffTeamPanel> createState() => _StaffTeamPanelState();
@@ -85,7 +91,7 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
   }
 
   List<SubAdmin> get _visible {
-    final query = _search.text.trim().toLowerCase();
+    final query = TextNormalizer.normalize(_search.text);
     return widget.members.where((member) {
       final customTitle = member.jobTitle?.trim() ?? '';
       final role = customTitle.isNotEmpty
@@ -100,8 +106,9 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
         return false;
       }
       if (query.isEmpty) return true;
-      final haystack = '${member.displayName ?? ''} ${member.email ?? ''} ${member.phone ?? ''}'
-          .toLowerCase();
+      final haystack = TextNormalizer.normalize(
+        '${member.displayName ?? ''} ${member.email ?? ''} ${member.phone ?? ''}',
+      );
       return haystack.contains(query);
     }).toList(growable: false);
   }
@@ -175,6 +182,7 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
             children: [
               ElevatedButton.icon(
                 onPressed: widget.canManage &&
+                        widget.isOwner &&
                         widget.kind != StaffBusinessKind.unknown
                     ? _create
                     : null,
@@ -258,6 +266,9 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
       width: 180,
       child: DropdownButtonFormField<String>(
         initialValue: value,
+        // Uzun görev/şube adları 180px kutuyu taşırmasın (sahibin girdiği
+        // serbest metin): genişliğe sığdır ve kısalt.
+        isExpanded: true,
         decoration: InputDecoration(
           labelText: label,
           isDense: true,
@@ -266,11 +277,32 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
         items: [
           const DropdownMenuItem(value: null, child: Text('Tümü')),
           for (final item in items)
-            DropdownMenuItem(value: item, child: Text(title(item))),
+            DropdownMenuItem(
+              value: item,
+              child: Text(title(item), overflow: TextOverflow.ellipsis),
+            ),
         ],
         onChanged: onChanged,
       ),
     );
+  }
+
+  Future<void> _setPassword(SubAdmin member) async {
+    final password = await showDialog<String>(
+      context: context,
+      builder: (_) => const _StaffPasswordDialog(),
+    );
+    if (password == null || !mounted) return;
+    try {
+      await widget.onSetPassword!(member, password);
+    } catch (error) {
+      if (!mounted) return;
+      final text = error
+          .toString()
+          .replaceFirst('Bad state: ', '')
+          .replaceFirst('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    }
   }
 
   Future<void> _confirmDelete(SubAdmin member) async {
@@ -381,12 +413,18 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
                     : null,
                 child: const Text('Pasifleştir'),
               ),
-              OutlinedButton(
-                onPressed: widget.canManage && member.status != 'active'
-                    ? () => widget.onActivate(member)
-                    : null,
-                child: const Text('Aktifleştir'),
-              ),
+              if (widget.isOwner)
+                OutlinedButton(
+                  onPressed: widget.canManage && member.status != 'active'
+                      ? () => widget.onActivate(member)
+                      : null,
+                  child: const Text('Aktifleştir'),
+                ),
+              if (widget.isOwner && widget.onSetPassword != null)
+                OutlinedButton(
+                  onPressed: widget.canManage ? () => _setPassword(member) : null,
+                  child: const Text('Şifre belirle'),
+                ),
               OutlinedButton(
                 onPressed: widget.canManage && widget.canDelete(member) == null
                     ? () => _confirmDelete(member)
@@ -397,6 +435,63 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _StaffPasswordDialog extends StatefulWidget {
+  const _StaffPasswordDialog();
+
+  @override
+  State<_StaffPasswordDialog> createState() => _StaffPasswordDialogState();
+}
+
+class _StaffPasswordDialogState extends State<_StaffPasswordDialog> {
+  final TextEditingController _password = TextEditingController();
+  bool _hide = true;
+  String? _error;
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final error = staffTemporaryPasswordError(_password.text);
+    if (error != null) {
+      setState(() => _error = error);
+      return;
+    }
+    Navigator.pop(context, _password.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Şifre belirle'),
+      content: TextField(
+        controller: _password,
+        obscureText: _hide,
+        enableSuggestions: false,
+        autocorrect: false,
+        decoration: InputDecoration(
+          labelText: 'Şifre',
+          helperText: 'En az 8 karakter.',
+          errorText: _error,
+          suffixIcon: IconButton(
+            onPressed: () => setState(() => _hide = !_hide),
+            icon: Icon(_hide ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Vazgeç'),
+        ),
+        ElevatedButton(onPressed: _submit, child: const Text('Kaydet')),
+      ],
     );
   }
 }

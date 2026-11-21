@@ -146,7 +146,7 @@ void main() {
   test('temporary staff password requires 8 characters and recommends 12', () {
     expect(
       staffTemporaryPasswordError('kisa'),
-      'Geçici şifre en az 8 karakter olmalı.',
+      'Şifre en az 8 karakter olmalı.',
     );
     expect(staffTemporaryPasswordError('1234567'), isNotNull);
     expect(staffTemporaryPasswordError('12345678'), isNull);

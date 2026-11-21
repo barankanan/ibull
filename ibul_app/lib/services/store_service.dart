@@ -27,7 +27,7 @@ import 'store_service_mappers.dart';
 
 String? staffTemporaryPasswordError(String password) {
   if (password.trim().length < 8) {
-    return 'Geçici şifre en az 8 karakter olmalı.';
+    return 'Şifre en az 8 karakter olmalı.';
   }
   return null;
 }
@@ -35,7 +35,7 @@ String? staffTemporaryPasswordError(String password) {
 String? staffTemporaryPasswordAdvice(String password) {
   if (staffTemporaryPasswordError(password) != null) return null;
   if (password.trim().length < 12) {
-    return 'Geçici şifre için 12 karakter önerilir.';
+    return 'Şifre için 12 karakter önerilir.';
   }
   return null;
 }
@@ -2283,23 +2283,35 @@ class StoreService {
   }
 
   // Get Seller Products
-  Stream<List<SellerProduct>> getSellerProducts() {
+  /// [catalogSellerId] is the business whose menu is read. A staff account
+  /// passes the owner it works for: its own id owns no products, so reading
+  /// by the signed-in id gave every waiter an empty menu. The server's row
+  /// rules still decide what the account may see.
+  Stream<List<SellerProduct>> getSellerProducts({String? catalogSellerId}) {
     if (currentUserId == null) return Stream.value([]);
+    final seller = (catalogSellerId?.trim().isNotEmpty ?? false)
+        ? catalogSellerId!.trim()
+        : currentUserId!;
 
     return _supabase
         .from('products')
         .stream(primaryKey: ['id'])
-        .eq('seller_id', currentUserId!)
+        .eq('seller_id', seller)
         .order('created_at', ascending: false)
         .map((maps) => maps.map((map) => _mapSnakeCaseToProduct(map)).toList());
   }
 
-  Future<List<SellerProduct>> getSellerProductsSnapshot() async {
+  Future<List<SellerProduct>> getSellerProductsSnapshot({
+    String? catalogSellerId,
+  }) async {
     if (currentUserId == null) return const <SellerProduct>[];
+    final seller = (catalogSellerId?.trim().isNotEmpty ?? false)
+        ? catalogSellerId!.trim()
+        : currentUserId!;
     final rows = await _supabase
         .from('products')
         .select()
-        .eq('seller_id', currentUserId!)
+        .eq('seller_id', seller)
         .order('created_at', ascending: false);
     return List<Map<String, dynamic>>.from(
       rows as List<dynamic>,
@@ -2468,6 +2480,23 @@ class StoreService {
   Future<List<Map<String, dynamic>>> getStaffBranches() async {
     final storeId = currentUserId;
     if (storeId == null || storeId.isEmpty) return const <Map<String, dynamic>>[];
+    // A sub-admin's auth id is not the store id, so the direct query below
+    // returns nothing for them. The staff function resolves the real store and
+    // checks manageStaff on the server.
+    try {
+      final result = await _invokeStaffFunction(<String, dynamic>{
+        'operation': 'list_branches',
+      });
+      final branches = result['branches'];
+      if (branches is List) {
+        return branches
+            .whereType<Map>()
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList(growable: false);
+      }
+    } catch (error) {
+      debugPrint('[StoreService] list_branches failed, owner query used: $error');
+    }
     final rows = await _supabase
         .from('store_branches')
         .select('id, name, status')

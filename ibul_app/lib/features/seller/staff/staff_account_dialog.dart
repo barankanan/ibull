@@ -600,8 +600,8 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
         enableSuggestions: false,
         autocorrect: false,
         decoration: InputDecoration(
-          labelText: 'Geçici şifre',
-          helperText: 'En az 8 karakter. İlk girişte değiştirilir.',
+          labelText: 'Şifre',
+          helperText: 'En az 8 karakter.',
           filled: true,
           fillColor: Colors.white,
           border: const OutlineInputBorder(),

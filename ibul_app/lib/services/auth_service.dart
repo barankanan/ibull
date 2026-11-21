@@ -308,6 +308,10 @@ class AuthService {
     bool adminMode = false,
     String authArea = 'user',
   }) {
+    if ((error is AuthException && error.code == 'user_banned') ||
+        error.toString().toLowerCase().contains('user_banned')) {
+      return 'Bu personel hesabı pasif. İşletme sahibine başvurun.';
+    }
     if (authArea == 'user' && !adminMode) {
       if (error is AuthApiException) {
         switch (error.code) {
@@ -968,10 +972,24 @@ class AuthService {
     }).eq('id', user.id);
   }
 
+  /// A managed staff account never changes its own password; the owner sets
+  /// it. The server refuses it too, this only gives the answer early.
+  bool isManagedStaffUser(User? user) =>
+      user?.appMetadata['managed_restaurant_staff'] == true;
+
+  bool get currentUserIsManagedStaff =>
+      isManagedStaffUser(_supabase.auth.currentUser);
+
+  static const String _staffPasswordOwnerOnlyMessage =
+      'Personel şifresini yalnız işletme sahibi değiştirebilir.';
+
   Future<void> updateUserPassword(String newPassword) async {
     final user = _supabase.auth.currentUser;
     if (user == null) {
       throw Exception('Oturum açık değil');
+    }
+    if (isManagedStaffUser(user)) {
+      throw Exception(_staffPasswordOwnerOnlyMessage);
     }
     if (newPassword.length < 6) {
       throw Exception('Şifre en az 6 karakter olmalıdır');
@@ -1027,6 +1045,9 @@ class AuthService {
     required String currentPassword,
     required String newPassword,
   }) async {
+    if (currentUserIsManagedStaff) {
+      throw Exception(_staffPasswordOwnerOnlyMessage);
+    }
     if (newPassword.length < 6) {
       throw Exception('Şifre en az 6 karakter olmalıdır');
     }

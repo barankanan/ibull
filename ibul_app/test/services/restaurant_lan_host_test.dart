@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ibul_app/services/restaurant_offline/lan_authority_seal.dart';
 import 'package:ibul_app/services/restaurant_offline/lan_channel.dart';
+import 'package:ibul_app/services/restaurant_offline/lan_staff_probe.dart';
 import 'package:ibul_app/services/restaurant_offline/lan_tls.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_connectivity_service.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_lan_host.dart';
@@ -722,6 +725,7 @@ void main() {
     );
 
     final cloudIds = <String>{};
+    final evidenceSeen = <String?>[];
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
     server.listen((request) async {
@@ -729,6 +733,7 @@ void main() {
       final body = jsonDecode(text) as Map<String, dynamic>;
       final id = body['p_local_order_id']?.toString() ?? '';
       cloudIds.add(id);
+      evidenceSeen.add(body['p_local_print_evidence']?.toString());
       request.response.headers.contentType = ContentType.json;
       request.response.write(jsonEncode(<String, Object?>{
         'order_id': 'remote-$id',
@@ -736,9 +741,12 @@ void main() {
       }));
       await request.response.close();
     });
+    // A center registered with the cloud (has a branch) can sign the
+    // "uncertain" evidence that every unfinished local print state goes up as.
     final restarted = _host(
       material,
       restaurantId: restaurantId,
+      branchId: 'branch-1',
       orders: reopenedOrders,
       printQueue: reopenedPrints,
     );
@@ -769,6 +777,13 @@ void main() {
     );
     expect(synced, 10);
     expect(cloudIds, hasLength(10));
+    // Nothing reached a printer here (not_sent): signed "failed" evidence,
+    // so the cloud may print. Never a bare, evidence-less order.
+    expect(evidenceSeen, hasLength(10));
+    expect(
+      evidenceSeen.every((e) => e != null && e.startsWith('v2.failed.')),
+      isTrue,
+    );
     expect(
       await sync.syncPendingOrders(restaurantId: restaurantId, limit: 20),
       0,
@@ -780,17 +795,26 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     RestaurantLocalOrderQueueService.clearAllMemoryForTests();
     final orders = RestaurantLocalOrderQueueService();
-    final host = _host(material, restaurantId: 'rest-sync', orders: orders);
+    final host = _host(
+      material,
+      restaurantId: 'rest-sync',
+      branchId: 'branch-1',
+      orders: orders,
+    );
     await _listen(host, material);
     addTearDown(host.stop);
 
     var calls = 0;
+    final sentEvidence = <String?>[];
     var failFirst = true;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
     server.listen((request) async {
       calls += 1;
-      await utf8.decoder.bind(request).join();
+      final raw = await utf8.decoder.bind(request).join();
+      sentEvidence.add(
+        (jsonDecode(raw) as Map<String, dynamic>)['p_local_print_evidence']?.toString(),
+      );
       if (failFirst) {
         failFirst = false;
         await request.response.close();
@@ -855,6 +879,11 @@ void main() {
     debugPrint('OFFLINE_SYNC_US median=$median p95=$p95 calls=$calls synced=$synced');
     expect(synced, 1);
     expect(calls, 2);
+    // A "pending" record (center may have stopped mid-print) is sent twice
+    // with the same signed uncertain evidence, never as a bare order.
+    expect(sentEvidence, hasLength(2));
+    expect(sentEvidence.every((e) => e != null && e.startsWith('v2.uncertain.')), isTrue);
+    expect(sentEvidence[0], sentEvidence[1]);
     final stored = await orders.getByLocalId(
       restaurantId: 'rest-sync',
       localOrderId: 'local-one',
@@ -879,12 +908,673 @@ void main() {
       isNull,
     );
   });
+
+  group('Offline staff authority (sealed, time-limited)', () {
+    const rid = 'lan-offline-auth';
+    const products = <Map<String, dynamic>>[
+      <String, dynamic>{'name': 'Çorba', 'station_id': 'ocak', 'price': 40},
+    ];
+    const stations = <Map<String, dynamic>>[<String, dynamic>{'id': 'ocak'}];
+    const tables = <Map<String, dynamic>>[
+      <String, dynamic>{'id': 't1', 'table_number': 1, 'branch_id': 'b1', 'is_active': true},
+      <String, dynamic>{'id': 't2', 'table_number': 2, 'branch_id': 'b2', 'is_active': true},
+    ];
+    late DateTime now;
+    late String cloud; // active | down | revoked | otherBranch | noPermission
+    late int epoch; // server credential_epoch
+    var sendEpoch = true;
+    late MemoryLanEnrollmentStore store;
+    late RestaurantLocalOrderQueueService queue;
+
+    setUp(() {
+      now = DateTime.utc(2026, 11, 20, 9);
+      cloud = 'active';
+      epoch = 1;
+      sendEpoch = true;
+      store = MemoryLanEnrollmentStore();
+      queue = RestaurantLocalOrderQueueService();
+    });
+
+    Future<Map<String, dynamic>?> membership(String staffId) async {
+      if (cloud == 'down') throw const SocketException('Connection refused');
+      if (cloud == 'revoked') return null;
+      return <String, dynamic>{
+        'store_id': rid,
+        'status': 'active',
+        'staff_role': 'waiter',
+        'permissions': cloud == 'noPermission'
+            ? const <String>['viewOrders']
+            : const <String>['manageOrders'],
+        'branch_id': cloud == 'otherBranch' ? 'b2' : 'b1',
+        'must_change_password': cloud == 'tempPassword',
+        if (sendEpoch) 'credential_epoch': epoch,
+      };
+    }
+
+    RestaurantLanHost hostFor({
+      LanAuthoritySealer? sealer,
+      Duration ttl = const Duration(hours: 12),
+      String? center = 'b1',
+    }) {
+      return _host(
+        material,
+        restaurantId: rid,
+        branchId: center,
+        orders: queue,
+        deviceStore: store,
+        deviceGrantTtl: ttl,
+        authoritySealer: sealer,
+        clock: () => now,
+        stationsOverride: stations,
+        tablesOverride: tables,
+        productsOverride: products,
+        staffStillAuthorized: lanStaffProbe(
+          membership,
+          restaurantId: rid,
+          centerBranchId: () => center,
+        ),
+      );
+    }
+
+    Future<Map<String, dynamic>> order(RestaurantLanClient c, String id, {int table = 1}) {
+      return c.postAuthorized('/lan/orders', <String, Object?>{
+        'local_order_id': id,
+        'table_number': table,
+        'station_id': 'ocak',
+        'items': <Map<String, Object?>>[
+          <String, Object?>{'name': 'Çorba', 'quantity': 1, 'price': 40},
+        ],
+      });
+    }
+
+    Future<RestaurantLanClient> pairedAndWarm(RestaurantLanHost host) async {
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final session = await _pair(host, material, waiterA.directory, 'staff-a');
+      expect((await order(session, 'warm'))['status'], 200);
+      return session;
+    }
+
+    test('a waiter verified online still orders with the cloud down', () async {
+      final host = hostFor();
+      final session = await pairedAndWarm(host);
+      cloud = 'down';
+      now = now.add(const Duration(hours: 5));
+      final result = await order(session, 'during-outage');
+      expect(result['status'], 200, reason: result['error']?.toString());
+      expect((await queue.list(rid)).map((o) => o.localOrderId), contains('during-outage'));
+    });
+
+    test('the offline authority expires and is never extended offline', () async {
+      final host = hostFor(ttl: const Duration(hours: 12));
+      final session = await pairedAndWarm(host);
+      cloud = 'down';
+      now = now.add(const Duration(hours: 11, minutes: 59));
+      expect((await order(session, 'inside'))['status'], 200);
+      now = now.add(const Duration(minutes: 2));
+      final late = await order(session, 'outside');
+      expect(late['status'], 401);
+      expect(late['error'], 'Kayıtlı personel yetkisinin süresi doldu.');
+    });
+
+    test('a device paired while offline has no authority', () async {
+      cloud = 'down';
+      final host = hostFor();
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final session = await _pair(host, material, waiterA.directory, 'staff-a');
+      final result = await order(session, 'never-verified');
+      expect(result['status'], 401);
+      expect(result['error'], 'Personel daha önce doğrulanmadı.');
+    });
+
+    test('an edited expiry or branch in the stored record is refused', () async {
+      final host = hostFor();
+      final session = await pairedAndWarm(host);
+      await host.stop();
+      final raw = Map<String, dynamic>.from(
+        await store.readJson('lan_device_enrollment_v1_$rid') as Map,
+      );
+      final rows = (raw['devices'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      rows.first['expires_at'] =
+          now.add(const Duration(days: 30)).toUtc().toIso8601String();
+      await store.writeJson('lan_device_enrollment_v1_$rid', <String, dynamic>{'devices': rows});
+      cloud = 'down';
+      final restarted = hostFor();
+      await _listen(restarted, material);
+      addTearDown(restarted.stop);
+      final again = _signed(restarted, material, waiterA.directory, 'staff-a');
+      final result = await order(again, 'forged');
+      expect(session.staffId, 'staff-a');
+      expect(result['status'], 401);
+      expect(result['error'], contains('doğrulanamadı'));
+      expect(await queue.list(rid), hasLength(1)); // only the warm-up order
+    });
+
+    test('a stored record sealed by another device key is refused', () async {
+      final host = hostFor();
+      await pairedAndWarm(host);
+      await host.stop();
+      cloud = 'down';
+      final restarted = hostFor(sealer: MemoryLanAuthoritySealer());
+      await _listen(restarted, material);
+      addTearDown(restarted.stop);
+      final again = _signed(restarted, material, waiterA.directory, 'staff-a');
+      final result = await order(again, 'copied-record');
+      expect(result['status'], 401);
+    });
+
+    test('without a keystore seal nothing is trusted offline, online still works', () async {
+      final host = hostFor(sealer: MemoryLanAuthoritySealer(available: false));
+      final session = await pairedAndWarm(host);
+      cloud = 'down';
+      final result = await order(session, 'no-seal');
+      expect(result['status'], 401);
+    });
+
+    test('a clock set back does not revive the authority', () async {
+      final host = hostFor();
+      final session = await pairedAndWarm(host);
+      cloud = 'down';
+      now = now.subtract(const Duration(hours: 2));
+      final result = await order(session, 'rolled-back');
+      expect(result['status'], 401);
+      expect(result['error'], 'Cihaz saati geri alındı. Yetki uzatılmadı.');
+    });
+
+    test('the cloud returning closes a membership revoked during the outage', () async {
+      final host = hostFor();
+      final session = await pairedAndWarm(host);
+      cloud = 'down';
+      expect((await order(session, 'offline-ok'))['status'], 200);
+      cloud = 'revoked';
+      expect(await host.reverifyDevices(), 1);
+      cloud = 'down';
+      final result = await order(session, 'after-revoke');
+      expect(result['status'], 401);
+    });
+
+    test('a temporary password is refused online and gives no offline authority', () async {
+      final host = hostFor();
+      await _listen(host, material);
+      addTearDown(host.stop);
+      cloud = 'tempPassword';
+      await _expectPairingRefused(host, material, waiterA.directory, 'staff-a');
+      expect(host.deviceCount, 0);
+      cloud = 'down';
+      // Nothing was ever sealed for this account, so the outage grants nothing.
+      expect(host.devices, isEmpty);
+    });
+
+    test('a password reset after pairing closes the device and stays closed offline', () async {
+      final host = hostFor();
+      final session = await pairedAndWarm(host);
+      cloud = 'tempPassword';
+      final online = await order(session, 'reset-online');
+      expect(online['status'], 401);
+      expect(online['error'], contains('geçici şifresini'));
+      cloud = 'down';
+      expect((await order(session, 'reset-offline'))['status'], 401);
+    });
+
+    Future<void> rewriteStoredDevice(void Function(Map<String, dynamic> d) edit) async {
+      final raw = Map<String, dynamic>.from(
+        await store.readJson('lan_device_enrollment_v1_$rid') as Map,
+      );
+      final rows = (raw['devices'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      edit(rows.first);
+      await store.writeJson('lan_device_enrollment_v1_$rid', <String, dynamic>{'devices': rows});
+    }
+
+    test('a changed credential epoch revokes the device for good', () async {
+      final host = hostFor();
+      final session = await pairedAndWarm(host);
+      expect(host.devices.first.staffEpoch, 1);
+      epoch = 2; // staff was deactivated and re-activated meanwhile
+      final changed = await order(session, 'after-epoch');
+      expect(changed['status'], 401);
+      expect(host.devices.first.revoked, isTrue);
+      epoch = 1; // even the old value does not bring the device back
+      expect((await order(session, 'epoch-back'))['status'], 401);
+      cloud = 'down';
+      expect((await order(session, 'epoch-offline'))['status'], 401);
+    });
+
+    test('an unchanged credential epoch keeps the device working', () async {
+      final host = hostFor();
+      final session = await pairedAndWarm(host);
+      expect(await host.reverifyDevices(), 0);
+      expect((await order(session, 'same-epoch'))['status'], 200);
+      expect(host.devices.first.revoked, isFalse);
+      expect(host.devices.first.staffEpoch, 1);
+    });
+
+    test('an answer without a credential epoch is refused at pairing', () async {
+      final host = hostFor();
+      await _listen(host, material);
+      addTearDown(host.stop);
+      sendEpoch = false;
+      await _expectPairingRefused(host, material, waiterA.directory, 'staff-a');
+      expect(host.deviceCount, 0);
+    });
+
+    test('an old record without an epoch learns it online and is not revoked', () async {
+      final host = hostFor();
+      await pairedAndWarm(host);
+      await host.stop();
+      // last_seq reset: the restarted test client counts from 1 again.
+      await rewriteStoredDevice((d) {
+        d.remove('staff_epoch');
+        d['last_seq'] = 0;
+      });
+      epoch = 7;
+      final restarted = hostFor();
+      await _listen(restarted, material);
+      addTearDown(restarted.stop);
+      final again = _signed(restarted, material, waiterA.directory, 'staff-a');
+      final legacy = await order(again, 'legacy-online');
+      expect(legacy['status'], 200, reason: '${legacy['error']}');
+      expect(restarted.devices.first.revoked, isFalse);
+      expect(restarted.devices.first.staffEpoch, 7);
+    });
+
+    test('with the cloud away a seal from before the epoch or with another epoch is refused', () async {
+      for (final edit in <String, void Function(Map<String, dynamic>)>{
+        'no epoch in record': (d) => d.remove('staff_epoch'),
+        'other epoch in record': (d) => d['staff_epoch'] = 2,
+      }.entries) {
+        store = MemoryLanEnrollmentStore();
+        queue = RestaurantLocalOrderQueueService();
+        cloud = 'active';
+        final host = hostFor();
+        await pairedAndWarm(host);
+        await host.stop();
+        await rewriteStoredDevice(edit.value);
+        cloud = 'down';
+        final restarted = hostFor();
+        await _listen(restarted, material);
+        final again = _signed(restarted, material, waiterA.directory, 'staff-a');
+        final result = await order(again, 'old-seal');
+        expect(result['status'], 401, reason: edit.key);
+        expect(result['error'], contains('doğrulanamadı'), reason: edit.key);
+        await restarted.stop();
+      }
+    });
+
+    test('a branch mismatch and a lost permission are rejected, not treated as offline', () async {
+      for (final mode in <String>['otherBranch', 'noPermission']) {
+        store = MemoryLanEnrollmentStore();
+        queue = RestaurantLocalOrderQueueService();
+        cloud = 'active';
+        final host = hostFor();
+        await _listen(host, material);
+        final session = await _pair(host, material, waiterA.directory, 'staff-a');
+        cloud = mode;
+        final result = await order(session, 'mode-$mode');
+        expect(result['status'], 401, reason: mode);
+        cloud = 'down';
+        expect((await order(session, 'mode-$mode-2'))['status'], 401, reason: mode);
+        await host.stop();
+      }
+    });
+
+    test('offline authority keeps the table scope of the sealed branch', () async {
+      final host = hostFor();
+      final session = await pairedAndWarm(host);
+      cloud = 'down';
+      final foreign = await order(session, 'other-branch-table', table: 2);
+      expect(foreign['status'], isNot(200));
+    });
+  });
+
+  group('LAN staff authorization (negative)', () {
+    const rid = 'lan-auth-rest';
+    const tables = <Map<String, dynamic>>[
+      <String, dynamic>{'id': 't1', 'table_number': 1, 'branch_id': 'b1', 'is_active': true},
+      <String, dynamic>{'id': 't2', 'table_number': 2, 'branch_id': 'b2', 'is_active': true},
+      <String, dynamic>{'id': 't3', 'table_number': 3, 'branch_id': 'b1', 'is_active': false},
+    ];
+    const products = <Map<String, dynamic>>[
+      <String, dynamic>{'name': 'Çorba', 'station_id': 'ocak', 'price': 40},
+    ];
+    const stations = <Map<String, dynamic>>[<String, dynamic>{'id': 'ocak'}];
+
+    Map<String, dynamic> row({
+      String store = rid,
+      String status = 'active',
+      String role = 'waiter',
+      List<String> permissions = const <String>['manageOrders'],
+      String? branch,
+      Object? mustChange = false,
+    }) =>
+        <String, dynamic>{
+          'store_id': store,
+          'status': status,
+          'staff_role': role,
+          'permissions': permissions,
+          'branch_id': branch,
+          'must_change_password': mustChange,
+          'credential_epoch': 1,
+        };
+
+    late RestaurantLocalOrderQueueService queue;
+    setUp(() => queue = RestaurantLocalOrderQueueService());
+
+    RestaurantLanHost hostFor(
+      Map<String, dynamic>? Function() membership, {
+      String? center = 'b1',
+    }) {
+      return _host(
+        material,
+        restaurantId: rid,
+        branchId: center,
+        orders: queue,
+        stationsOverride: stations,
+        tablesOverride: tables,
+        productsOverride: products,
+        staffStillAuthorized: lanStaffProbe(
+          (_) async => membership(),
+          restaurantId: rid,
+          centerBranchId: () => center,
+        ),
+      );
+    }
+
+    Future<Map<String, dynamic>> order(
+      RestaurantLanClient session,
+      String id, {
+      int table = 1,
+      String staff = 'staff-a',
+    }) {
+      return session.postAuthorized('/lan/orders', <String, Object?>{
+        'local_order_id': id,
+        'table_number': table,
+        'station_id': 'ocak',
+        'items': <Map<String, Object?>>[
+          <String, Object?>{'name': 'Çorba', 'quantity': 1, 'price': 40},
+        ],
+      });
+    }
+
+    Future<void> expectRefused(
+      RestaurantLanHost host,
+      Map<String, dynamic> result,
+      String id,
+    ) async {
+      expect(result['saved'], isNot(true));
+      expect(result['status'], isNot(200));
+      final stored = await queue.list(rid);
+      expect(stored, isEmpty, reason: 'no local order may exist for $id');
+    }
+
+    for (final entry in <String, Map<String, dynamic>?>{
+      'a waiter role without manageOrders': row(permissions: const <String>[]),
+      'a viewOrders-only sub-admin': row(role: 'sub_admin', permissions: const <String>['viewOrders']),
+      'an inactive member': row(status: 'inactive'),
+      'a member of another restaurant': row(store: 'someone-else'),
+      'a member limited to another branch': row(branch: 'b2'),
+      'no membership at all': null,
+      'a staff account with a temporary password': row(mustChange: true),
+      'an answer without the password flag': (row()..remove('must_change_password')),
+      'a non-boolean password flag': row(mustChange: 'false'),
+    }.entries) {
+      test('${entry.key} cannot send an order', () async {
+        final host = hostFor(() => entry.value);
+        await _listen(host, material);
+        addTearDown(host.stop);
+        await _expectPairingRefused(host, material, waiterA.directory, 'staff-a');
+        expect(host.deviceCount, 0);
+        expect(await queue.list(rid), isEmpty);
+      });
+    }
+
+    test('a branch-limited member without a known center branch is refused', () async {
+      final host = hostFor(() => row(branch: 'b1'), center: null);
+      await _listen(host, material);
+      addTearDown(host.stop);
+      await _expectPairingRefused(host, material, waiterA.directory, 'staff-a');
+      expect(host.deviceCount, 0);
+      expect(await queue.list(rid), isEmpty);
+    });
+
+    test('staff deactivated after pairing stops at the next request', () async {
+      Map<String, dynamic>? current = row();
+      final host = hostFor(() => current);
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final session = await _pair(host, material, waiterA.directory, 'staff-a');
+      expect((await order(session, 'ok-1'))['saved'], isTrue);
+      current = row(status: 'inactive');
+      final after = await order(session, 'late-1');
+      expect(after['saved'], isNot(true));
+      expect(after['status'], 401);
+      // The revocation sticks even if the membership comes back.
+      current = row();
+      expect((await order(session, 'late-2'))['saved'], isNot(true));
+    });
+
+    test('a permission removed after pairing stops the next order', () async {
+      Map<String, dynamic>? current = row();
+      final host = hostFor(() => current);
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final session = await _pair(host, material, waiterA.directory, 'staff-a');
+      expect((await order(session, 'p-1'))['saved'], isTrue);
+      current = row(permissions: const <String>[]);
+      expect((await order(session, 'p-2'))['saved'], isNot(true));
+    });
+
+    test('a branch-limited member only reaches active tables of that branch', () async {
+      final host = hostFor(() => row(branch: 'b1'));
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final session = await _pair(host, material, waiterA.directory, 'staff-a');
+      final list = await session.postAuthorized('/lan/tables', <String, Object?>{});
+      final numbers = (list['tables'] as List).map((t) => t['table_number']).toList();
+      expect(numbers, containsAll(<int>[1, 3]));
+      expect(numbers, isNot(contains(2)));
+      final other = await order(session, 'tb-2', table: 2);
+      expect(other['status'], 403);
+      expect(other['saved'], isNot(true));
+      final missing = await order(session, 'tb-9', table: 9);
+      expect(missing['status'], 403);
+      final inactive = await order(session, 'tb-3', table: 3);
+      expect(inactive['status'], 403);
+      expect((await order(session, 'tb-1', table: 1))['saved'], isTrue);
+    });
+
+    test('a member limited to nothing still cannot use an inactive table', () async {
+      final host = hostFor(() => row());
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final session = await _pair(host, material, waiterA.directory, 'staff-a');
+      expect((await order(session, 'tc-3', table: 3))['status'], 403);
+      expect((await order(session, 'tc-2', table: 2))['saved'], isTrue);
+    });
+
+    test('a device cannot send as a different staff id', () async {
+      final host = hostFor(() => row());
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final session = await _pair(host, material, waiterA.directory, 'staff-a');
+      session.seq += 1;
+      final spoof = await session.post('/lan/orders', <String, Object?>{
+        'seq': session.seq,
+        'body': <String, Object?>{
+          'staff_id': 'staff-boss',
+          'local_order_id': 'spoof-1',
+          'table_number': 1,
+          'station_id': 'ocak',
+          'items': <Map<String, Object?>>[
+            <String, Object?>{'name': 'Çorba', 'quantity': 1, 'price': 40},
+          ],
+        },
+      });
+      expect(spoof['saved'], isNot(true));
+      expect(spoof['status'], 401);
+    });
+  });
+
+  group('LAN print state is a recorded fact (fake printer)', () {
+    const rid = 'lan-print-rest';
+    const tables = <Map<String, dynamic>>[
+      <String, dynamic>{'id': 't1', 'table_number': 1, 'is_active': true},
+    ];
+    const products = <Map<String, dynamic>>[
+      <String, dynamic>{'name': 'Çorba', 'station_id': 'ocak', 'price': 40},
+    ];
+    const stations = <Map<String, dynamic>>[<String, dynamic>{'id': 'ocak'}];
+
+    Future<(RestaurantLocalOrderRecord, int)> run({
+      bool physical = false,
+      Future<void> Function(RestaurantLocalOrderRecord)? print,
+    }) async {
+      final queue = RestaurantLocalOrderQueueService();
+      var calls = 0;
+      final host = _host(
+        material,
+        restaurantId: rid,
+        orders: queue,
+        stationsOverride: stations,
+        tablesOverride: tables,
+        productsOverride: products,
+        enablePhysicalPrint: physical,
+        onPhysicalPrint: print == null
+            ? null
+            : (order) async {
+                calls += 1;
+                await print(order);
+              },
+      );
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final session = await _pair(host, material, waiterA.directory, 'staff-a');
+      final saved = await session.postAuthorized('/lan/orders', <String, Object?>{
+        'local_order_id': 'pr-1',
+        'table_number': 1,
+        'station_id': 'ocak',
+        'items': <Map<String, Object?>>[
+          <String, Object?>{'name': 'Çorba', 'quantity': 1, 'price': 40},
+        ],
+      });
+      expect(saved['saved'], isTrue);
+      final rows = await queue.list(rid);
+      return (rows.single, calls);
+    }
+
+    test('nothing handed to a printer is recorded as not_sent, one record', () async {
+      final (order, calls) = await run();
+      expect(order.printStatus, 'not_sent');
+      expect(calls, 0);
+      expect(planLanOrderSync(listeningHost: true, printStatus: order.printStatus).evidence, 'failed');
+    });
+
+    test('a printer error after the write started is uncertain, never failed', () async {
+      final (order, calls) = await run(
+        physical: true,
+        print: (_) async => throw const SocketException('reset after write'),
+      );
+      expect(calls, 1);
+      expect(order.printStatus, 'uncertain');
+      expect(planLanOrderSync(listeningHost: true, printStatus: order.printStatus).evidence, 'uncertain');
+    });
+
+    test('a printed order is forwarded evidence and printed exactly once', () async {
+      final (order, calls) = await run(physical: true, print: (_) async {});
+      expect(calls, 1);
+      expect(order.printStatus, 'forwarded');
+      expect(planLanOrderSync(listeningHost: true, printStatus: order.printStatus).evidence, 'forwarded');
+    });
+
+    test('resending the same order id prints nothing more', () async {
+      final queue = RestaurantLocalOrderQueueService();
+      var calls = 0;
+      final host = _host(
+        material,
+        restaurantId: rid,
+        orders: queue,
+        stationsOverride: stations,
+        tablesOverride: tables,
+        productsOverride: products,
+        enablePhysicalPrint: true,
+        onPhysicalPrint: (_) async => calls += 1,
+      );
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final session = await _pair(host, material, waiterA.directory, 'staff-a');
+      Future<Map<String, dynamic>> send() => session.postAuthorized('/lan/orders', <String, Object?>{
+            'local_order_id': 'dup-1',
+            'table_number': 1,
+            'station_id': 'ocak',
+            'items': <Map<String, Object?>>[
+              <String, Object?>{'name': 'Çorba', 'quantity': 1, 'price': 40},
+            ],
+          });
+      expect((await send())['saved'], isTrue);
+      final again = await send();
+      expect(again['duplicate'], isTrue);
+      expect(calls, 1);
+      expect((await queue.list(rid)).length, 1);
+    });
+
+    test('closing the app lets the order in progress finish and refuses new ones', () async {
+      final queue = RestaurantLocalOrderQueueService();
+      final printing = Completer<void>();
+      final release = Completer<void>();
+      var calls = 0;
+      final host = _host(
+        material,
+        restaurantId: rid,
+        orders: queue,
+        stationsOverride: stations,
+        tablesOverride: tables,
+        productsOverride: products,
+        enablePhysicalPrint: true,
+        onPhysicalPrint: (_) async {
+          calls += 1;
+          printing.complete();
+          await release.future;
+        },
+      );
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final session = await _pair(host, material, waiterA.directory, 'staff-a');
+      Map<String, Object?> order(String id) => <String, Object?>{
+            'local_order_id': id,
+            'table_number': 1,
+            'station_id': 'ocak',
+            'items': <Map<String, Object?>>[
+              <String, Object?>{'name': 'Çorba', 'quantity': 1, 'price': 40},
+            ],
+          };
+      final first = session.postAuthorized('/lan/orders', order('stop-1'));
+      await printing.future;
+      final stopped = host.stop(grace: const Duration(seconds: 5));
+      expect(host.stopping, isTrue);
+      final late = await session.postAuthorized('/lan/orders', order('stop-2'));
+      expect(late['saved'], isFalse);
+      release.complete();
+      expect((await first)['saved'], isTrue);
+      await stopped;
+      expect(host.listening, isFalse);
+      final rows = await queue.list(rid);
+      expect(rows.map((row) => row.localOrderId), <String>['stop-1']);
+      expect(rows.single.printStatus, 'forwarded');
+      expect(calls, 1);
+    });
+  });
 }
 
 class _RememberTransport implements RestaurantLanOrderTransport {
   @override
   Future<bool> submit(RestaurantLocalOrderRecord order) async => true;
 }
+
+final LanAuthoritySealer _testSealer = MemoryLanAuthoritySealer();
 
 RestaurantLanHost _host(
   LanTlsMaterial material, {
@@ -893,6 +1583,7 @@ RestaurantLanHost _host(
   RestaurantLocalOrderQueueService? orders,
   LanEnrollmentStore? deviceStore,
   Duration deviceGrantTtl = const Duration(minutes: 15),
+  LanAuthoritySealer? authoritySealer,
   DateTime Function()? clock,
   Future<StaffProbe> Function(String staffId)? staffStillAuthorized,
   List<Map<String, dynamic>>? stationsOverride,
@@ -911,6 +1602,7 @@ RestaurantLanHost _host(
     operatorFingerprint: material.operatorFingerprint,
     certificateDirectory: material.directory.path,
     deviceGrantTtl: deviceGrantTtl,
+    authoritySealer: authoritySealer ?? _testSealer,
     clock: clock,
     staffStillAuthorized: staffStillAuthorized ??
         (_) async => const StaffProbe(StaffProbeKind.active),
@@ -1010,6 +1702,29 @@ Future<RestaurantLanClient> _pair(
   });
   expect(replay['status'], 401);
   return _signed(host, material, directory, staffId);
+}
+
+/// An unauthorised member is refused at pairing itself: no device, no
+/// certificate, nothing to send an order with.
+Future<void> _expectPairingRefused(
+  RestaurantLanHost host,
+  LanTlsMaterial material,
+  Directory directory,
+  String staffId,
+) async {
+  final issued = await _owner(host, material).post('/lan/pair/issue', <String, Object?>{});
+  final request = await LanClientRequest.generate(
+    directory: directory,
+    commonName: staffId,
+  );
+  final redeemed = await _anonymous(host, material).post('/lan/pair/redeem', <String, Object?>{
+    'code': issued['code'].toString(),
+    'staff_id': staffId,
+    'csr': request.csr,
+  });
+  expect(redeemed['ok'], isNot(true));
+  expect(redeemed['status'], 403);
+  expect(redeemed.containsKey('certificate'), isFalse);
 }
 
 Future<void> _expectClosed(Future<Map<String, dynamic>> attempt) async {

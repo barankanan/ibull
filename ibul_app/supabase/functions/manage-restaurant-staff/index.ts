@@ -92,17 +92,6 @@ function memberIdOf(body: { id?: unknown }) {
   return typeof body.id === 'string' ? body.id.trim() : '';
 }
 
-async function verifyStaffPassword(email: string, password: string) {
-  const url = `${Deno.env.get('SUPABASE_URL')}/auth/v1/token?grant_type=password`;
-  const anon = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { apikey: anon, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-  return response.ok;
-}
-
 async function findAuthUserByEmail(email: string) {
   const url = `${Deno.env.get('SUPABASE_URL')}/auth/v1/admin/users?filter=${encodeURIComponent(email)}`;
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -122,32 +111,9 @@ Deno.serve(async (req) => {
   try {
     const { user, serviceClient } = await getAuthedContext(req);
     const body = await req.json();
-    if (body.operation === 'clear_password_change') {
-      return reply({
-        ok: false,
-        message: 'Şifre değişikliği işareti istemciden kaldırılamaz. Geçici şifre sunucuda değiştirilmelidir.',
-      }, 403);
-    }
-    if (body.operation === 'change_staff_password') {
-      const meta = user.app_metadata ?? {};
-      if (meta.managed_restaurant_staff !== true) {
-        return reply({ ok: false, message: 'Yalnız personel hesabı bu işlemi yapabilir.' }, 403);
-      }
-      const current = typeof body.current_password === 'string' ? body.current_password : '';
-      const next = typeof body.new_password === 'string' ? body.new_password : '';
-      if (current.length < 6 || next.length < 8 || next.length > 128 || current === next) {
-        return reply({ ok: false, message: 'Mevcut şifre doğrulanmalı. Yeni şifre en az 8 karakter ve farklı olmalıdır.' }, 400);
-      }
-      const email = String(user.email ?? '').trim().toLowerCase();
-      if (!email || !await verifyStaffPassword(email, current)) {
-        return reply({ ok: false, message: 'Mevcut şifre doğrulanamadı. İşaret kaldırılmadı.' }, 401);
-      }
-      const { error } = await serviceClient.auth.admin.updateUserById(user.id, {
-        password: next,
-        app_metadata: { ...meta, must_change_password: false },
-      });
-      if (error) return reply({ ok: false, message: 'Şifre değiştirilemedi. İşaret duruyor.' }, 500);
-      return reply({ ok: true });
+    // Policy: no forced first-login change; staff never set passwords. Owner only (below).
+    if (body.operation === 'clear_password_change' || body.operation === 'change_staff_password') {
+      return reply({ ok: false, message: 'Personel şifresini yalnız işletme sahibi belirleyebilir.' }, 403);
     }
     const { data: store, error: storeError } = await serviceClient.from('stores')
       .select('seller_id, category').eq('seller_id', user.id).maybeSingle();
@@ -179,7 +145,19 @@ Deno.serve(async (req) => {
       return reply({ ok: false, message: 'Başka işletmenin personeli değiştirilemez.' }, 403);
     }
 
+    if (body.operation === 'list_branches') {
+      // Read-only. The caller is already limited to its own store above, so a
+      // sub-admin with manageStaff sees only that store's active branches.
+      const { data: branchRows, error: branchesError } = await serviceClient.from('store_branches')
+        .select('id,name,status').eq('store_id', storeId).eq('status', 'active');
+      if (branchesError) return reply({ ok: false, message: 'Şubeler okunamadı.' }, 500);
+      return reply({ ok: true, branches: Array.isArray(branchRows) ? branchRows : [] });
+    }
     if (body.operation === 'activate' || body.operation === 'deactivate') {
+      // Policy: only the verified owner gives access back. A sub-admin, even with manageStaff, is refused.
+      if (body.operation === 'activate' && !ownerStoreId) {
+        return reply({ ok: false, message: 'Personeli yalnız işletme sahibi yeniden etkinleştirebilir.' }, 403);
+      }
       const memberId = memberIdOf(body);
       if (!memberId) return reply({ ok: false, message: 'Geçersiz personel kimliği.' }, 400);
       const { data: member, error: memberError } = await serviceClient.from('store_sub_admins')
@@ -188,6 +166,9 @@ Deno.serve(async (req) => {
       if (memberError || !member) return reply({ ok: false, message: 'Personel kaydı bulunamadı.' }, 404);
       if (member.auth_user_id && member.auth_user_id === user.id) {
         return reply({ ok: false, message: 'Kendi hesabınız silinemez.' }, 403);
+      }
+      if (body.operation === 'activate' && !member.auth_user_id) {
+        return reply({ ok: false, message: 'Bu eski davet kaydına bağlı hesap yok. Personeli yeniden oluşturun.' }, 409);
       }
       if (body.operation === 'deactivate' && !ownerStoreId) {
         const { data: managers } = await serviceClient.from('store_sub_admins')
@@ -218,6 +199,18 @@ Deno.serve(async (req) => {
       const { data: member, error: memberLookupError } = await serviceClient.from('store_sub_admins')
         .select('id,auth_user_id,status').eq('store_id', storeId).eq('id', memberId).maybeSingle();
       if (memberLookupError || !member) return reply({ ok: false, message: 'Personel kaydı bulunamadı.' }, 404);
+      if (member.auth_user_id && member.auth_user_id === user.id) {
+        return reply({ ok: false, message: 'Kendi hesabınız silinemez.' }, 403);
+      }
+      if (!ownerStoreId) {
+        const { data: managers } = await serviceClient.from('store_sub_admins')
+          .select('id,permissions').eq('store_id', storeId).eq('status', 'active');
+        const activeManagers = (Array.isArray(managers) ? managers : []).filter((row) =>
+          Array.isArray(row.permissions) && row.permissions.includes('manageStaff'));
+        if (activeManagers.length <= 1 && activeManagers.some((row) => row.id === memberId)) {
+          return reply({ ok: false, message: 'Son personel yöneticisi kaldırılamaz.' }, 403);
+        }
+      }
       const authId = member.auth_user_id;
       const { error: deleteError } = await serviceClient.from('store_sub_admins')
         .delete().eq('store_id', storeId).eq('id', member.id);
@@ -237,35 +230,34 @@ Deno.serve(async (req) => {
       return reply({ ok: true, email_sent: false, auth_removed: true });
     }
     if (body.operation === 'set_temporary_password') {
+      // Owner only: a sub-admin with manageStaff is refused here and again in the RPC.
+      if (!ownerStoreId) {
+        return reply({ ok: false, message: 'Personel şifresini yalnız işletme sahibi belirleyebilir.' }, 403);
+      }
       const memberId = memberIdOf(body);
       const password = typeof body.password === 'string' ? body.password : '';
       if (!memberId || password.length < 8 || password.length > 128) {
         return reply({ ok: false, message: 'Geçerli personel ve en az 8 karakterlik şifre gerekli.' }, 400);
       }
-      const { data: member, error: memberError } = await serviceClient.from('store_sub_admins')
-        .select('id,auth_user_id').eq('store_id', storeId).eq('id', memberId).maybeSingle();
-      if (memberError || !member?.auth_user_id) {
-        return reply({ ok: false, message: 'Personel kaydı bulunamadı.' }, 404);
-      }
-      const authId = member.auth_user_id;
-      const { data: membershipRows, error: membershipError } = await serviceClient.from('store_sub_admins')
-        .select('id,store_id').eq('auth_user_id', authId);
-      if (membershipError) return reply({ ok: false, message: 'Üyelikler doğrulanamadı.' }, 500);
-      const foreign = (Array.isArray(membershipRows) ? membershipRows : [])
-        .some((row) => row.store_id !== storeId);
-      if (foreign) {
-        return reply({ ok: false, message: 'Bu Auth hesabının başka işletmede üyeliği var. Şifre değiştirilmedi.' }, 409);
-      }
-      const { data: looked, error: lookError } = await serviceClient.auth.admin.getUserById(authId);
-      const target = looked?.user;
-      if (lookError || !target || target.app_metadata?.managed_restaurant_staff !== true) {
-        return reply({ ok: false, message: 'Bu hesap yönetilen personel değil. Şifre değiştirilmedi.' }, 409);
-      }
-      const { error: updateError } = await serviceClient.auth.admin.updateUserById(authId, {
-        password,
-        app_metadata: { ...(target.app_metadata ?? {}), managed_restaurant_staff: true, must_change_password: true },
+      const { error: setError } = await serviceClient.rpc('owner_set_staff_password', {
+        p_owner_id: user.id, p_member_id: memberId, p_password: password,
       });
-      if (updateError) return reply({ ok: false, message: 'Geçici şifre kaydedilemedi.' }, 500);
+      if (setError) {
+        const code = String(setError.code ?? '');
+        if (code === 'P0002' || code === '22P02') {
+          return reply({ ok: false, message: 'Personel kaydı bulunamadı.' }, 404);
+        }
+        if (code === '42501') {
+          return reply({ ok: false, message: 'Personel şifresini yalnız işletme sahibi belirleyebilir.' }, 403);
+        }
+        if (code === '23505' || code === '23514') {
+          return reply({ ok: false, message: 'Bu hesap bu işletmenin yönetilen personeli değil. Şifre değiştirilmedi.' }, 409);
+        }
+        if (code === '22023') {
+          return reply({ ok: false, message: 'Geçerli personel ve en az 8 karakterlik şifre gerekli.' }, 400);
+        }
+        return reply({ ok: false, message: 'Şifre kaydedilemedi.' }, 500);
+      }
       return reply({ ok: true, password_unchanged: false });
     }
     const permissions = body.permissions;
@@ -293,8 +285,12 @@ Deno.serve(async (req) => {
         typeof name === 'string' && keptWhenClientOmits.has(name)))) {
         return reply({ ok: false, message: 'Yalnız kayıtlı ek yetkiler açıkça kaldırılabilir.' }, 400);
       }
-      const wantsRole = typeof body.staff_role === 'string' && body.staff_role.length > 0;
-      const wantsBranch = typeof body.branch_id === 'string' && body.branch_id.length > 0;
+      // The panel always echoes the current role and branch. Only a value that
+      // differs from the stored one is a change request (owner-only below).
+      const wantsRole = typeof body.staff_role === 'string' && body.staff_role.length > 0 &&
+        body.staff_role !== current.staff_role;
+      const wantsBranch = typeof body.branch_id === 'string' && body.branch_id.length > 0 &&
+        body.branch_id !== current.branch_id;
       if ((wantsRole || wantsBranch) && !ownerStoreId) {
         return reply({ ok: false, message: 'Rol ve şube yalnızca işletme sahibi tarafından değiştirilebilir.' }, 403);
       }
@@ -348,6 +344,10 @@ Deno.serve(async (req) => {
         });
     }
     if (body.operation !== 'create') return reply({ ok: false, message: 'Geçersiz işlem.' }, 400);
+    // Policy: only the verified owner creates a staff account or links an old one again.
+    if (!ownerStoreId) {
+      return reply({ ok: false, message: 'Personel hesabını yalnız işletme sahibi oluşturabilir veya yeniden bağlayabilir.' }, 403);
+    }
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     const password = typeof body.password === 'string' ? body.password : '';
@@ -409,15 +409,11 @@ Deno.serve(async (req) => {
       }
       return member.id;
     };
-    // Server-only Auth administration. No invite mail or plaintext password row.
+    // Server-only Auth administration. The caller is the owner (checked above).
     const { data: created, error: authError } = await serviceClient.auth.admin.createUser({
       email, password, email_confirm: true,
       user_metadata: { display_name: name },
-      app_metadata: {
-        managed_restaurant_staff: true,
-        must_change_password: true,
-        provisioned_by_store_id: storeId,
-      },
+      app_metadata: { managed_restaurant_staff: true, must_change_password: false, provisioned_by_store_id: storeId },
     });
     if (authError || !created?.user) {
       const listed = await findAuthUserByEmail(email);

@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import '../../core/secure_local_store.dart';
+import 'lan_authority_seal.dart';
 import 'print_evidence.dart';
 import 'restaurant_local_cache_service.dart';
 import 'restaurant_local_order_queue_service.dart';
@@ -39,32 +40,81 @@ bool deviceMayRunLocalPrintBridge(TargetPlatform platform) {
   }
 }
 
+/// One order can print on several stations. The order is only "failed" when
+/// every station definitely failed. If one station may have printed
+/// (forwarded or uncertain) and another failed, the order is uncertain: a
+/// reprint of the failed station is for the operator to decide, never an
+/// automatic repeat of the whole order. Unknown statuses are uncertain.
+String combineStationPrintStatuses(List<String> statuses) {
+  if (statuses.isEmpty) return 'not_sent';
+  if (statuses.every((status) => status == 'forwarded')) return 'forwarded';
+  if (statuses.every((status) => status == 'failed')) return 'failed';
+  return 'uncertain';
+}
+
 class RestaurantLanDevice {
   const RestaurantLanDevice({
     required this.deviceId,
     required this.pairedAt,
     required this.staffId,
     this.branchId,
+    this.staffBranchId,
     this.revoked = false,
     this.staffVerified = false,
     this.verifiedAt,
     this.expiresAt,
+    this.authoritySeal,
+    this.staffEpoch,
   });
 
   final String deviceId;
   final DateTime pairedAt;
   final String staffId;
   final String? branchId;
+
+  /// Branch the staff membership is limited to (verified with the cloud);
+  /// null or empty means all branches.
+  final String? staffBranchId;
   final bool revoked;
   final bool staffVerified;
   final DateTime? verifiedAt;
   final DateTime? expiresAt;
+
+  /// HMAC over the verified authority (see [authorityCanonical]). A record
+  /// whose seal does not verify grants nothing while the cloud is away.
+  final String? authoritySeal;
+
+  /// Server `credential_epoch` of the staff account when this device was last
+  /// verified online. It moves when the staff member is deactivated,
+  /// re-activated, deleted, re-linked or gets a new password; a different
+  /// value later means the old pairing is no longer trusted.
+  final int? staffEpoch;
+
+  /// Fields that grant offline access. `manageOrders` is implied: only a
+  /// membership holding it is ever stored as verified.
+  String authorityCanonical(String restaurantId) => <String>[
+    restaurantId,
+    deviceId,
+    staffId,
+    branchId ?? '',
+    staffBranchId ?? '',
+    verifiedAt?.toUtc().toIso8601String() ?? '',
+    expiresAt?.toUtc().toIso8601String() ?? '',
+    'manageOrders',
+    // Always part of the seal: seals written before the epoch existed no
+    // longer verify. Accepted behaviour: such a device is renewed at the next
+    // online check, and with the cloud away its old seal is refused.
+    'epoch:${staffEpoch ?? ''}',
+  ].map(jsonEncode).join('|');
 
   RestaurantLanDevice copy({
     bool? revoked,
     bool? staffVerified,
     DateTime? verifiedAt,
     DateTime? expiresAt,
+    String? staffBranchId,
+    String? authoritySeal,
+    int? staffEpoch,
     bool clearVerification = false,
   }) {
     return RestaurantLanDevice(
@@ -72,10 +122,13 @@ class RestaurantLanDevice {
       pairedAt: pairedAt,
       staffId: staffId,
       branchId: branchId,
+      staffBranchId: staffBranchId ?? this.staffBranchId,
       revoked: revoked ?? this.revoked,
       staffVerified: clearVerification ? false : staffVerified ?? this.staffVerified,
       verifiedAt: clearVerification ? null : verifiedAt ?? this.verifiedAt,
       expiresAt: clearVerification ? null : expiresAt ?? this.expiresAt,
+      authoritySeal: clearVerification ? null : authoritySeal ?? this.authoritySeal,
+      staffEpoch: staffEpoch ?? this.staffEpoch,
     );
   }
 
@@ -84,10 +137,13 @@ class RestaurantLanDevice {
     'paired_at': pairedAt.toUtc().toIso8601String(),
     'staff_id': staffId,
     if (branchId != null) 'branch_id': branchId,
+    if (staffBranchId != null) 'staff_branch_id': staffBranchId,
     'revoked': revoked,
     'staff_verified': staffVerified,
     if (verifiedAt != null) 'verified_at': verifiedAt!.toUtc().toIso8601String(),
     if (expiresAt != null) 'expires_at': expiresAt!.toUtc().toIso8601String(),
+    if (authoritySeal != null) 'authority_seal': authoritySeal,
+    if (staffEpoch != null) 'staff_epoch': staffEpoch,
   };
 
   factory RestaurantLanDevice.fromJson(Map<String, dynamic> json) {
@@ -97,10 +153,13 @@ class RestaurantLanDevice {
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       staffId: json['staff_id']?.toString() ?? '',
       branchId: json['branch_id']?.toString(),
+      staffBranchId: json['staff_branch_id']?.toString(),
       revoked: json['revoked'] == true,
       staffVerified: json['staff_verified'] == true,
       verifiedAt: DateTime.tryParse(json['verified_at']?.toString() ?? ''),
       expiresAt: DateTime.tryParse(json['expires_at']?.toString() ?? ''),
+      authoritySeal: json['authority_seal']?.toString(),
+      staffEpoch: json['staff_epoch'] is int ? json['staff_epoch'] as int : null,
     );
   }
 }
@@ -159,7 +218,8 @@ class RestaurantLanHost {
     this.printBridgeUri,
     this.staffStillAuthorized,
     LanEnrollmentStore? deviceStore,
-    this.deviceGrantTtl = const Duration(minutes: 15),
+    this.deviceGrantTtl = const Duration(hours: 12),
+    LanAuthoritySealer? authoritySealer,
     DateTime Function()? clock,
     Random? random,
   }) : _orders = orders ??
@@ -171,6 +231,7 @@ class RestaurantLanHost {
        _printQueue = printQueue,
        _cache = cache ?? RestaurantLocalCacheService(),
        _deviceStore = deviceStore ?? SecureLanEnrollmentStore(),
+       _authoritySealer = authoritySealer ?? KeystoreLanAuthoritySealer(),
        _clock = clock ?? DateTime.now,
        _random = random ?? Random.secure();
 
@@ -180,7 +241,9 @@ class RestaurantLanHost {
   final List<Map<String, dynamic>>? stationsOverride;
   final List<Map<String, dynamic>>? tablesOverride;
   final List<Map<String, dynamic>>? productsOverride;
-  final String? branchId;
+  /// The center's branch. It can become known after start (the evidence key
+  /// is registered once the cloud is reachable), so it is not final.
+  String? branchId;
   final String? operatorFingerprint;
   final String? certificateDirectory;
   final String? machineId;
@@ -188,7 +251,10 @@ class RestaurantLanHost {
   final Map<String, int> lastStageMicros = <String, int>{};
   final Future<StaffProbe> Function(String staffId)? staffStillAuthorized;
   final LanEnrollmentStore _deviceStore;
+  /// How long a cloud-verified staff authority is trusted while the cloud is
+  /// unreachable. Never extended offline; renewed by every online check.
   final Duration deviceGrantTtl;
+  final LanAuthoritySealer _authoritySealer;
   final RestaurantLocalOrderQueueService _orders;
   final RestaurantLocalPrintQueueService? _printQueue;
   final RestaurantLocalCacheService _cache;
@@ -222,6 +288,7 @@ class RestaurantLanHost {
     InternetAddress? address,
     int port = 0,
   }) async {
+    _stopping = false;
     final selected = address ?? InternetAddress.loopbackIPv4;
     final listen = decideLanListen(selected);
     if (!listen.allowed) {
@@ -241,6 +308,7 @@ class RestaurantLanHost {
       _authorityLock = lock;
     }
     await _loadDevices();
+    await _orders.adoptJournal(restaurantId);
     _server = await HttpServer.bindSecure(
       selected,
       port,
@@ -275,9 +343,67 @@ class RestaurantLanHost {
     _browserServer!.listen(_handleBrowser, onError: (_, _) {});
   }
 
-  Future<void> stop() async {
+  /// One-time pairing code for the next waiter device. The owner screen on
+  /// this computer calls it; the HTTP route above reuses it. A new code
+  /// replaces the previous one and expires after [PairingAttemptGuard.codeTtl].
+  ({String code, DateTime expiresAt}) issuePairingCode() {
+    _code = newPairingSecret(_random);
+    _codeExpires = _clock().add(PairingAttemptGuard.codeTtl);
+    return (code: _code!, expiresAt: _codeExpires!);
+  }
+
+  /// The one thing a waiter device needs when it cannot find this center by
+  /// itself (local-network search refused or not available): where the center
+  /// is, which certificate it must present, and a fresh one-time code. Shown
+  /// on this computer as a QR and as text; valid for two minutes, one use.
+  Future<String?> issuePairingLink() async {
+    final address = boundAddress?.trim() ?? '';
+    final fingerprint = await _announcedFingerprint();
+    final machine = machineId?.trim() ?? '';
+    if (!listening || address.isEmpty || fingerprint.isEmpty || machine.isEmpty) {
+      return null;
+    }
+    final issued = issuePairingCode();
+    final base = Uri.parse(
+      encodeLanQr(
+        LanCenterRecord(
+          host: address,
+          port: port,
+          restaurantId: restaurantId,
+          machineId: machine,
+          fingerprint: fingerprint,
+        ),
+      ),
+    );
+    return base.replace(
+      queryParameters: <String, String>{
+        ...base.queryParameters,
+        'code': issued.code,
+      },
+    ).toString();
+  }
+
+  bool _stopping = false;
+
+  /// True once shutdown began: new orders are refused, nothing is half saved.
+  bool get stopping => _stopping;
+
+  /// Stops the center. New orders are refused first (503, `saved: false`, so
+  /// the waiter device keeps the order in its own queue), then the order that
+  /// is being saved or printed right now is allowed to finish for up to
+  /// [grace], and only then the sockets close. Saved orders and the print
+  /// queue live on disk and are untouched.
+  Future<void> stop({Duration grace = const Duration(seconds: 5)}) async {
+    _stopping = true;
     final server = _server;
     final browser = _browserServer;
+    if (server != null || browser != null) {
+      try {
+        await _orders.transaction(() async {}).timeout(grace);
+      } catch (_) {
+        // Grace ran out: the journal already holds whatever was accepted.
+      }
+    }
     _server = null;
     _browserServer = null;
     if (identical(RestaurantLanHostRegistry.current, this)) {
@@ -288,6 +414,17 @@ class RestaurantLanHost {
     await _authorityLock?.release();
     _authorityLock = null;
     boundAddress = null;
+  }
+
+  Future<bool> _refusedWhileStopping(HttpRequest request) async {
+    if (!_stopping) return false;
+    request.response.headers.set(HttpHeaders.retryAfterHeader, '5');
+    await _send(request, 503, <String, Object?>{
+      'ok': false,
+      'saved': false,
+      'error': 'Yerel merkez kapanıyor. Sipariş cihazda bekliyor.',
+    });
+    return true;
   }
 
   Future<void> _handle(HttpRequest request) async {
@@ -319,12 +456,11 @@ class RestaurantLanHost {
           });
           return;
         }
-        _code = newPairingSecret(_random);
-        _codeExpires = _clock().add(PairingAttemptGuard.codeTtl);
+        final issued = issuePairingCode();
         await _send(request, 200, <String, Object?>{
           'ok': true,
-          'code': _code,
-          'expires_at': _codeExpires!.toUtc().toIso8601String(),
+          'code': issued.code,
+          'expires_at': issued.expiresAt.toUtc().toIso8601String(),
         });
         return;
       }
@@ -410,28 +546,16 @@ class RestaurantLanHost {
         }
         _code = null;
         _codeExpires = null;
-        final signed = await _signCsr(csr);
-        if (signed == null || _devices[signed.fingerprint]?.revoked == true) {
-          await _send(request, 401, <String, Object?>{
-            'ok': false,
-            'error': 'Cihaz sertifikası doğrulanamadı.',
-          });
-          return;
-        }
-        _devices[signed.fingerprint] = RestaurantLanDevice(
-          deviceId: signed.fingerprint,
-          pairedAt: _clock(),
-          staffId: staffId,
-          branchId: branchId,
-        );
-        _inboundSeq[signed.fingerprint] = 0;
-        await _persistDevices();
-        await _send(request, 200, <String, Object?>{
-          'ok': true,
-          'restaurant_id': restaurantId,
-          'staff_id': staffId,
-          'certificate': signed.certificate,
-        });
+        final enrolled = await _enrollDevice(csr: csr, staffId: staffId);
+        await _send(request, enrolled.status, enrolled.body);
+        return;
+      }
+      if (path == '/lan/pair/request' && request.method == 'POST') {
+        await _handlePairRequest(request);
+        return;
+      }
+      if (path == '/lan/pair/status' && request.method == 'POST') {
+        await _handlePairStatus(request);
         return;
       }
       if (path == '/lan/revoke' && request.method == 'POST') {
@@ -496,9 +620,10 @@ class RestaurantLanHost {
       final deviceId = fingerprint;
       if ((path == '/lan/tables' || path == '/lan/products') && request.method == 'POST') {
         if (path == '/lan/tables') {
-          final tables = (tablesOverride ?? (await _cache.read(restaurantId))?.tables)
-              ?.map(stripLanSecrets)
-              .toList(growable: false);
+          final tables = _tablesForStaff(
+            tablesOverride ?? (await _cache.read(restaurantId))?.tables,
+            deviceId,
+          )?.map(stripLanSecrets).toList(growable: false);
           if (tables == null) {
             await _send(request, 409, <String, Object?>{
               'ok': false,
@@ -537,7 +662,12 @@ class RestaurantLanHost {
         });
         return;
       }
+      if (path == '/lan/printers/scan' && request.method == 'POST') {
+        await _handlePrinterScan(request, body, staffId);
+        return;
+      }
       if (path == '/lan/orders' && request.method == 'POST') {
+        if (await _refusedWhileStopping(request)) return;
         final remote = request.connectionInfo?.remoteAddress.address ?? '';
         if (!_allowOrder(remote)) {
           await _send(request, 429, <String, Object?>{
@@ -606,6 +736,18 @@ class RestaurantLanHost {
         'ok': false,
         'saved': false,
         'error': 'Bu cihazın şube yetkisi yok.',
+      });
+      return;
+    }
+    final tableDenied = await _tableScopeError(
+      deviceId,
+      int.tryParse(body['table_number']?.toString() ?? ''),
+    );
+    if (tableDenied != null) {
+      await _send(request, 403, <String, Object?>{
+        'ok': false,
+        'saved': false,
+        'error': tableDenied,
       });
       return;
     }
@@ -825,6 +967,16 @@ class RestaurantLanHost {
       return;
     }
     var printStatus = bridgeStatus ?? 'not_sent';
+    final physicalAttempt =
+        enablePhysicalPrint && stationId.isNotEmpty && onPhysicalPrint != null;
+    if (bridgeStatus == null && !physicalAttempt) {
+      // Nothing was handed to any printer. Record that as a definite fact so
+      // the cloud sync can print it instead of guessing from "pending".
+      await _orders.update(
+        restaurantId: restaurantId,
+        order: order.copyWith(printStatus: 'not_sent', updatedAt: _clock()),
+      );
+    }
     if (bridgeStatus != null) {
       await _orders.update(
         restaurantId: restaurantId,
@@ -867,6 +1019,9 @@ class RestaurantLanHost {
       'print_status': printStatus,
       'local_order_id': order.localOrderId,
     });
+    if (!RestaurantLanHostRegistry.ordersSettled.isClosed) {
+      RestaurantLanHostRegistry.ordersSettled.add(order.localOrderId);
+    }
   }
 
   bool _operatorConsole(HttpRequest request) {
@@ -1040,6 +1195,389 @@ class RestaurantLanHost {
     await request.response.close();
   }
 
+  bool _printerScanRunning = false;
+
+  /// A paired device asks this computer to look for network printers. The
+  /// phone has no print bridge and may not scan the network itself; the
+  /// search this computer's own bridge already offers is run here and the
+  /// result goes back over the authenticated channel. Only a member who
+  /// holds the printer-settings permission may ask, and the cloud must
+  /// confirm it for this request.
+  Future<void> _handlePrinterScan(
+    HttpRequest request,
+    Map<String, dynamic> body,
+    String staffId,
+  ) async {
+    StaffProbe? probe;
+    try {
+      probe = await staffStillAuthorized?.call(staffId);
+    } catch (_) {
+      probe = null;
+    }
+    if (probe == null || probe.kind == StaffProbeKind.unreachable) {
+      await _send(request, 503, <String, Object?>{
+        'ok': false,
+        'errorCode': 'authority_unverified',
+        'error':
+            'Yazıcı yönetimi yetkisi doğrulanamadı. Bu işlem için internet gerekir.',
+      });
+      return;
+    }
+    if (!probe.isActive || !probe.permissions.contains('managePrintSettings')) {
+      await _send(request, 403, <String, Object?>{
+        'ok': false,
+        'errorCode': 'not_allowed',
+        'error': 'Yazıcı taraması için yazıcı yönetimi yetkisi gerekir.',
+      });
+      return;
+    }
+    final bridge = printBridgeUri;
+    if (bridge == null) {
+      await _send(request, 503, <String, Object?>{
+        'ok': false,
+        'errorCode': 'bridge_unavailable',
+        'error': 'Ana bilgisayarda yazıcı köprüsü yok.',
+      });
+      return;
+    }
+    final port = int.tryParse(body['port']?.toString() ?? '') ?? 9100;
+    final hint = body['printer_host']?.toString().trim() ?? '';
+    if (port < 1 || port > 65535 || (hint.isNotEmpty && !_privateIpv4(hint))) {
+      await _send(request, 400, <String, Object?>{
+        'ok': false,
+        'errorCode': 'bad_request',
+        'error': 'Tarama isteği geçersiz.',
+      });
+      return;
+    }
+    if (_printerScanRunning) {
+      await _send(request, 429, <String, Object?>{
+        'ok': false,
+        'errorCode': 'scan_busy',
+        'error': 'Başka bir tarama sürüyor. Bitince yeniden deneyin.',
+      });
+      return;
+    }
+    _printerScanRunning = true;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+    try {
+      final bytes = utf8.encode(jsonEncode(<String, Object?>{
+        'port': port,
+        if (hint.isNotEmpty) 'printer_host': hint,
+      }));
+      final outgoing = await client.postUrl(
+        bridge.replace(path: '/printer/tcp/scan'),
+      );
+      outgoing.headers.contentType = ContentType.json;
+      // The bridge refuses a chunked body.
+      outgoing.contentLength = bytes.length;
+      outgoing.add(bytes);
+      final response = await outgoing.close().timeout(
+        const Duration(seconds: 40),
+      );
+      final text = await utf8.decoder.bind(response).join().timeout(
+        const Duration(seconds: 10),
+      );
+      final decoded = text.isEmpty ? null : jsonDecode(text);
+      if (decoded is! Map) {
+        await _send(request, 502, <String, Object?>{
+          'ok': false,
+          'errorCode': 'scan_unavailable',
+          'error': response.statusCode == 404
+              ? 'Ana bilgisayardaki yazıcı köprüsü güncel değil; otomatik tarama desteklemiyor.'
+              : 'Yazıcı köprüsü taramayı yanıtlamadı.',
+        });
+        return;
+      }
+      await _send(request, 200, <String, Object?>{
+        'ok': true,
+        'scan': Map<String, dynamic>.from(decoded),
+      });
+    } on TimeoutException {
+      await _send(request, 504, <String, Object?>{
+        'ok': false,
+        'errorCode': 'scan_timeout',
+        'error': 'Ağ taraması zamanında bitmedi.',
+      });
+    } on SocketException {
+      await _send(request, 503, <String, Object?>{
+        'ok': false,
+        'errorCode': 'bridge_unreachable',
+        'error':
+            'Ana bilgisayarda yazıcı köprüsü çalışmıyor. Yazıcı Merkezi\'ni ana bilgisayardan başlatın.',
+      });
+    } catch (_) {
+      await _send(request, 502, <String, Object?>{
+        'ok': false,
+        'errorCode': 'scan_failed',
+        'error': 'Yazıcı köprüsü taramayı tamamlayamadı.',
+      });
+    } finally {
+      _printerScanRunning = false;
+      client.close(force: true);
+    }
+  }
+
+  bool _privateIpv4(String host) {
+    final parts = host.split('.');
+    if (parts.length != 4) return false;
+    final bytes = parts.map(int.tryParse).toList(growable: false);
+    if (bytes.any((byte) => byte == null || byte < 0 || byte > 255)) return false;
+    final a = bytes[0]!;
+    final b = bytes[1]!;
+    return a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168);
+  }
+
+  /// Signs the device's request and records the device. The staff member is
+  /// checked with the cloud while it is likely reachable, so the device can
+  /// work through a later outage: a rejection refuses the pairing, an
+  /// unreachable cloud leaves it unverified (no offline authority yet).
+  Future<({int status, Map<String, Object?> body})> _enrollDevice({
+    required String csr,
+    required String staffId,
+  }) async {
+    final signed = await _signCsr(csr);
+    if (signed == null || _devices[signed.fingerprint]?.revoked == true) {
+      return (
+        status: 401,
+        body: <String, Object?>{
+          'ok': false,
+          'error': 'Cihaz sertifikası doğrulanamadı.',
+        },
+      );
+    }
+    _devices[signed.fingerprint] = RestaurantLanDevice(
+      deviceId: signed.fingerprint,
+      pairedAt: _clock(),
+      staffId: staffId,
+      branchId: branchId,
+    );
+    _inboundSeq[signed.fingerprint] = 0;
+    if (staffStillAuthorized != null) {
+      final pairError = await _staffGrantError(
+        _devices[signed.fingerprint]!,
+        signed.fingerprint,
+      );
+      if (_devices[signed.fingerprint]?.revoked == true) {
+        _devices.remove(signed.fingerprint);
+        await _persistDevices();
+        return (
+          status: 403,
+          body: <String, Object?>{
+            'ok': false,
+            'error': pairError ?? 'Personel yetkisi doğrulanamadı.',
+          },
+        );
+      }
+    }
+    await _persistDevices();
+    return (
+      status: 200,
+      body: <String, Object?>{
+        'ok': true,
+        'restaurant_id': restaurantId,
+        'staff_id': staffId,
+        'certificate': signed.certificate,
+      },
+    );
+  }
+
+  final Map<String, LanPairingRequest> _pairRequests =
+      <String, LanPairingRequest>{};
+
+  /// Pairing requests the operator has not answered yet.
+  List<LanPairingRequest> get pendingPairingRequests {
+    final now = _clock();
+    return _pairRequests.values
+        .where((row) =>
+            row.state == LanPairingState.pending &&
+            row.matchCode.isNotEmpty &&
+            now.isBefore(row.expiresAt))
+        .toList(growable: false);
+  }
+
+  void _dropOldPairRequests() {
+    final now = _clock();
+    _pairRequests.removeWhere(
+      (_, row) => !now.isBefore(row.expiresAt.add(const Duration(minutes: 1))),
+    );
+  }
+
+  /// A waiter device asks to be paired. Nothing is granted here: the request
+  /// waits for the operator of this computer, who compares the six digits
+  /// with the phone and approves. The device is not known yet, so the same
+  /// attempt limit as the pairing code applies.
+  Future<void> _handlePairRequest(HttpRequest request) async {
+    final body = await _readBody(request);
+    final client = (request.connectionInfo?.remoteAddress.address ?? '').trim();
+    final guard = _pairingAttempts.putIfAbsent(client, PairingAttemptGuard.new);
+    final now = _clock();
+    if (!guard.allow(now)) {
+      await _send(request, 429, <String, Object?>{
+        'ok': false,
+        'error': 'Çok fazla eşleştirme denemesi. Kısa süre bekleyin.',
+      });
+      return;
+    }
+    // Every request counts: an unknown device may not keep the operator's
+    // screen busy.
+    guard.recordFailure(now);
+    _dropOldPairRequests();
+    final staffId = body['staff_id']?.toString().trim() ?? '';
+    final csr = body['csr']?.toString() ?? '';
+    final commit = body['commit']?.toString().trim().toLowerCase() ?? '';
+    final requestedRestaurant = body['restaurant_id']?.toString().trim() ?? '';
+    final csrLooksValid = csr.length >= 32 &&
+        csr.length <= 8192 &&
+        csr.contains('BEGIN CERTIFICATE REQUEST') &&
+        csr.contains('END CERTIFICATE REQUEST');
+    if (requestedRestaurant != restaurantId) {
+      await _send(request, 403, <String, Object?>{
+        'ok': false,
+        'error': 'Bu cihazın restoran yetkisi yok.',
+      });
+      return;
+    }
+    if (staffId.isEmpty ||
+        staffId.length > 64 ||
+        !csrLooksValid ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(commit) ||
+        certificateDirectory == null) {
+      await _send(request, 400, <String, Object?>{
+        'ok': false,
+        'error': 'Eşleştirme isteği geçersiz.',
+      });
+      return;
+    }
+    final waiting = _pairRequests.values
+        .where((row) =>
+            row.state == LanPairingState.pending && now.isBefore(row.expiresAt))
+        .length;
+    if (waiting >= 3) {
+      await _send(request, 429, <String, Object?>{
+        'ok': false,
+        'error': 'Onay bekleyen başka cihazlar var. Biraz sonra yeniden deneyin.',
+      });
+      return;
+    }
+    String label(Object? raw) {
+      final text = raw?.toString().replaceAll(RegExp(r'[\x00-\x1f]'), ' ').trim() ?? '';
+      return text.length > 60 ? text.substring(0, 60) : text;
+    }
+
+    final pending = LanPairingRequest(
+      id: newPairingSecret(_random),
+      staffId: staffId,
+      staffName: label(body['staff_name']),
+      deviceName: label(body['device_name']),
+      csr: csr,
+      commit: commit,
+      hostNonce: newPairingSecret(_random),
+      remoteAddress: client,
+      expiresAt: now.add(PairingAttemptGuard.codeTtl),
+    );
+    _pairRequests[pending.id] = pending;
+    await _send(request, 200, <String, Object?>{
+      'ok': true,
+      'request_id': pending.id,
+      'host_nonce': pending.hostNonce,
+      'expires_at': pending.expiresAt.toUtc().toIso8601String(),
+    });
+  }
+
+  /// The device reveals its nonce (first call) and then waits for the
+  /// operator's answer. The request is shown to the operator only after the
+  /// reveal matches the commitment.
+  Future<void> _handlePairStatus(HttpRequest request) async {
+    final body = await _readBody(request);
+    final id = body['request_id']?.toString().trim() ?? '';
+    final nonce = body['nonce']?.toString().trim() ?? '';
+    final pending = _pairRequests[id];
+    final client = (request.connectionInfo?.remoteAddress.address ?? '').trim();
+    if (pending == null || pending.remoteAddress != client) {
+      await _send(request, 404, <String, Object?>{
+        'ok': false,
+        'state': 'expired',
+        'error': 'Eşleştirme isteği bulunamadı veya süresi doldu.',
+      });
+      return;
+    }
+    if (pending.state == LanPairingState.pending &&
+        !_clock().isBefore(pending.expiresAt)) {
+      pending.state = LanPairingState.expired;
+      pending.error = 'Eşleştirme isteğinin süresi doldu.';
+    }
+    if (pending.state == LanPairingState.pending && pending.matchCode.isEmpty) {
+      if (nonce.isEmpty || lanPairingCommit(nonce) != pending.commit) {
+        pending.state = LanPairingState.denied;
+        pending.error = 'Eşleştirme doğrulanamadı.';
+      } else {
+        pending.matchCode = lanPairingMatchCode(
+          serverFingerprint: await _announcedFingerprint(),
+          csr: pending.csr,
+          deviceNonce: nonce,
+          hostNonce: pending.hostNonce,
+        );
+        if (!RestaurantLanHostRegistry.pairingRequests.isClosed) {
+          RestaurantLanHostRegistry.pairingRequests.add(pending);
+        }
+      }
+    }
+    final certificate = pending.certificate;
+    final approved = pending.state == LanPairingState.approved;
+    if (approved && certificate != null) {
+      // Handed over once; a second read finds nothing.
+      _pairRequests.remove(id);
+    }
+    await _send(request, 200, <String, Object?>{
+      'ok': pending.state == LanPairingState.pending || approved,
+      'state': pending.state.name,
+      if (approved && certificate != null) 'certificate': certificate,
+      if (approved) 'restaurant_id': restaurantId,
+      'error': ?pending.error,
+    });
+  }
+
+  /// The operator of this computer accepted the device. Returns null on
+  /// success, otherwise what to tell the operator (the staff member may be
+  /// refused by the cloud).
+  Future<String?> approvePairingRequest(String id) async {
+    final pending = _pairRequests[id];
+    if (pending == null || pending.state != LanPairingState.pending) {
+      return 'Eşleştirme isteği artık geçerli değil.';
+    }
+    if (pending.matchCode.isEmpty || !_clock().isBefore(pending.expiresAt)) {
+      pending.state = LanPairingState.expired;
+      pending.error = 'Eşleştirme isteğinin süresi doldu.';
+      return pending.error;
+    }
+    // Claimed before the cloud check, so two approvals cannot both enroll.
+    pending.state = LanPairingState.approving;
+    final enrolled = await _enrollDevice(
+      csr: pending.csr,
+      staffId: pending.staffId,
+    );
+    final certificate = enrolled.body['certificate']?.toString() ?? '';
+    if (enrolled.status != 200 || certificate.isEmpty) {
+      pending.state = LanPairingState.denied;
+      pending.error =
+          enrolled.body['error']?.toString() ?? 'Cihaz eşleştirilemedi.';
+      return pending.error;
+    }
+    pending.certificate = certificate;
+    pending.state = LanPairingState.approved;
+    // The device now has a moment to collect its certificate.
+    pending.expiresAt = _clock().add(PairingAttemptGuard.codeTtl);
+    return null;
+  }
+
+  void denyPairingRequest(String id) {
+    final pending = _pairRequests[id];
+    if (pending == null || pending.state != LanPairingState.pending) return;
+    pending.state = LanPairingState.denied;
+    pending.error = 'Ana bilgisayar eşleştirmeyi reddetti.';
+  }
+
   Future<String?> _staffGrantError(
     RestaurantLanDevice paired,
     String fingerprint,
@@ -1075,20 +1613,91 @@ class RestaurantLanHost {
     if (paired.verifiedAt != null && now.isBefore(paired.verifiedAt!)) {
       return 'Cihaz saati geri alındı. Yetki uzatılmadı.';
     }
-    _devices[fingerprint] = paired.copy(
+    // A changed epoch means the account was deactivated, re-activated,
+    // re-linked or its password replaced since this device was paired: the
+    // pairing is revoked for good and the device must pair again. A device
+    // record that never saw an epoch just stores the server's value.
+    final knownEpoch = paired.staffEpoch;
+    final serverEpoch = result.credentialEpoch;
+    if (knownEpoch != null && serverEpoch != null && knownEpoch != serverEpoch) {
+      _devices[fingerprint] = paired.copy(revoked: true);
+      await _persistDevices();
+      return 'Personel hesabı değişti. Cihazı yeniden eşleştirin.';
+    }
+    final verified = paired.copy(
+      staffEpoch: serverEpoch,
       staffVerified: true,
       verifiedAt: now,
       expiresAt: now.add(deviceGrantTtl),
+      staffBranchId: result.branchId ?? '',
     );
+    final seal = await _authoritySealer.sign(
+      verified.authorityCanonical(restaurantId),
+    );
+    // No seal (keystore refused) still serves this online request but leaves
+    // nothing to trust once the cloud is gone.
+    _devices[fingerprint] = seal == null
+        ? verified.copy(authoritySeal: '')
+        : verified.copy(authoritySeal: seal);
     await _persistDevices();
     return null;
   }
 
-  String? _offlineStaffGrant(RestaurantLanDevice paired, DateTime now) {
+  /// Same rule as the server's `restaurant_table_access`: a staff member
+  /// limited to a branch may only use active tables of that branch. A table
+  /// the center cannot find is refused for a limited member (fail closed).
+  Future<String?> _tableScopeError(String deviceId, int? tableNumber) async {
+    final staffBranch = _devices[deviceId]?.staffBranchId?.trim() ?? '';
+    final tables = tablesOverride ?? (await _cache.read(restaurantId))?.tables;
+    Map<String, dynamic>? table;
+    if (tables != null && tableNumber != null) {
+      for (final row in tables) {
+        if (int.tryParse(row['table_number']?.toString() ?? '') == tableNumber) {
+          table = row;
+          break;
+        }
+      }
+    }
+    if (table != null && table['is_active'] == false) {
+      return 'Bu masa kapalı. Bu masada işlem yetkiniz yok.';
+    }
+    if (staffBranch.isEmpty) return null;
+    if (table == null) return 'Bu masada işlem yetkiniz yok.';
+    final tableBranch = table['branch_id']?.toString().trim() ?? '';
+    if (tableBranch != staffBranch) return 'Bu masada işlem yetkiniz yok.';
+    return null;
+  }
+
+  List<Map<String, dynamic>>? _tablesForStaff(
+    List<Map<String, dynamic>>? tables,
+    String deviceId,
+  ) {
+    final staffBranch = _devices[deviceId]?.staffBranchId?.trim() ?? '';
+    if (tables == null || staffBranch.isEmpty) return tables;
+    return tables
+        .where((row) => row['branch_id']?.toString().trim() == staffBranch)
+        .toList(growable: false);
+  }
+
+  /// Cloud unreachable: only a sealed, unexpired authority from an earlier
+  /// online check counts. Nothing here extends it, and role or job title play
+  /// no part. A record that was edited, copied, or sealed without a keystore
+  /// is refused.
+  Future<String?> _offlineStaffGrant(
+    RestaurantLanDevice paired,
+    DateTime now,
+  ) async {
     if (!paired.staffVerified ||
         paired.verifiedAt == null ||
         paired.expiresAt == null) {
       return 'Personel daha önce doğrulanmadı.';
+    }
+    final sealed = await _authoritySealer.verify(
+      paired.authorityCanonical(restaurantId),
+      paired.authoritySeal ?? '',
+    );
+    if (!sealed) {
+      return 'Kayıtlı personel yetkisi doğrulanamadı. Bulut bağlantısı gerekli.';
     }
     if (now.isBefore(paired.verifiedAt!)) {
       return 'Cihaz saati geri alındı. Yetki uzatılmadı.';
@@ -1096,7 +1705,33 @@ class RestaurantLanHost {
     if (!now.isBefore(paired.expiresAt!)) {
       return 'Kayıtlı personel yetkisinin süresi doldu.';
     }
+    final staffBranch = paired.staffBranchId?.trim() ?? '';
+    final center = branchId?.trim() ?? '';
+    if (staffBranch.isNotEmpty && staffBranch != center) {
+      return 'Bu personelin şubesi bu merkezin şubesi değil.';
+    }
     return null;
+  }
+
+  /// Cloud came back: re-check every paired device now instead of waiting for
+  /// its next request, so a membership revoked during the outage is closed at
+  /// once. Returns how many devices were closed.
+  Future<int> reverifyDevices() async {
+    final probe = staffStillAuthorized;
+    if (probe == null) return 0;
+    var closed = 0;
+    for (final entry in _devices.entries.toList()) {
+      final device = entry.value;
+      if (device.revoked || device.staffId.isEmpty) continue;
+      final error = await _staffGrantError(device, entry.key);
+      if (error != null && _devices[entry.key]?.revoked == true) {
+        closed++;
+        for (final grant in _browserGrants.values) {
+          if (grant.deviceId == entry.key) grant.revoked = true;
+        }
+      }
+    }
+    return closed;
   }
 
   Future<void> _requireDurablePrintJobs(
@@ -1195,11 +1830,7 @@ class RestaurantLanHost {
           queue.lastStageMicros['bridge_response'] ?? 0;
       statuses.add(delivered.status.name);
     }
-    if (statuses.isEmpty) return 'not_sent';
-    if (statuses.any((status) => status == 'uncertain')) return 'uncertain';
-    if (statuses.every((status) => status == 'forwarded')) return 'forwarded';
-    if (statuses.any((status) => status == 'failed')) return 'failed';
-    return statuses.first;
+    return combineStationPrintStatuses(statuses);
   }
 
   Future<String?> evidenceForOrder({
@@ -1229,20 +1860,11 @@ class RestaurantLanHost {
       serverFingerprint: fingerprint,
       items: items,
     );
-    final process = await Process.start(lanOpenSslExecutable(), <String>[
-      'dgst',
-      '-sha256',
-      '-sign',
-      identity.path,
-    ]);
-    process.stdin.add(utf8.encode(payload));
-    await process.stdin.close();
-    final signature = await process.stdout.fold<List<int>>(
-      <int>[],
-      (previous, chunk) => previous..addAll(chunk),
+    final signature = signSha256Rsa(
+      await File(identity.path).readAsString(),
+      utf8.encode(payload),
     );
-    final exitCode = await process.exitCode;
-    if (exitCode != 0 || signature.isEmpty) return null;
+    if (signature == null || signature.isEmpty) return null;
     return 'v2.$outcome.$revision.$eventId.${identity.id}.${_hex(signature)}';
   }
 
@@ -1346,6 +1968,22 @@ class RestaurantLanHost {
         });
         return;
       }
+      // A browser grant lasts hours; the staff check runs on every request so
+      // a revoked or limited member stops at once, like a paired device.
+      final browserDevice = _devices[grant.deviceId];
+      final browserStaffError = browserDevice == null
+          ? 'Cihaz eşleşmesi yok veya iptal edildi.'
+          : browserDevice.revoked
+              ? 'Cihaz eşleşmesi yok veya iptal edildi.'
+              : await _staffGrantError(browserDevice, grant.deviceId);
+      if (browserStaffError != null) {
+        grant.revoked = true;
+        await _send(request, 401, <String, Object?>{
+          'ok': false,
+          'error': browserStaffError,
+        });
+        return;
+      }
       final envelope = await _readBody(request);
       final seq = envelope['seq'];
       final inner = envelope['body'];
@@ -1366,9 +2004,10 @@ class RestaurantLanHost {
         return;
       }
       if (path == '/lan/browser/tables' && request.method == 'POST') {
-        final tables = (tablesOverride ?? (await _cache.read(restaurantId))?.tables)
-            ?.map(stripLanSecrets)
-            .toList(growable: false);
+        final tables = _tablesForStaff(
+          tablesOverride ?? (await _cache.read(restaurantId))?.tables,
+          grant.deviceId,
+        )?.map(stripLanSecrets).toList(growable: false);
         await _send(request, tables == null ? 409 : 200, <String, Object?>{
           'ok': tables != null,
           if (tables != null) 'tables': tables,
@@ -1395,6 +2034,7 @@ class RestaurantLanHost {
         return;
       }
       if (path == '/lan/browser/orders' && request.method == 'POST') {
+        if (await _refusedWhileStopping(request)) return;
         await _orders.transaction(
           () => _acceptOrder(request, body, grant.deviceId),
         );
@@ -1454,7 +2094,7 @@ class RestaurantLanHost {
       return;
     }
     guard.recordSuccess();
-    _devices.remove('browser-pending');
+    final verifiedPending = _devices.remove('browser-pending');
     _browserCode = null;
     _browserCodeExpires = null;
     final token = newPairingSecret(_random);
@@ -1467,12 +2107,25 @@ class RestaurantLanHost {
       expiresAt: expires,
       deviceId: deviceId,
     );
-    _devices[deviceId] = RestaurantLanDevice(
+    var browserDevice = RestaurantLanDevice(
       deviceId: deviceId,
       pairedAt: _clock(),
       staffId: staffId,
       branchId: branchId,
+      staffBranchId: verifiedPending?.staffBranchId,
+      staffVerified: verifiedPending?.staffVerified ?? false,
+      verifiedAt: verifiedPending?.verifiedAt,
+      expiresAt: verifiedPending?.expiresAt,
     );
+    if (browserDevice.staffVerified) {
+      // The seal names the device, so the pending record's seal cannot carry
+      // over to the real browser device.
+      final seal = await _authoritySealer.sign(
+        browserDevice.authorityCanonical(restaurantId),
+      );
+      browserDevice = browserDevice.copy(authoritySeal: seal ?? '');
+    }
+    _devices[deviceId] = browserDevice;
     await _send(request, 200, <String, Object?>{
       'ok': true,
       'token': token,
@@ -1523,6 +2176,15 @@ class RestaurantLanHost {
     final csrFile = File('$root/pending-$id.csr');
     final outFile = File('$root/pending-$id.pem');
     try {
+      // In process first: no external `openssl`, so the sandboxed app signs
+      // device certificates too. The CA key never leaves this directory.
+      final dartCert = await signCsrWithDartCa(
+        directory: Directory(root),
+        csrPem: csr,
+      );
+      if (dartCert != null && dartCert.trim().isNotEmpty) {
+        return (certificate: dartCert, fingerprint: certificateSha256Hex(dartCert));
+      }
       await csrFile.writeAsString(csr);
       final result = await Process.run(lanOpenSslExecutable(), <String>[
         'x509',
@@ -1539,14 +2201,7 @@ class RestaurantLanHost {
         '-days',
         '825',
       ]);
-      if (result.exitCode != 0 || !outFile.existsSync()) {
-        final dartCert = await signCsrWithDartCa(
-          directory: Directory(root),
-          csrPem: csr,
-        );
-        if (dartCert == null || dartCert.trim().isEmpty) return null;
-        return (certificate: dartCert, fingerprint: certificateSha256Hex(dartCert));
-      }
+      if (result.exitCode != 0 || !outFile.existsSync()) return null;
       final certificate = await outFile.readAsString();
       final fingerprint = await LanTlsMaterial.certificateFingerprint(outFile.path);
       if (certificate.trim().isEmpty || fingerprint.isEmpty) return null;
@@ -1589,12 +2244,59 @@ class RestaurantLanHost {
   }
 }
 
+enum LanPairingState { pending, approving, approved, denied, expired }
+
+/// A waiter device waiting for the operator of this computer.
+class LanPairingRequest {
+  LanPairingRequest({
+    required this.id,
+    required this.staffId,
+    required this.staffName,
+    required this.deviceName,
+    required this.csr,
+    required this.commit,
+    required this.hostNonce,
+    required this.remoteAddress,
+    required this.expiresAt,
+  });
+
+  /// Known only to the device that asked; never shown.
+  final String id;
+  final String staffId;
+
+  /// What the device says about itself. Shown to the operator as a hint; the
+  /// staff member is checked with the cloud on approval.
+  final String staffName;
+  final String deviceName;
+  final String csr;
+  final String commit;
+  final String hostNonce;
+  final String remoteAddress;
+  DateTime expiresAt;
+
+  /// The six digits to compare with the phone. Empty until the device has
+  /// revealed its nonce.
+  String matchCode = '';
+  LanPairingState state = LanPairingState.pending;
+  String? certificate;
+  String? error;
+}
+
 abstract class RestaurantLanOrderTransport {
   Future<bool> submit(RestaurantLocalOrderRecord order);
 }
 
 class RestaurantLanPairing {
   static RestaurantLanOrderTransport? transport;
+
+  /// Whether the paired center answered the last time this device asked.
+  /// When it does not (the computer is off, another network) and the cloud
+  /// is reachable, orders take the cloud route instead of waiting.
+  static bool centerReachable = true;
+
+  /// Asks the paired center again right now (set by the waiter link). Used
+  /// when the cloud just failed and the last answer from the center is old.
+  static Future<void> Function()? recheck;
 }
 
 class RestaurantLanHostRegistry {
@@ -1603,6 +2305,17 @@ class RestaurantLanHostRegistry {
   /// Accepted floor orders. The seller screen listens here; the cloud does not.
   static final StreamController<RestaurantLocalOrderRecord> ordersAccepted =
       StreamController<RestaurantLocalOrderRecord>.broadcast();
+
+  /// Local order ids whose ticket outcome is now recorded. Sending an order
+  /// to the cloud waits for this: at "accepted" the ticket is still on its
+  /// way, and it would go up as "uncertain" although it printed.
+  static final StreamController<String> ordersSettled =
+      StreamController<String>.broadcast();
+
+  /// A device asked to be paired and proved its request; the operator's
+  /// screen shows it for approval.
+  static final StreamController<LanPairingRequest> pairingRequests =
+      StreamController<LanPairingRequest>.broadcast();
 }
 
 class _BrowserGrant {

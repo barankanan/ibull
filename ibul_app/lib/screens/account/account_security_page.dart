@@ -5,6 +5,7 @@ import '../../core/app_state.dart';
 import '../../core/auth/user_identity.dart';
 import '../../core/constants.dart';
 import '../../core/home_navigation.dart';
+import '../../services/auth_service.dart';
 import '../change_password_page.dart';
 
 class AccountSecurityPage extends StatelessWidget {
@@ -37,20 +38,21 @@ class AccountSecurityPage extends StatelessWidget {
         children: [
           _SecurityCard(
             children: [
-              _SecurityTile(
-                icon: Icons.lock_outline,
-                title: 'Şifre Değiştir',
-                subtitle: hasPassword
-                    ? 'Mevcut şifreni doğrulayarak güncelle'
-                    : 'E-posta ile şifre sıfırlama bağlantısı gönderilir',
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const ChangePasswordPage(),
-                    ),
-                  );
-                },
-              ),
+              if (!AuthService().currentUserIsManagedStaff)
+                _SecurityTile(
+                  icon: Icons.lock_outline,
+                  title: 'Şifre Değiştir',
+                  subtitle: hasPassword
+                      ? 'Mevcut şifreni doğrulayarak güncelle'
+                      : 'E-posta ile şifre sıfırlama bağlantısı gönderilir',
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const ChangePasswordPage(),
+                      ),
+                    );
+                  },
+                ),
               _SecurityInfo(
                 icon: Icons.mail_outline,
                 title: 'Giriş e-postası',

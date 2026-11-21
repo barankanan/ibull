@@ -118,6 +118,21 @@ StaffAccountLinkDecision decideStaffAccountLink({
   return const StaffAccountLinkDecision(allowed: true, linkAvailable: true);
 }
 
+/// Side-menu identity for a signed-in staff member: "Ahmet — Garson".
+/// Null for the owner (no staff gate), so the owner's panel is unchanged.
+String? staffIdentityLabel({
+  required bool isOwner,
+  String? name,
+  String? jobTitle,
+}) {
+  if (isOwner) return null;
+  final who = name?.trim() ?? '';
+  final title = jobTitle?.trim() ?? '';
+  if (who.isNotEmpty && title.isNotEmpty) return '$who — $title';
+  if (who.isNotEmpty) return who;
+  return title.isEmpty ? null : title;
+}
+
 class StaffMenuGate {
   const StaffMenuGate.owner()
     : restrict = false,
@@ -251,26 +266,21 @@ bool directTableOrderWriteAllowedAfterRpcFailure({
 bool staffOperationAllowed({
   required bool isOwner,
   required bool activeMembership,
-  required bool mustChangePassword,
   required Set<String> permissions,
   required String operation,
 }) {
-  if (mustChangePassword) return false;
   if (isOwner) return true;
   if (!activeMembership) return false;
   return permissions.contains(operation);
 }
 
-/// Owners and staff created before the password flag keep working.
-/// Only a managed account that still must change its password is blocked.
+/// The owner sets staff passwords, so no password flag blocks a permission.
 bool restaurantPermissionAllowed({
   required bool isOwner,
   required bool activeMembership,
   required bool hasPermission,
   required bool managedStaff,
-  required bool mustChangePassword,
 }) {
-  if (managedStaff && mustChangePassword) return false;
   if (isOwner) return true;
   return activeMembership && hasPermission;
 }
@@ -361,10 +371,24 @@ enum StaffProbeKind { active, rejected, unreachable }
 
 /// A staff check result. Network failure is never represented as rejection.
 class StaffProbe {
-  const StaffProbe(this.kind, {this.reason = ''});
+  const StaffProbe(
+    this.kind, {
+    this.reason = '',
+    this.branchId,
+    this.permissions = const <String>{},
+    this.credentialEpoch,
+  });
 
   final StaffProbeKind kind;
   final String reason;
+
+  /// Branch the membership is limited to; null/empty means all branches.
+  /// Only meaningful for [StaffProbeKind.active].
+  final String? branchId;
+  final Set<String> permissions;
+
+  /// Server `credential_epoch` of the staff account; only for active results.
+  final int? credentialEpoch;
 
   bool get isActive => kind == StaffProbeKind.active;
 }
@@ -397,4 +421,24 @@ String restaurantOrderRoute({
   if (supabaseReachable) return 'cloud';
   if (lanReachable && lanIdentityVerified) return 'lan';
   return 'refuse';
+}
+
+/// What the waiter reads when an interim payment was refused. The server's
+/// own reason is named; the generic line alone hid why nothing was recorded.
+String partialPaymentFailureMessage(String raw) {
+  const tail = 'Nakit kaydı yazılamadı. Tahsilat yapılmadı.';
+  final text = raw.toLowerCase();
+  if (text.contains('kalan bakiyeyi aşıyor')) {
+    return 'Tutar, sunucunun hesapladığı kalan hesabı aşıyor. $tail';
+  }
+  if (text.contains('tutarı geçersiz')) {
+    return 'Ödeme tutarı geçersiz. $tail';
+  }
+  if (text.contains('yetki') || text.contains('42501')) {
+    return 'Bu hesabın ara ödeme alma yetkisi yok. $tail';
+  }
+  if (text.contains('invalid input syntax for type numeric')) {
+    return 'Bu masada fiyatı okunamayan eski bir sipariş satırı var. $tail';
+  }
+  return tail;
 }

@@ -41,7 +41,6 @@ void main() {
         activeMembership: false,
         hasPermission: true,
         managedStaff: true,
-        mustChangePassword: false,
       ),
       isFalse,
     );
@@ -156,7 +155,6 @@ void main() {
       staffOperationAllowed(
         isOwner: false,
         activeMembership: true,
-        mustChangePassword: false,
         permissions: waiter,
         operation: 'manageOrders',
       ),
@@ -166,7 +164,6 @@ void main() {
       staffOperationAllowed(
         isOwner: false,
         activeMembership: true,
-        mustChangePassword: false,
         permissions: waiter,
         operation: 'closeBill',
       ),
@@ -176,7 +173,6 @@ void main() {
       staffOperationAllowed(
         isOwner: false,
         activeMembership: true,
-        mustChangePassword: false,
         permissions: waiter,
         operation: 'transferTable',
       ),
@@ -190,7 +186,6 @@ void main() {
       staffOperationAllowed(
         isOwner: false,
         activeMembership: true,
-        mustChangePassword: false,
         permissions: assistant,
         operation: 'closeBill',
       ),
@@ -207,7 +202,6 @@ void main() {
         staffOperationAllowed(
           isOwner: false,
           activeMembership: true,
-          mustChangePassword: false,
           permissions: assistant,
           operation: operation,
         ),
@@ -264,7 +258,6 @@ void main() {
       staffOperationAllowed(
         isOwner: false,
         activeMembership: true,
-        mustChangePassword: false,
         permissions: const {'manageOrders'},
         operation: 'closeBill',
       ),
@@ -274,7 +267,6 @@ void main() {
       staffOperationAllowed(
         isOwner: false,
         activeMembership: true,
-        mustChangePassword: false,
         permissions: const {'closeBill'},
         operation: 'closeBill',
       ),
@@ -284,7 +276,6 @@ void main() {
       staffOperationAllowed(
         isOwner: true,
         activeMembership: false,
-        mustChangePassword: false,
         permissions: const {},
         operation: 'transferTable',
       ),
@@ -294,7 +285,6 @@ void main() {
       staffOperationAllowed(
         isOwner: false,
         activeMembership: false,
-        mustChangePassword: false,
         permissions: const {'transferTable'},
         operation: 'transferTable',
       ),

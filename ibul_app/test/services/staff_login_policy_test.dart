@@ -1,7 +1,18 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/services/staff_login_policy.dart';
 
+import 'package:ibul_app/services/auth_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 void main() {
+  test('a banned staff login says the account is passive', () {
+    final message = AuthService().describeSignInError(
+      AuthApiException('User is banned', statusCode: '400', code: 'user_banned'),
+      authArea: 'seller',
+    );
+    expect(message, 'Bu personel hesabı pasif. İşletme sahibine başvurun.');
+  });
+
   test('active waiter and sub-admin skip the seller application', () {
     final waiter = resolveStaffLoginAccess(
       managedStaffFlag: true,
@@ -136,14 +147,13 @@ void main() {
     expect(lanTicketStatusText('forwarded'), contains('onaylanmadı'));
   });
 
-  test('password change blocks only managed staff who still must change it', () {
+  test('no password flag blocks a permission; membership and permission still decide', () {
     expect(
       restaurantPermissionAllowed(
         isOwner: true,
         activeMembership: false,
         hasPermission: false,
         managedStaff: false,
-        mustChangePassword: false,
       ),
       isTrue,
     );
@@ -153,9 +163,8 @@ void main() {
         activeMembership: true,
         hasPermission: true,
         managedStaff: true,
-        mustChangePassword: true,
       ),
-      isFalse,
+      isTrue,
     );
     expect(
       restaurantPermissionAllowed(
@@ -163,7 +172,6 @@ void main() {
         activeMembership: false,
         hasPermission: true,
         managedStaff: true,
-        mustChangePassword: false,
       ),
       isFalse,
     );
@@ -173,7 +181,6 @@ void main() {
         activeMembership: true,
         hasPermission: false,
         managedStaff: true,
-        mustChangePassword: false,
       ),
       isFalse,
     );

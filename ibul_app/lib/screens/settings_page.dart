@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../services/auth_service.dart';
 import '../utils/dynamic_value_helpers.dart';
 import '../utils/pick_image_file.dart';
 import 'addresses_page.dart';
@@ -119,9 +120,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (height != null) {
       _heightController.text = readString(height);
     }
-    _genderController.text = readString(
-      user?['gender'],
-    );
+    _genderController.text = readString(user?['gender']);
     _birthDateController.text = readString(
       user?['birthDate'] ?? user?['birth_date'],
     );
@@ -309,7 +308,8 @@ class _SettingsPageState extends State<SettingsPage> {
       }
 
       if (photoUrlToSave != null) {
-        _profilePhotoUrl = appState.currentUser?['photo_url']?.toString() ??
+        _profilePhotoUrl =
+            appState.currentUser?['photo_url']?.toString() ??
             appState.currentUser?['photoURL']?.toString() ??
             photoUrlToSave;
         _pendingPhotoUrl = _profilePhotoUrl;
@@ -459,7 +459,8 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _pickBirthDate() async {
-    final initial = _parseBirthDate(_birthDateController.text) ??
+    final initial =
+        _parseBirthDate(_birthDateController.text) ??
         DateTime(DateTime.now().year - 25);
     final picked = await showDatePicker(
       context: context,
@@ -628,7 +629,11 @@ class _SettingsPageState extends State<SettingsPage> {
     return CircleAvatar(
       radius: radius,
       backgroundColor: Colors.grey.shade200,
-      child: Icon(Icons.person, size: radius * 0.9, color: Colors.grey.shade500),
+      child: Icon(
+        Icons.person,
+        size: radius * 0.9,
+        color: Colors.grey.shade500,
+      ),
     );
   }
 
@@ -809,10 +814,13 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 16),
           _buildContactFields(isWeb: isWeb),
           const SizedBox(height: 32),
-          _buildSectionHeader('Güvenlik', isWeb: isWeb),
-          const SizedBox(height: 12),
-          _buildChangePasswordCard(isWeb: isWeb),
-          const SizedBox(height: 32),
+          // Staff passwords are set by the owner only.
+          if (!AuthService().currentUserIsManagedStaff) ...[
+            _buildSectionHeader('Güvenlik', isWeb: isWeb),
+            const SizedBox(height: 12),
+            _buildChangePasswordCard(isWeb: isWeb),
+            const SizedBox(height: 32),
+          ],
           _buildSectionHeader('Bildirimler', isWeb: isWeb),
           const SizedBox(height: 16),
           _buildNotificationFields(isWeb: isWeb),
@@ -896,64 +904,64 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           SizedBox(width: isWeb ? 24 : 14),
           Expanded(
-          child: isWeb
-              ? Row(
-                  children: [
-                    Expanded(
-                      child: _buildTextField(
-                        'Ad',
-                        'Adınız',
-                        controller: _nameController,
-                        isWeb: isWeb,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: _buildTextField(
-                        'Soyad',
-                        'Soyadınız',
-                        controller: _surnameController,
-                        isWeb: isWeb,
-                      ),
-                    ),
-                  ],
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextButton(
-                      onPressed: _showProfilePhotoOptions,
-                      child: const Text(
-                        'Resmi düzenle',
-                        style: TextStyle(color: AppColors.primary),
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildTextField(
-                            'Ad',
-                            'Adınız',
-                            controller: _nameController,
-                            isWeb: isWeb,
-                          ),
+            child: isWeb
+                ? Row(
+                    children: [
+                      Expanded(
+                        child: _buildTextField(
+                          'Ad',
+                          'Adınız',
+                          controller: _nameController,
+                          isWeb: isWeb,
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildTextField(
-                            'Soyad',
-                            'Soyadınız',
-                            controller: _surnameController,
-                            isWeb: isWeb,
-                          ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: _buildTextField(
+                          'Soyad',
+                          'Soyadınız',
+                          controller: _surnameController,
+                          isWeb: isWeb,
                         ),
-                      ],
-                    ),
-                  ],
-                ),
-        ),
-      ],
-    ),
+                      ),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextButton(
+                        onPressed: _showProfilePhotoOptions,
+                        child: const Text(
+                          'Resmi düzenle',
+                          style: TextStyle(color: AppColors.primary),
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildTextField(
+                              'Ad',
+                              'Adınız',
+                              controller: _nameController,
+                              isWeb: isWeb,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildTextField(
+                              'Soyad',
+                              'Soyadınız',
+                              controller: _surnameController,
+                              isWeb: isWeb,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1363,20 +1371,12 @@ class _SettingsPageState extends State<SettingsPage> {
     if (isWeb) {
       return Row(
         mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          deleteButton,
-          const SizedBox(width: 16),
-          saveButton,
-        ],
+        children: [deleteButton, const SizedBox(width: 16), saveButton],
       );
     }
 
     return Column(
-      children: [
-        saveButton,
-        const SizedBox(height: 12),
-        deleteButton,
-      ],
+      children: [saveButton, const SizedBox(height: 12), deleteButton],
     );
   }
 
