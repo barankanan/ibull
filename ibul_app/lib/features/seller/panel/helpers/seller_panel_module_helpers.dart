@@ -900,7 +900,8 @@ List<SellerModule> modulesForStaff({
         return permissions.contains('manageStaff');
       case SellerModule.system:
         return permissions.contains('manageOrders') ||
-            permissions.contains('managePrintSettings');
+            permissions.contains('managePrintSettings') ||
+            permissions.contains('manageTables');
       default:
         return false;
     }
@@ -912,7 +913,9 @@ List<SellerModule> modulesForStaff({
     final extras = filtered.where((module) => module != SellerModule.garson);
     return <SellerModule>[...floor, ...extras];
   }
-  if (filtered.isEmpty) return const <SellerModule>[SellerModule.garson];
+  // A non-waiter account with no permissions gets no section. It used to
+  // fall back to Garson, which showed the floor to staff the owner had
+  // given nothing to.
   return filtered;
 }
 

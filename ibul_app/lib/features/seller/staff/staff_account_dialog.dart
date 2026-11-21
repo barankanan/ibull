@@ -5,6 +5,8 @@ import '../../../services/store_service.dart';
 import '../panel/helpers/seller_panel_module_helpers.dart';
 import '../panel/models/seller_panel_types.dart';
 import 'staff_business_catalog.dart';
+import 'staff_permission_summary.dart';
+import 'staff_permission_widgets.dart';
 
 class StaffAccountDraft {
   const StaffAccountDraft({
@@ -90,9 +92,13 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
   late String? _branchId;
   late Set<SellerPermission> _selected;
   late Set<String> _pages;
-  late Set<String> _fullAccess;
   late Set<SellerPermission> _grantCeiling;
   final Set<String> _openGroups = <String>{};
+  String? _templateId;
+  late Set<SellerPermission> _initialSelected;
+  late Set<String> _initialPages;
+  late String _initialTitle;
+  String? _initialBranch;
   var _hidePassword = true;
   var _busy = false;
   String? _error;
@@ -141,13 +147,11 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
       isOwner: widget.isOwner,
       held: widget.heldPermissions,
     );
-    _fullAccess = <String>{
-      for (final module in _pageChoices)
-        if (_pageOperations(module).isNotEmpty &&
-            _pageOperations(module).every(_selected.contains))
-          module.name,
-    };
     _openGroups.addAll(sellerPermissionGroups.map((group) => group.title));
+    _initialSelected = <SellerPermission>{..._selected};
+    _initialPages = <String>{..._pages};
+    _initialTitle = _jobTitle.text;
+    _initialBranch = _branchId;
   }
 
   Set<SellerPermission> _pageOperations(SellerModule module) {
@@ -158,25 +162,6 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
               _grantCeiling.contains(permission),
         )
         .toSet();
-  }
-
-  void _applyFullAccess(SellerModule module, bool enabled) {
-    final operations = _pageOperations(module);
-    if (enabled) {
-      _pages.add(module.name);
-      _fullAccess.add(module.name);
-      _selected.addAll(operations);
-      return;
-    }
-    _fullAccess.remove(module.name);
-    for (final operation in operations) {
-      final stillRequired = _fullAccess.any((name) {
-        final other = _pageChoices.where((item) => item.name == name);
-        if (other.isEmpty) return false;
-        return _pageOperations(other.first).contains(operation);
-      });
-      if (!stillRequired) _selected.remove(operation);
-    }
   }
 
   Set<String> _pagesFor({
@@ -203,8 +188,79 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
       held: widget.heldPermissions,
     );
     _selected = selected;
+    _templateId = template.id;
     if (fillTitle) _jobTitle.text = template.label;
     _pages = _pagesFor(grants: selected);
+  }
+
+  StaffPageLevelPlan _plan(SellerModule module) =>
+      staffPageLevelPlan(module, _pageOperations(module));
+
+  StaffPageLevel _levelOf(SellerModule module) => staffCurrentPageLevel(
+        plan: _plan(module),
+        pageVisible: _pages.contains(module.name),
+        selected: _selected,
+      );
+
+  /// Sayfa düzeyini değiştirir. Başka bir sayfanın hâlâ ihtiyaç duyduğu izin silinmez.
+  void _setPageLevel(SellerModule module, StaffPageLevel level) {
+    if (level == StaffPageLevel.custom) return;
+    final plan = _plan(module);
+    final needed = <SellerPermission>{};
+    for (final other in _pageChoices) {
+      if (other == module) continue;
+      needed.addAll(_plan(other).opsFor(_levelOf(other)));
+    }
+    setState(() {
+      for (final op in <SellerPermission>{...plan.viewOps, ...plan.fullOps}) {
+        if (!needed.contains(op)) _selected.remove(op);
+      }
+      if (level == StaffPageLevel.none) {
+        _pages.remove(module.name);
+      } else {
+        _pages.add(module.name);
+        _selected.addAll(plan.opsFor(level));
+      }
+      _templateId = null;
+    });
+  }
+
+  /// Açılıştaki duruma döner (yeni hesapta ilk şablona).
+  void _revert() {
+    setState(() {
+      _selected = <SellerPermission>{..._initialSelected};
+      _pages = <String>{..._initialPages};
+      _jobTitle.text = _initialTitle;
+      _branchId = _initialBranch;
+      _templateId = null;
+      _error = null;
+    });
+  }
+
+  bool get _changed =>
+      _selected.length != _initialSelected.length ||
+      !_selected.containsAll(_initialSelected) ||
+      _pages.length != _initialPages.length ||
+      !_pages.containsAll(_initialPages) ||
+      _jobTitle.text != _initialTitle ||
+      _branchId != _initialBranch;
+
+  Future<void> _preview() {
+    final persisted = _selected.where(staffPermissionPersists).toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+    return showStaffPreviewDialog(
+      context: context,
+      who: _name.text.trim().isNotEmpty
+          ? _name.text.trim()
+          : (widget.editing?.displayName ?? 'Personel'),
+      lines: staffPermissionSummary(_selected),
+      pages: [
+        for (final module in _pageChoices)
+          if (_pages.contains(module.name))
+            '${sellerModuleLabel(module)} (${staffPageLevelLabel(_levelOf(module))})',
+      ],
+      permissionNames: [for (final p in persisted) p.name],
+    );
   }
 
   @override
@@ -273,12 +329,7 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
       } else {
         _selected.remove(permission);
       }
-      _fullAccess = <String>{
-        for (final module in _pageChoices)
-          if (_pageOperations(module).isNotEmpty &&
-              _pageOperations(module).every(_selected.contains))
-            module.name,
-      };
+      _templateId = null;
     });
   }
 
@@ -322,6 +373,7 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
       SellerPermission.takePartialPayment,
       SellerPermission.closeBill,
       SellerPermission.managePrintSettings,
+      SellerPermission.manageTables,
       SellerPermission.manageStaff,
     };
     final revoked = (_editing ? widget.editing!.permissions : const <SellerPermission>[])
@@ -443,54 +495,25 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
                     style: TextStyle(fontWeight: FontWeight.w700),
                   ),
                   for (final module in _pageChoices) ...[
-                    CheckboxListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(sellerModuleLabel(module)),
-                      value: _pages.contains(module.name),
-                      onChanged: _busy
-                          ? null
-                          : (value) {
-                              setState(() {
-                                if (value == true) {
-                                  _pages.add(module.name);
-                                } else {
-                                  _pages.remove(module.name);
-                                  if (_fullAccess.contains(module.name)) {
-                                    _applyFullAccess(module, false);
-                                  }
-                                }
-                              });
-                            },
+                    StaffPageLevelRow(
+                      keyPrefix: module.name,
+                      title: sellerModuleLabel(module),
+                      plan: _plan(module),
+                      current: _levelOf(module),
+                      enabled: !_busy,
+                      onChanged: (level) => _setPageLevel(module, level),
+                      hint: (module == SellerModule.team ||
+                              module == SellerModule.store)
+                          ? 'Mağaza profili ve personel yönetimi bu seçimle açılmaz.'
+                          : (module == SellerModule.products ||
+                                  module == SellerModule.collections ||
+                                  module == SellerModule.campaigns ||
+                                  module == SellerModule.support)
+                              ? 'Bu sayfada salt-okunur yetki yok: erişim ya hiç yok ya tam yönetimdir.'
+                              : null,
                     ),
-                    if (_pageOperations(module).isNotEmpty)
-                      CheckboxListTile(
-                        dense: true,
-                        contentPadding: const EdgeInsets.only(left: 28),
-                        title: const Text('Tam Erişim'),
-                        subtitle: Text(
-                          _pageOperations(module)
-                              .map(sellerPermissionShortLabel)
-                              .join(' · '),
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                        value: _fullAccess.contains(module.name),
-                        onChanged: _busy
-                            ? null
-                            : (value) => setState(
-                                () => _applyFullAccess(module, value == true),
-                              ),
-                      )
-                    else if (module == SellerModule.team ||
-                        module == SellerModule.store)
-                      const Padding(
-                        padding: EdgeInsets.only(left: 28, bottom: 6),
-                        child: Text(
-                          'Mağaza profili ve personel yönetimi bu seçimle açılmaz.',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                      ),
                   ],
+                  StaffSummaryCard(lines: staffPermissionSummary(_selected)),
                   const SizedBox(height: 8),
                   for (final gap in staffCapabilityGaps(widget.kind))
                     _Note(text: gap),
@@ -514,26 +537,84 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
     );
   }
 
+  String _branchName() {
+    final id = widget.editing?.branchId ?? _branchId;
+    for (final branch in widget.branches) {
+      if (branch['id'].toString() == id) {
+        return branch['name']?.toString() ?? 'Şube';
+      }
+    }
+    return id == null || id.isEmpty ? 'Şube yok' : 'Kayıtlı şube';
+  }
+
+  String _dateLabel(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
+
   Widget _header() {
+    final member = widget.editing;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+      padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(
-              _editing ? 'Personel yetkileri' : 'Personel hesabı oluştur',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _editing
+                      ? (member?.displayName?.trim().isNotEmpty == true
+                            ? member!.displayName!.trim()
+                            : 'Personel yetkileri')
+                      : 'Personel hesabı oluştur',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: _busy ? null : () => Navigator.pop(context),
+                icon: const Icon(Icons.close),
+              ),
+            ],
+          ),
+          if (member != null)
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  label: Text(member.status == 'active' ? 'Aktif' : 'Pasif'),
+                ),
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  label: Text(_branchName()),
+                ),
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  label: Text(
+                    staffMemberRoleLabel(
+                      kind: widget.kind,
+                      storedRole: member.staffRole,
+                      permissions: member.permissions.toSet(),
+                    ),
+                  ),
+                ),
+                if (member.createdAt != null)
+                  Chip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text('Oluşturulma ${_dateLabel(member.createdAt!)}'),
+                  ),
+              ],
             ),
-          ),
-          IconButton(
-            onPressed: _busy ? null : () => Navigator.pop(context),
-            icon: const Icon(Icons.close),
-          ),
         ],
       ),
     );
@@ -546,13 +627,24 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
         color: Colors.white,
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(18)),
       ),
-      child: Row(
+      child: Wrap(
+        alignment: WrapAlignment.end,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 8,
         children: [
           TextButton(
             onPressed: _busy ? null : () => Navigator.pop(context),
             child: const Text('Vazgeç'),
           ),
-          const Spacer(),
+          TextButton(
+            onPressed: _busy || !_changed ? null : _revert,
+            child: const Text('Geri al'),
+          ),
+          OutlinedButton(
+            onPressed: _busy ? null : _preview,
+            child: const Text('Önizleme'),
+          ),
           ElevatedButton(
             onPressed: _busy || widget.kind == StaffBusinessKind.unknown
                 ? null
@@ -624,13 +716,22 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
         runSpacing: 8,
         children: [
           for (final role in _roles)
-            ActionChip(
+            ChoiceChip(
               label: Text(role.label),
-              onPressed: _busy
+              selected: role.id == 'custom'
+                  ? (_templateId == null || _templateId == 'custom')
+                  : _templateId == role.id,
+              selectedColor: _staffAccent.withValues(alpha: 0.16),
+              onSelected: _busy
                   ? null
-                  : () => setState(
-                        () => _applyTemplate(role, fillTitle: true),
-                      ),
+                  : (_) => setState(() {
+                        if (role.id == 'custom') {
+                          // Özel Yetki: mevcut seçimi koru, yalnız şablonu işaretle.
+                          _templateId = 'custom';
+                          return;
+                        }
+                        _applyTemplate(role, fillTitle: true);
+                      }),
             ),
         ],
       ),

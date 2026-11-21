@@ -125,8 +125,8 @@ void main() {
     expect(find.text('Garson'), findsNothing);
     expect(find.text('Masa Aktar'), findsNothing);
     expect(find.text('Hesabı Kes'), findsNothing);
-    expect(find.widgetWithText(ActionChip, 'Mağaza Müdürü'), findsOneWidget);
-    expect(find.widgetWithText(ActionChip, 'Satış Personeli'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Mağaza Müdürü'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Satış Personeli'), findsOneWidget);
     expect(find.text('Garson'), findsNothing);
   });
 
@@ -154,8 +154,8 @@ void main() {
     );
     await tester.tap(find.text('Aç'));
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(ActionChip, 'Garson'), findsOneWidget);
-    await tester.tap(find.widgetWithText(ActionChip, 'Garson'));
+    expect(find.widgetWithText(ChoiceChip, 'Garson'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Garson'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('Hesabı Kes'),

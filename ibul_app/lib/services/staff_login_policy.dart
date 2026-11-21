@@ -190,6 +190,23 @@ String? resolvedRestaurantOwnerId({
   return auth;
 }
 
+/// Alan, masa ve QR düzenini kim yönetebilir: sahip veya `manageTables` izni olan personel.
+bool staffMayManageTables({required bool isOwner, required Set<String> held}) =>
+    isOwner || held.contains('manageTables');
+
+/// Sistem sayfası yalnız yazıcı ekranı mı? Masa/alan izni varsa HAYIR.
+bool systemModuleIsPrinterOnly({required Set<String> held}) =>
+    !held.contains('manageOrders') &&
+    !held.contains('manageTables') &&
+    held.contains('managePrintSettings');
+
+/// `get_my_staff_access()` yanıtından personelin şubesi. Şubesiz (tüm işletme) = null.
+String? staffBranchFromAccess(Object? access) {
+  if (access is! Map) return null;
+  final branch = access['branch_id']?.toString().trim() ?? '';
+  return branch.isEmpty ? null : branch;
+}
+
 /// Store-wide staff see every table. A branch staff member sees that branch
 /// and tables that were never assigned to a branch. Another branch stays closed.
 bool restaurantStaffBranchCanSeeTable({
@@ -272,6 +289,15 @@ bool staffOperationAllowed({
   if (isOwner) return true;
   if (!activeMembership) return false;
   return permissions.contains(operation);
+}
+
+/// Why the table card's "Kapat" is disabled, or null when it is enabled.
+/// The key is the stored `closeBill` permission; the server checks the same
+/// key in `close_table_with_history`.
+String? tableCloseDisabledReason({required bool allowed}) {
+  if (allowed) return null;
+  return 'Hesap kapatma yetkiniz yok. İşletme sahibinden '
+      '"Hesabı Kes" yetkisi isteyin.';
 }
 
 /// The owner sets staff passwords, so no password flag blocks a permission.
@@ -441,4 +467,57 @@ String partialPaymentFailureMessage(String raw) {
     return 'Bu masada fiyatı okunamayan eski bir sipariş satırı var. $tail';
   }
   return tail;
+}
+
+/// Decides the seller-panel menu gate from what the server returned.
+///
+/// A membership row that exists but is not `active` is a deactivated staff
+/// member: it is revoked whether or not the `managed_restaurant_staff` flag
+/// is present on the account (the flag is not on every legacy account). Only
+/// a user with no membership row at all can still be an owner or a seller
+/// who has not finished onboarding.
+StaffMenuGate resolveStaffMenuGate({
+  required bool managedStaff,
+  required bool ownsStore,
+  required Map<String, dynamic>? membership,
+}) {
+  if (ownsStore && !managedStaff) return const StaffMenuGate.owner();
+  if (membership == null) {
+    return managedStaff
+        ? const StaffMenuGate.revoked()
+        : const StaffMenuGate.owner();
+  }
+  if (membership['status']?.toString() != 'active') {
+    return const StaffMenuGate.revoked();
+  }
+  final rawPermissions = membership['permissions'];
+  final modules = membership['visible_modules'];
+  return StaffMenuGate.staff(
+    role: membership['staff_role']?.toString(),
+    permissions: rawPermissions is List
+        ? rawPermissions.map((item) => item.toString()).toSet()
+        : <String>{},
+    jobTitle: membership['job_title']?.toString(),
+    visibleModules: modules is List
+        ? modules.map((item) => item.toString()).toSet()
+        : null,
+  );
+}
+
+
+/// Staff accounts are all stamped `users.role = 'waiter'`, so the login role
+/// says nothing about which pages the owner granted. Only the membership
+/// row does. True means the account may see the floor and nothing else.
+///
+/// With stored pages: garson-only exactly when no other page was granted.
+/// Without them: only the `waiter` role is pinned; a sub-admin is not.
+bool staffGateIsGarsonOnly(StaffMenuGate? gate) {
+  if (gate == null) return true; // not loaded yet: the narrow menu is safe
+  if (gate.revoked) return true;
+  if (!gate.restrict) return false; // owner
+  final pages = gate.visibleModules;
+  if (pages != null) {
+    return pages.every((page) => page == 'garson');
+  }
+  return gate.role != 'sub_admin';
 }

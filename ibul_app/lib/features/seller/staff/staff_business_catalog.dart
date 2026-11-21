@@ -21,6 +21,7 @@ const staffPermissionsStoredOnServer = <SellerPermission>{
   SellerPermission.splitBill,
   SellerPermission.closeBill,
   SellerPermission.managePrintSettings,
+  SellerPermission.manageTables,
   SellerPermission.manageStaff,
 };
 
@@ -54,7 +55,10 @@ Set<SellerPermission> pageFullAccessOperations(SellerModule module) {
     case SellerModule.support:
       return const <SellerPermission>{SellerPermission.manageSupport};
     case SellerModule.system:
-      return const <SellerPermission>{SellerPermission.managePrintSettings};
+      return const <SellerPermission>{
+        SellerPermission.managePrintSettings,
+        SellerPermission.manageTables,
+      };
     case SellerModule.store:
     case SellerModule.team:
     case SellerModule.vehicles:
@@ -73,6 +77,7 @@ const restaurantFloorPermissions = <SellerPermission>{
   SellerPermission.takePartialPayment,
   SellerPermission.closeBill,
   SellerPermission.managePrintSettings,
+  SellerPermission.manageTables,
 };
 
 bool staffPermissionPersists(SellerPermission permission) {
@@ -173,9 +178,10 @@ List<StaffRoleTemplate> staffRoleTemplates(StaffBusinessKind kind) {
         ),
         StaffRoleTemplate(
           id: 'assistant_manager',
-          label: 'Müdür Yardımcısı',
+          label: 'Alt Yönetici',
           storedRole: 'sub_admin',
-          description: 'Sipariş, ürün ve destek. Personel yetkisi ayrıdır.',
+          description:
+              'Sipariş, ürün ve destek. Masa aktarma, hesap kesme ve personel yetkisi ayrıdır.',
           suggested: {_orderView, _orderManage, _products, _support},
         ),
         StaffRoleTemplate(
@@ -199,6 +205,13 @@ List<StaffRoleTemplate> staffRoleTemplates(StaffBusinessKind kind) {
           storedRole: 'sub_admin',
           description: 'Sipariş görür ve yönetir. Hesap kesmez.',
           suggested: {_orderView, _orderManage},
+        ),
+        StaffRoleTemplate(
+          id: 'custom',
+          label: 'Özel Yetki',
+          storedRole: 'sub_admin',
+          description: 'İzinleri tek tek siz seçersiniz.',
+          suggested: <SellerPermission>{},
         ),
       ];
     case StaffBusinessKind.gallery:
@@ -445,6 +458,8 @@ String sellerPermissionDescription(SellerPermission permission) {
       return 'Hesabı kapatır. Sipariş yetkisi bunu vermez.';
     case SellerPermission.managePrintSettings:
       return 'Yazıcı ayarlarını değiştirir.';
+    case SellerPermission.manageTables:
+      return 'Alan, masa ve QR düzenini yönetir. Sipariş, ödeme ve personel yetkisi vermez.';
     case SellerPermission.manageStaff:
       return 'Personel ekler ve yetki değiştirir.';
   }

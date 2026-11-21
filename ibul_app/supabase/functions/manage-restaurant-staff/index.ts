@@ -11,9 +11,9 @@ const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body)
 const allowed = new Set(['manageProducts', 'viewOrders', 'manageOrders',
   'manageCampaigns', 'viewFinance', 'manageSupport', 'manageStoreProfile',
   'transferTable', 'splitBill', 'takePartialPayment', 'closeBill',
-  'managePrintSettings', 'manageStaff']);
+  'managePrintSettings', 'manageTables', 'manageStaff']);
 const restaurantOnly = new Set(['transferTable', 'splitBill',
-  'takePartialPayment', 'closeBill', 'managePrintSettings']);
+  'takePartialPayment', 'closeBill', 'managePrintSettings', 'manageTables']);
 const legacyPermissions = new Set(['manageProducts', 'viewOrders', 'manageOrders',
   'manageCampaigns', 'viewFinance', 'manageSupport', 'manageStoreProfile']);
 const keptWhenClientOmits = new Set([...restaurantOnly, 'manageStaff']);
@@ -26,7 +26,7 @@ const pageModules = new Set(['dashboard', 'products', 'collections', 'orders',
 const triggerPermissions = new Set(['manageProducts', 'viewOrders', 'manageOrders',
   'manageCampaigns', 'viewFinance', 'manageSupport', 'manageStoreProfile',
   'transferTable', 'splitBill', 'takePartialPayment', 'closeBill',
-  'managePrintSettings', 'manageStaff']);
+  'managePrintSettings', 'manageTables', 'manageStaff']);
 
 function cleanTitle(value: unknown) {
   if (typeof value !== 'string') return '';

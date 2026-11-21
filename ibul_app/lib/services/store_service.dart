@@ -799,6 +799,12 @@ class StoreService {
     final userId = currentUserId?.trim() ?? '';
     if (userId.isEmpty) return null;
 
+    // A lookup that could not run (no internet) is not an answer. Returning
+    // the signed-in user's own id then made a waiter look like the store
+    // owner: the offline order path searched the local data under the wrong
+    // id and refused the order. Unknown is reported as null instead.
+    var lookupFailed = false;
+
     try {
       final storeRow = await _supabase
           .from('stores')
@@ -814,6 +820,7 @@ class StoreService {
         stackTrace,
         context: 'resolveStoreOwnerDirect',
       );
+      lookupFailed = true;
     }
 
     final authUser = _supabase.auth.currentUser;
@@ -826,7 +833,7 @@ class StoreService {
     if (phone.isNotEmpty) {
       filters.add('phone.eq.$phone');
     }
-    if (filters.isEmpty) return userId;
+    if (filters.isEmpty) return lookupFailed ? null : userId;
 
     try {
       final subAdminRow = await _supabase
@@ -844,9 +851,10 @@ class StoreService {
         stackTrace,
         context: 'resolveStoreOwnerSubAdmin',
       );
+      lookupFailed = true;
     }
 
-    return userId;
+    return lookupFailed ? null : userId;
   }
 
   // Upload Document (for Seller Application)
@@ -1862,6 +1870,7 @@ class StoreService {
     String? areaName,
     int? areaTableNumber,
     String? tableName,
+    String? branchId,
   }) {
     return _tableService.addStoreTable(
       sellerId: sellerId,
@@ -1871,6 +1880,7 @@ class StoreService {
       areaName: areaName,
       areaTableNumber: areaTableNumber,
       tableName: tableName,
+      branchId: branchId,
     );
   }
 

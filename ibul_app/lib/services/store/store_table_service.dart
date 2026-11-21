@@ -407,6 +407,7 @@ class StoreTableService {
     String? areaName,
     int? areaTableNumber,
     String? tableName,
+    String? branchId,
   }) async {
     final resolvedSellerId = _resolveSellerId(sellerId);
     try {
@@ -451,6 +452,7 @@ class StoreTableService {
             'table_number': nextTableNumber,
             'qr_token': _generateTableQrToken(),
             'is_active': true,
+            if (_text(branchId).isNotEmpty) 'branch_id': _text(branchId),
             if (normalizedAreaId.isNotEmpty) 'area_id': normalizedAreaId,
             if (normalizedAreaName.isNotEmpty) 'area_name': normalizedAreaName,
             'area_table_number': resolvedAreaTableNo,

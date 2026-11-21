@@ -11,6 +11,7 @@ enum SellerPermission {
   takePartialPayment,
   closeBill,
   managePrintSettings,
+  manageTables,
   manageStaff,
 }
 
@@ -42,6 +43,7 @@ const sellerPermissionGroups = <SellerPermissionGroup>[
     SellerPermission.manageCampaigns,
     SellerPermission.viewFinance,
     SellerPermission.managePrintSettings,
+    SellerPermission.manageTables,
     SellerPermission.manageSupport,
     SellerPermission.manageStoreProfile,
   ]),
@@ -125,6 +127,8 @@ String sellerPermissionLabel(SellerPermission permission) {
       return 'Hesabı Kes';
     case SellerPermission.managePrintSettings:
       return 'Yazıcı Ayarları';
+    case SellerPermission.manageTables:
+      return 'Alan ve Masa Yönetimi';
     case SellerPermission.manageStaff:
       return 'Personel Yönetimi';
   }
@@ -156,6 +160,8 @@ String sellerPermissionShortLabel(SellerPermission permission) {
       return 'Hesap Kes';
     case SellerPermission.managePrintSettings:
       return 'Yazıcı';
+    case SellerPermission.manageTables:
+      return 'Masa Düzeni';
     case SellerPermission.manageStaff:
       return 'Personel';
   }

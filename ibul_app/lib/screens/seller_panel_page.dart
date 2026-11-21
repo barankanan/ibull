@@ -136,6 +136,7 @@ import '../widgets/customer_table_presence_grant.dart';
 import '../widgets/restaurant_local_ops_page.dart';
 import '../features/seller/panel/helpers/seller_panel_module_helpers.dart';
 import '../services/staff_login_policy.dart';
+import '../features/seller/staff/staff_permission_summary.dart';
 import '../features/seller/panel/models/seller_panel_types.dart';
 import '../features/seller/panel/widgets/seller_desktop_app_banner.dart';
 import '../features/seller/panel/widgets/seller_download_app_content.dart';
@@ -675,7 +676,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   List<String> _sellerVideos = []; // List of video URLs
   bool _isUploadingVideo = false;
 
-  bool get _isWaiterEntry => widget.entryRole == SellerPanelEntryRole.waiter;
+  // The waiter entry only pins the menu to Garson for an account whose
+  // membership grants nothing else; staff all carry role=waiter at login.
+  bool get _isWaiterEntry =>
+      widget.entryRole == SellerPanelEntryRole.waiter &&
+      staffGateIsGarsonOnly(_staffMenuGate);
   StaffMenuGate? _staffMenuGate;
 
   String get _sellerPanelSupabaseUrl {
@@ -7154,12 +7159,15 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   Future<void> _addStoreTable() async {
     if (_isMutatingStoreTables) return;
+    if (!_requireManageTables()) return;
     final selectedTableNumber = await _pickTableNumberToAdd();
     if (selectedTableNumber == null || selectedTableNumber <= 0) return;
 
     setState(() => _isMutatingStoreTables = true);
     try {
       await _storeService.addStoreTable(
+        sellerId: _tableAdminSellerId,
+        branchId: await _resolveStaffBranchIdForTables(),
         tableNumber: selectedTableNumber,
         preferMissingNumber: false,
       );
@@ -7184,6 +7192,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   Future<void> _addTableArea() async {
     if (_isMutatingStoreTables) return;
+    if (!_requireManageTables()) return;
     final controller = TextEditingController();
     final name = await showDialog<String>(
       context: context,
@@ -7212,7 +7221,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     if (normalized.isEmpty) return;
     setState(() => _isMutatingStoreTables = true);
     try {
-      await _storeService.addTableArea(name: normalized);
+      await _storeService.addTableArea(
+        name: normalized,
+        sellerId: _tableAdminSellerId,
+      );
       await _loadStoreTables(silent: true);
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -7236,6 +7248,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   Future<void> _addStoreTableForArea(Map<String, dynamic> area) async {
     if (_isMutatingStoreTables) return;
+    if (!_requireManageTables()) return;
     final areaId = area['id']?.toString().trim() ?? '';
     final areaName = area['name']?.toString().trim() ?? '';
     if (areaId.isEmpty || areaName.isEmpty) return;
@@ -7279,6 +7292,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     setState(() => _isMutatingStoreTables = true);
     try {
       await _storeService.addStoreTable(
+        sellerId: _tableAdminSellerId,
+        branchId: await _resolveStaffBranchIdForTables(),
         tableNumber:
             null, // keep global numbering stable; service will pick next
         preferMissingNumber: true,
@@ -7306,6 +7321,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   Future<void> _removeStoreTable(Map<String, dynamic> table) async {
     if (_isMutatingStoreTables) return;
+    if (!_requireManageTables()) return;
     final tableId = table['id']?.toString() ?? '';
     final tableNumber = _tableNumberFromRow(table);
     if (tableId.isEmpty) {
@@ -7362,6 +7378,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   /// Shows a dialog letting the user pick an area to move [table] into.
   Future<void> _moveTableToArea(Map<String, dynamic> table) async {
     if (_isMutatingStoreTables) return;
+    if (!_requireManageTables()) return;
     final tableId = table['id']?.toString() ?? '';
     final tableNumber = _tableNumberFromRow(table);
     if (tableId.isEmpty || _storeTableAreas.isEmpty) {
@@ -7429,9 +7446,13 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   Future<void> _initializeDefaultStoreTables() async {
     if (_isMutatingStoreTables) return;
+    if (!_requireManageTables()) return;
     setState(() => _isMutatingStoreTables = true);
     try {
-      final existing = await _storeService.getStoreTables();
+      final existing = await _storeService.getStoreTables(
+        sellerId: _tableAdminSellerId,
+      );
+      final branchForNew = await _resolveStaffBranchIdForTables();
       final target = 20;
       final toCreate = target - existing.length;
       if (toCreate <= 0) {
@@ -7443,7 +7464,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return;
       }
       for (var i = 0; i < toCreate; i++) {
-        await _storeService.addStoreTable();
+        await _storeService.addStoreTable(
+          sellerId: _tableAdminSellerId,
+          branchId: branchForNew,
+        );
       }
       await _loadStoreTables(silent: true);
       if (!mounted) return;
@@ -9194,6 +9218,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildMobileContent() {
+    final revokedPanel = _buildStaffAccessRevokedPanel();
+    if (revokedPanel != null) return revokedPanel;
     final target = resolveSellerPanelRenderTarget(
       selectedModule: _selectedModule,
       storeCategory: _storeCategory,
@@ -11537,6 +11563,41 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return gate == null || !gate.restrict;
   }
 
+  /// Alan, masa ve QR düzeni: sahip veya `manageTables` izinli personel.
+  bool get _actorMayManageTables => staffMayManageTables(
+        isOwner: _actorIsStoreOwner,
+        held: _actorStaffPermissions,
+      );
+
+  bool _requireManageTables() {
+    if (_actorMayManageTables) return true;
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Alan ve masa düzenleme yetkiniz yok.')),
+      );
+    }
+    return false;
+  }
+
+  /// Masa/alan kayıtlarının ait olduğu restoran: personelde oturum kimliği DEĞİL, işletme sahibi.
+  String get _tableAdminSellerId {
+    final owner = _resolveGarsonSellerId().trim();
+    return owner.isNotEmpty ? owner : (_authService.currentUser?.id ?? '');
+  }
+
+  String? _staffBranchIdForTables;
+  bool _staffBranchIdForTablesLoaded = false;
+
+  /// Sahipte null. Personelde sunucudaki şubesi (şubesiz personel için null).
+  Future<String?> _resolveStaffBranchIdForTables() async {
+    if (_actorIsStoreOwner) return null;
+    if (_staffBranchIdForTablesLoaded) return _staffBranchIdForTables;
+    final access = await Supabase.instance.client.rpc('get_my_staff_access');
+    _staffBranchIdForTables = staffBranchFromAccess(access);
+    _staffBranchIdForTablesLoaded = true;
+    return _staffBranchIdForTables;
+  }
+
   String? get _staffJobTitleLabel {
     final title = _staffMenuGate?.jobTitle?.trim() ?? '';
     if (_actorIsStoreOwner || title.isEmpty) return null;
@@ -11611,7 +11672,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildMobileSystemModule() {
-    if (!_staffHas('manageOrders') && _staffHas('managePrintSettings')) {
+    if (systemModuleIsPrinterOnly(held: _actorStaffPermissions) && !_actorIsStoreOwner) {
       return _buildPrinterSettingsOnly();
     }
     final sellerId = _authService.currentUser?.id ?? '';
@@ -12947,14 +13008,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     const spacing = 8.0;
     final safeColumns = columns <= 0 ? 1 : columns;
     final cardWidth = (maxWidth - ((safeColumns - 1) * spacing)) / safeColumns;
+    // A card shows at most 3 item lines plus a "+N ürün" line, so the old
+    // ratios (about 1.0) left a large empty block under a one-item order.
+    // Worst case is 3 item lines plus "+N ürün"; keep room for it.
     if (compact) {
-      if (cardWidth >= 220) return 1.22;
-      if (cardWidth >= 175) return 1.12;
-      return 1.04;
+      if (cardWidth >= 220) return 1.5;
+      if (cardWidth >= 175) return 1.4;
+      return 1.28;
     }
-    if (cardWidth >= 220) return 1.15;
-    if (cardWidth >= 175) return 1.02;
-    return 0.92;
+    if (cardWidth >= 220) return 1.42;
+    if (cardWidth >= 175) return 1.32;
+    return 1.18;
   }
 
   List<Map<String, dynamic>> _garsonExtractItems(Map<String, dynamic> order) {
@@ -17377,7 +17441,26 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         .toList(growable: false);
   }
 
+  /// A deactivated staff account must not see any module, including ones that
+  /// render without a store profile (Garson shows an empty "no tables" list).
+  Widget? _buildStaffAccessRevokedPanel() {
+    if (_staffMenuGate?.revoked != true) return null;
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: _buildStoreStateCard(
+        icon: Icons.lock_outline_rounded,
+        title: 'Hesabınız pasif',
+        message:
+            'Bu personel hesabının işletme erişimi kapatılmış. İşletme sahibi '
+            'hesabı aktifleştirene kadar panel kullanılamaz.',
+        isError: true,
+      ),
+    );
+  }
+
   Widget _buildContent() {
+    final revokedPanel = _buildStaffAccessRevokedPanel();
+    if (revokedPanel != null) return revokedPanel;
     _logSellerPanel(
       'Build',
       'branch=content_switch selectedTab=${_selectedModule.name}',
@@ -25221,7 +25304,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildSystemModule() {
-    if (!_staffHas('manageOrders') && _staffHas('managePrintSettings')) {
+    if (systemModuleIsPrinterOnly(held: _actorStaffPermissions) && !_actorIsStoreOwner) {
       return _buildPrinterSettingsOnly();
     }
     final sellerId = _authService.currentUser?.id ?? '';
@@ -27115,7 +27198,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     ),
                     const SizedBox(width: 5),
                     Expanded(
-                      child: FilledButton(
+                      child: Tooltip(
+                        message: tableCloseDisabledReason(
+                              allowed: _staffHas('closeBill'),
+                            ) ??
+                            '',
+                        triggerMode: TooltipTriggerMode.tap,
+                        child: FilledButton(
                         onPressed: _staffHas('closeBill')
                             ? () => _confirmCloseGarsonTable(
                                 tableNumber: tableNumber,
@@ -27131,6 +27220,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         child: const Text(
                           'Kapat',
                           style: TextStyle(fontSize: 11),
+                        ),
                         ),
                       ),
                     ),
@@ -32730,9 +32820,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       final members = await _storeService.getSubAdminsSnapshot();
       if (!mounted) return;
       setState(() => _subAdmins = members);
+      // Kayıt sonrası sunucudan okunan izinler gönderilenle karşılaştırılır.
+      final saved = members.where((m) => m.id == id).toList(growable: false);
+      final check = saved.isEmpty
+          ? null
+          : verifyStoredPermissions(
+              requested: permissions,
+              stored: saved.first.permissions,
+            );
+      final message = check == null
+          ? 'Yetkiler gönderildi; kayıt sunucudan okunamadı.'
+          : check.matches
+          ? 'Yetkiler güncellendi ve sunucuda doğrulandı.'
+          : 'Sunucudaki kayıt gönderilenle eşleşmiyor. '
+                '${check.missing.isNotEmpty ? 'Eksik: ${check.missing.join(', ')}. ' : ''}'
+                '${check.unexpected.isNotEmpty ? 'Fazla: ${check.unexpected.join(', ')}.' : ''}';
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Yetkiler güncellendi')));
+      ).showSnackBar(SnackBar(content: Text(message)));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -34077,6 +34182,16 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
             'Sipariş kaydedildi. Baskı sistemi kapalı olduğu için mutfak fişi yazdırılmadı.',
         orderId: result.orderId,
         printJobIds: result.printJobIds,
+      );
+    }
+    // An order saved by the order center over the local network has no cloud
+    // print jobs by design: the center prints it itself. Say what the center
+    // reported instead of "no printer found".
+    if (result.raw['lan_host'] == true) {
+      return _KitchenDispatchFeedback(
+        notice: lanTicketStatusText(result.raw['print_status']?.toString()),
+        orderId: result.orderId,
+        dispatchPath: result.dispatchPath,
       );
     }
     // Some older/edge RPC responses may return print_job_count=0 while still
@@ -36912,10 +37027,16 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       final unverified = rawError.contains('TimeoutException') ||
           rawError.contains('doğrulanamadı') ||
           OrderPrintJobService.commitFailureIsUnreachable(error);
+      // The server refused the staff member (permission removed, account
+      // deactivated): retrying the same send cannot succeed, so say why.
+      final refused = rawError.contains('42501') ||
+          rawError.toLowerCase().contains('yetki');
       final message = explicit ??
           (unverified
               ? OrderPrintJobService.orderCommitUnverifiedMessage
-              : 'Sipariş kaydedilemedi. Aynı gönderim tekrar denenebilir.');
+              : refused
+                  ? 'Bu işlem için yetkiniz yok. İşletme sahibine başvurun.'
+                  : 'Sipariş kaydedilemedi. Aynı gönderim tekrar denenebilir.');
       _setSubmitFeedback(message, tone: _GarsonSubmitFeedbackTone.warning);
       ScaffoldMessenger.of(
         context,
