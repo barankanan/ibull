@@ -1,0 +1,168 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_connectivity_service.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_local_order_queue_service.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_offline_models.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_offline_sync_service.dart';
+
+final _now = DateTime(2026, 11, 22, 12);
+
+RestaurantLocalOrderRecord _o(
+  String id, {
+  required RestaurantLocalOrderSyncStatus sync,
+  required DateTime created,
+  DateTime? updated,
+}) => RestaurantLocalOrderRecord(
+  localOrderId: id,
+  restaurantId: 'r1',
+  tableId: '1',
+  tableName: 'Masa 1',
+  tableNumber: 1,
+  waiterId: 'w',
+  waiterName: 'W',
+  items: const [
+    {'product_id': 'p', 'name': 'Ürün', 'quantity': 1, 'price': 10},
+  ],
+  notes: '',
+  total: 10,
+  stationGroups: const [],
+  printStatus: 'printed',
+  syncStatus: sync,
+  createdAt: created,
+  updatedAt: updated ?? created,
+);
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    RestaurantLocalOrderQueueService.clearAllMemoryForTests();
+  });
+  group('selectOrdersForSync', () {
+    test('hiç denenmemişler önce, en eski oluşturulan önce', () {
+      final r = selectOrdersForSync([
+        _o(
+          'yeni',
+          sync: RestaurantLocalOrderSyncStatus.pendingSync,
+          created: _now.subtract(const Duration(minutes: 1)),
+        ),
+        _o(
+          'eski',
+          sync: RestaurantLocalOrderSyncStatus.pendingSync,
+          created: _now.subtract(const Duration(minutes: 9)),
+        ),
+      ], now: _now);
+      expect(r.map((o) => o.localOrderId), ['eski', 'yeni']);
+    });
+
+    test(
+      'sürekli hata veren eski siparişler yenilerin önüne geçmez (açlık yok)',
+      () {
+        final failing = [
+          for (var i = 0; i < 12; i++)
+            _o(
+              'hata$i',
+              sync: RestaurantLocalOrderSyncStatus.syncFailed,
+              created: _now.subtract(Duration(hours: 5 + i)),
+              updated: _now.subtract(const Duration(minutes: 5)),
+            ),
+        ];
+        final fresh = _o(
+          'taze',
+          sync: RestaurantLocalOrderSyncStatus.pendingSync,
+          created: _now.subtract(const Duration(minutes: 1)),
+        );
+        final r = selectOrdersForSync(
+          [...failing, fresh],
+          now: _now,
+          limit: 10,
+        );
+        expect(r.first.localOrderId, 'taze');
+        expect(r.length, 10);
+      },
+    );
+
+    test(
+      'hata almış sipariş bekleme süresi dolmadan atlanır, dolunca en eski denenen önce',
+      () {
+        final justFailed = _o(
+          'az-once',
+          sync: RestaurantLocalOrderSyncStatus.syncFailed,
+          created: _now.subtract(const Duration(hours: 1)),
+          updated: _now.subtract(const Duration(seconds: 5)),
+        );
+        final oldFail = _o(
+          'eski-hata',
+          sync: RestaurantLocalOrderSyncStatus.syncFailed,
+          created: _now.subtract(const Duration(hours: 1)),
+          updated: _now.subtract(const Duration(minutes: 10)),
+        );
+        final mid = _o(
+          'orta-hata',
+          sync: RestaurantLocalOrderSyncStatus.syncFailed,
+          created: _now.subtract(const Duration(hours: 1)),
+          updated: _now.subtract(const Duration(minutes: 2)),
+        );
+        final r = selectOrdersForSync([justFailed, mid, oldFail], now: _now);
+        expect(r.map((o) => o.localOrderId), ['eski-hata', 'orta-hata']);
+        final forced = selectOrdersForSync(
+          [justFailed, mid, oldFail],
+          now: _now,
+          retryAfter: Duration.zero,
+        );
+        expect(forced.map((o) => o.localOrderId), [
+          'eski-hata',
+          'orta-hata',
+          'az-once',
+        ]);
+      },
+    );
+
+    test('limit uygulanır, boş liste boş döner', () {
+      expect(selectOrdersForSync(const [], now: _now), isEmpty);
+      final many = [
+        for (var i = 0; i < 25; i++)
+          _o(
+            's$i',
+            sync: RestaurantLocalOrderSyncStatus.pendingSync,
+            created: _now.subtract(Duration(minutes: i)),
+          ),
+      ];
+      expect(selectOrdersForSync(many, now: _now, limit: 10).length, 10);
+    });
+  });
+
+  group('oturum yokken gönderim denenmez', () {
+    test(
+      'sipariş pendingSync kalır, hata işaretlenmez, sunucuya gidilmez',
+      () async {
+        final connectivity = RestaurantConnectivityService()
+          ..debugSkipNetworkProbes = true
+          ..debugSetConnectivity(
+            hasNetwork: true,
+            supabaseReachable: true,
+            bridgeReachable: false,
+          );
+        final queue = RestaurantLocalOrderQueueService();
+        await queue.enqueue(
+          order: _o(
+            'bekleyen',
+            sync: RestaurantLocalOrderSyncStatus.pendingSync,
+            created: _now,
+          ),
+        );
+        final sync = RestaurantOfflineSyncService(
+          orderQueue: queue,
+          connectivityService: connectivity,
+        )..hasCloudSession = () => false;
+        expect(await sync.syncPendingOrders(restaurantId: 'r1'), 0);
+        final after = await queue.getByLocalId(
+          restaurantId: 'r1',
+          localOrderId: 'bekleyen',
+        );
+        expect(after?.syncStatus, RestaurantLocalOrderSyncStatus.pendingSync);
+        expect(after?.syncError, isNull);
+      },
+    );
+  });
+}
