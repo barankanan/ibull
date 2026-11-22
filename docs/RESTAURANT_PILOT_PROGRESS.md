@@ -1157,3 +1157,4 @@ Kapsam: kayıt kalıcılığı, otomatik servis başlatma, yeniden bağlantı g�
 - Köprü: 01:29:54 tek yeni giriş (36), hedef `tcp:192.168.10.100:9100`, `queue_status=completed`, `success=True`; 20 sn sonra da 36 (tekrar yok).
 - **Kâğıt çıktısı DOĞRULANMADI** (TCP yazımı kâğıt kanıtı değildir); kullanıcı teyidi bekleniyor.
 - Hâlâ yapılmadı: mutfak/istasyon fişi ve gerçek sipariş (TEST 15), belirsiz fişin tutulması ve operatör onaylı yeniden baskı, Mac yeniden başlatma, yazıcı kapat/aç, internet kes/aç.
+- **Kâğıt teyidi (kullanıcı beyanı, 2026-11-23):** 01:29:54'teki test fişinin kâğıt çıktısı geldi. Kanıt: kullanıcı gözlemi + köprü `completed` kaydı (tek giriş) → yeni köprülü derlemede kayıtlı yazıcıya fiziksel baskı, tek fiş: **PASS**. Mutfak/istasyon fişi ve gerçek sipariş ayrıca doğrulanmadı.
