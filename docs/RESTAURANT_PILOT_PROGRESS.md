@@ -1158,3 +1158,10 @@ Kapsam: kayıt kalıcılığı, otomatik servis başlatma, yeniden bağlantı g�
 - **Kâğıt çıktısı DOĞRULANMADI** (TCP yazımı kâğıt kanıtı değildir); kullanıcı teyidi bekleniyor.
 - Hâlâ yapılmadı: mutfak/istasyon fişi ve gerçek sipariş (TEST 15), belirsiz fişin tutulması ve operatör onaylı yeniden baskı, Mac yeniden başlatma, yazıcı kapat/aç, internet kes/aç.
 - **Kâğıt teyidi (kullanıcı beyanı, 2026-11-23):** 01:29:54'teki test fişinin kâğıt çıktısı geldi. Kanıt: kullanıcı gözlemi + köprü `completed` kaydı (tek giriş) → yeni köprülü derlemede kayıtlı yazıcıya fiziksel baskı, tek fiş: **PASS**. Mutfak/istasyon fişi ve gerçek sipariş ayrıca doğrulanmadı.
+
+### P15 devam (01:32) — TEST 15: kullanıcı onaylı gerçek sipariş → istasyon fişi (production, yeni köprülü derleme)
+- Garson → **Bahçe 1** (boştu) → 1 × KATI CACIK (₺180) → Siparişi Gönder (tek tık). Dolu masalara (12 açık masa) dokunulmadı.
+- Ekran: sipariş kaydedildi ("Az önce · 1 KATI CACIK · ₺180"), taslak boşaldı.
+- Köprü: 01:32:17 tek yeni giriş (36 → 37) `kitchen_ticket`, `job_name=mutfak-masa-11--`, hedef `aa` `tcp:192.168.10.100:9100`, `completed`, 40355 bayt; 73 sn sonra da 37 (ikinci fiş yok, tekilleştirme reddi kaydı yok).
+- **Kâğıt çıktısı DOĞRULANMADI** (kullanıcı teyidi bekleniyor). Bahçe 1 siparişi AÇIK bırakıldı; kapatma/iptal kullanıcıya ait.
+- Not: dünkü köprü günlüğünde (22 Kas 16:14:58 zaman aşımı → 16:14:59 aynı işin yeniden gönderimi) bu turda düzeltilen "yazma/zaman aşımı sonrası otomatik tekrar" davranışının izi görülüyor.
