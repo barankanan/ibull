@@ -105,11 +105,17 @@ class PrintJobModel {
       case 'retrying':
         return 'processing';
       case 'failed':
+        // The bridge did not answer in time: the receipt may or may not be on
+        // paper. That is "uncertain", not a proven failure.
+        if ((lastError ?? '').contains('PRINT_OUTCOME_UNKNOWN')) {
+          return 'uncertain';
+        }
         return 'failed';
       case 'uncertain':
       case 'ready_unverified':
         return 'uncertain';
       case 'quarantine':
+      case 'quarantined':
         return 'quarantine';
       case 'paused_closed':
       case 'paused_by_operator':
@@ -118,6 +124,10 @@ class PrintJobModel {
       case 'sent':
       case 'printed':
       case 'completed':
+        // A handoff that carries an "uncertain result" note is not proof of paper.
+        if ((lastError ?? '').toLowerCase().contains('belirsiz')) {
+          return 'uncertain';
+        }
         return 'sent';
       default:
         return 'uncertain';

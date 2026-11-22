@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>IBUL App</string>
+	<string>İBUL Satıcı</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -75,6 +75,12 @@
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Garson siparişlerini internet yokken de restorandaki ana bilgisayara aynı Wi-Fi üzerinden göndermek için yerel ağa bağlanır.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_ibul-lan._tcp</string>
 	</array>
 </dict>
 </plist>

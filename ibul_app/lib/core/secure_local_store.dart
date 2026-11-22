@@ -24,9 +24,33 @@ class SecureLocalStore {
   /// Matches `offlineTestKeychainAccount`. Selected only for offline-test builds.
   static const offlineTestMacOsSecureAccount = 'ibul.sellerdesktop.offlinetest';
 
-  static String macOsAccountName = const bool.fromEnvironment('IBUL_OFFLINE_TEST')
-      ? offlineTestMacOsSecureAccount
-      : sellerMacOsSecureAccount;
+  /// Keychain account for this run. See [resolveMacOsAccountName].
+  static String macOsAccountName = resolveMacOsAccountName(
+    offlineTest: const bool.fromEnvironment('IBUL_OFFLINE_TEST'),
+    override: const String.fromEnvironment('IBUL_KEYCHAIN_ACCOUNT'),
+  );
+
+  /// Chooses the Keychain account.
+  ///
+  /// A Debug build that signs in to the real backend needs a session store of
+  /// its own, otherwise it shares (and can overwrite) the production app's
+  /// saved session. `IBUL_KEYCHAIN_ACCOUNT` names that store. It can never
+  /// name the production seller or customer account: such a value is ignored
+  /// and the offline-test account is used instead, so a typo cannot point the
+  /// build at production sessions.
+  @visibleForTesting
+  static String resolveMacOsAccountName({
+    required bool offlineTest,
+    String override = '',
+  }) {
+    final wanted = override.trim();
+    if (wanted.isNotEmpty) {
+      final protected = wanted == sellerMacOsSecureAccount ||
+          wanted == customerMacOsSecureAccount;
+      return protected ? offlineTestMacOsSecureAccount : wanted;
+    }
+    return offlineTest ? offlineTestMacOsSecureAccount : sellerMacOsSecureAccount;
+  }
 
   static FlutterSecureStorage? _opened;
 
@@ -53,6 +77,8 @@ class SecureLocalStore {
   /// stays in place. An offline-test build keeps its own account.
   static void useCustomerMacOsAccount() {
     if (const bool.fromEnvironment('IBUL_OFFLINE_TEST')) return;
+    // A build with its own Keychain account keeps it.
+    if (const String.fromEnvironment('IBUL_KEYCHAIN_ACCOUNT').trim().isNotEmpty) return;
     if (_opened != null && macOsAccountName != customerMacOsSecureAccount) {
       throw StateError(
         'Secure store already opened with $macOsAccountName',
@@ -143,6 +169,18 @@ class SecureLocalStore {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(key);
     return true;
+  }
+
+  /// Reads a secret from the platform keystore only. A keystore failure
+  /// returns null; SharedPreferences is never consulted.
+  Future<String?> readSecret(String key) async {
+    try {
+      final value = await _storage.read(key: key);
+      return (value == null || value.isEmpty) ? null : value;
+    } catch (error) {
+      _logSecureStorageFailure('secret-read', key, error);
+      return null;
+    }
   }
 
   Future<String?> _migrateLegacySharedPreference(String key) async {

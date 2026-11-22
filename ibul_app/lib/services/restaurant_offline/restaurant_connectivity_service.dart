@@ -10,6 +10,7 @@ import '../../core/platform_capabilities.dart';
 import '../../core/runtime_diagnostic_logger.dart';
 import '../../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
 import '../desktop_print_orchestrator.dart';
+import 'restaurant_lan_host.dart';
 import 'restaurant_offline_models.dart';
 
 /// Stops a dead cloud from stacking multi-second waits on every screen.
@@ -54,8 +55,10 @@ class RestaurantConnectivityService with ChangeNotifier {
     DesktopPrintOrchestrator? printOrchestrator,
     Future<bool> Function()? bridgeReachabilityProbe,
     Future<bool> Function()? supabaseReachabilityProbe,
+    bool Function()? lanHostProbe,
     Duration supabaseProbeTimeout = const Duration(seconds: 3),
   }) : _connectivity = connectivity ?? Connectivity(),
+       _lanHostProbe = lanHostProbe,
        _printOrchestrator = printOrchestrator,
        _bridgeReachabilityProbe = bridgeReachabilityProbe,
        _supabaseReachabilityProbe = supabaseReachabilityProbe,
@@ -80,7 +83,54 @@ class RestaurantConnectivityService with ChangeNotifier {
   final Future<bool> Function()? _bridgeReachabilityProbe;
   final Future<bool> Function()? _supabaseReachabilityProbe;
   final Duration _supabaseProbeTimeout;
+  final bool Function()? _lanHostProbe;
   late final StreamSubscription<List<ConnectivityResult>> _subscription;
+
+  /// One failed probe is not proof that the cloud is gone (a single slow
+  /// answer looks the same). The cloud is reported down after this many
+  /// failures in a row, and up again on the first success.
+  static const int cloudDownAfterFailures = 2;
+  int _cloudFailureStreak = 0;
+  Timer? _monitorTimer;
+  bool _refreshing = false;
+  DateTime? _refreshStartedAt;
+  static const Duration stuckRefreshAfter = Duration(seconds: 20);
+
+  /// A WAN cut leaves Wi-Fi connected, so no connectivity event arrives.
+  /// The monitor re-checks cloud, bridge and local center on a timer so the
+  /// mode changes by itself. Calling it again keeps the running timer.
+  void startMonitoring({Duration interval = const Duration(seconds: 6)}) {
+    if (_monitorTimer != null) return;
+    _monitorTimer = Timer.periodic(interval, (_) {
+      // A probe that never returns must not stop monitoring for good: after
+      // [stuckRefreshAfter] the next tick starts a fresh check.
+      final started = _refreshStartedAt;
+      if (_refreshing &&
+          started != null &&
+          DateTime.now().difference(started) < stuckRefreshAfter) {
+        return;
+      }
+      unawaited(refresh());
+    });
+    unawaited(refresh());
+  }
+
+  bool get isMonitoring => _monitorTimer != null;
+
+  void stopMonitoring() {
+    _monitorTimer?.cancel();
+    _monitorTimer = null;
+  }
+
+  bool _readLanHostReady() {
+    final probe = _lanHostProbe;
+    if (probe != null) return probe();
+    final host = RestaurantLanHostRegistry.current;
+    final hostReady = host != null && host.listening && host.lanIdentityVerified;
+    return hostReady ||
+        (RestaurantLanPairing.transport != null &&
+            RestaurantLanPairing.centerReachable);
+  }
 
   bool _hasNetwork = true;
   bool _supabaseReachable = true;
@@ -141,22 +191,54 @@ class RestaurantConnectivityService with ChangeNotifier {
     return hasLocalCache;
   }
 
-  Future<void> refresh({List<ConnectivityResult>? networkResults}) async {
+  /// [priorCloudFailure] is passed by a caller that has just watched a cloud
+  /// request time out; that failure counts toward the "down" threshold.
+  Future<void> refresh({
+    List<ConnectivityResult>? networkResults,
+    bool priorCloudFailure = false,
+  }) async {
     if (debugSkipNetworkProbes) {
       _lastRefreshAt = DateTime.now();
       notifyListeners();
       return;
     }
+    _refreshing = true;
+    _refreshStartedAt = DateTime.now();
+    try {
+      await _refreshInner(
+        networkResults: networkResults,
+        priorCloudFailure: priorCloudFailure,
+      );
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  Future<void> _refreshInner({
+    List<ConnectivityResult>? networkResults,
+    required bool priorCloudFailure,
+  }) async {
     final results =
         networkResults ?? await _connectivity.checkConnectivity();
     _hasNetwork = results.any((result) => result != ConnectivityResult.none);
+    if (priorCloudFailure) _cloudFailureStreak += 1;
 
     if (!_hasNetwork) {
       _supabaseReachable = false;
+      _cloudFailureStreak = cloudDownAfterFailures;
     } else {
       final probeOk = await (_supabaseReachabilityProbe ?? _probeSupabase)();
-      _supabaseReachable = probeOk;
+      if (probeOk) {
+        _cloudFailureStreak = 0;
+        _supabaseReachable = true;
+      } else {
+        _cloudFailureStreak += 1;
+        if (_cloudFailureStreak >= cloudDownAfterFailures) {
+          _supabaseReachable = false;
+        }
+      }
     }
+    _lanHostReachable = _readLanHostReady();
 
     // Mobile customer app (iOS/Android phones) has no local print bridge.
     // Probing http://127.0.0.1:3001/health only adds latency + "connection
@@ -231,6 +313,7 @@ class RestaurantConnectivityService with ChangeNotifier {
 
   @override
   void dispose() {
+    stopMonitoring();
     _subscription.cancel();
     super.dispose();
   }

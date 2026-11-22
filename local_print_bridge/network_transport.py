@@ -39,12 +39,26 @@ _MIN_PORT = 1
 _MAX_PORT = 65535
 
 
+PHASE_CONNECT = "connect"
+PHASE_WRITE = "write"
+
+
+def write_may_have_started(exc: BaseException) -> bool:
+    """True when the failure happened after bytes started going to the printer.
+
+    Such a job must never be sent again automatically: the outcome is unknown
+    and a blind resend prints a second copy.
+    """
+    return getattr(exc, "phase", None) == PHASE_WRITE
+
+
 class TcpTransportError(TransportError):
     """Specialised transport error that carries a stable ``code`` string."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+        self.phase: str | None = None
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return f"[{self.code}] {super().__str__()}"
@@ -147,19 +161,26 @@ def print_tcp(
         len(payload),
     )
     started = time.monotonic()
+    # The phase tells a caller whether bytes may already be on the printer.
+    # A failure before the connection is safe to send again; a failure after
+    # writing began is not (the printer may have printed part or all of it).
+    phase = PHASE_CONNECT
     try:
         with socket.create_connection(
             (normalized_host, normalized_port), timeout=connect_timeout
         ) as sock:
             sock.settimeout(send_timeout)
             if payload:
+                phase = PHASE_WRITE
                 sock.sendall(payload)
             # No recv()/read — raw ESC/POS has nothing to acknowledge.
     except OSError as exc:
         error = _classify_oserror(exc, normalized_host, normalized_port)
+        error.phase = phase
         LOGGER.error(
-            "[TCP_PRINT][error] code=%s message=%s",
+            "[TCP_PRINT][error] code=%s phase=%s message=%s",
             error.code,
+            phase,
             str(exc),
         )
         raise error from exc

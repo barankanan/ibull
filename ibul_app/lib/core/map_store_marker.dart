@@ -115,6 +115,11 @@ class MapStoreMarker {
       'profile_complete':
           hasLogo && hasDescription && hasCategory && hasContactInfo,
       'is_brand_verified': raw['is_brand_verified'] == true,
+      // "Sadece açık olanlar" filtresi için; sütun gelmediyse null (bilinmiyor).
+      'is_store_open': raw['is_store_open'] is bool
+          ? raw['is_store_open'] as bool
+          : null,
+      'working_hours': raw['working_hours']?.toString(),
       'map_source': source,
       'map_index': index,
     };

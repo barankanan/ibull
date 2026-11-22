@@ -191,6 +191,10 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       hasUserLocation: _userLocation != null,
       userAppliedDistanceFilter: _userAppliedDistanceFilter,
       candidateIndices: _searchCandidateIndices,
+      isOpenNowAt: (i) => resolveMapStoreOpenNow(
+        isStoreOpen: _businesses[i]['is_store_open'] as bool?,
+        workingHours: _businesses[i]['working_hours']?.toString(),
+      ),
     );
     _applyDistanceDataAndSort();
 
@@ -230,6 +234,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     hasUserLocation: _userLocation != null,
     filterDistanceKm: _filterDistance,
     userAppliedDistanceFilter: _userAppliedDistanceFilter,
+    filterOpenNow: _filterOpenNow,
   );
 
   String _normalize(String s) {

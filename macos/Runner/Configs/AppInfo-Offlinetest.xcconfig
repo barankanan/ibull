@@ -4,3 +4,4 @@
 // Isolated seller test. Does not replace com.ibul.sellerdesktop.
 PRODUCT_NAME = IbulSellerDesktopTest
 PRODUCT_BUNDLE_IDENTIFIER = com.ibul.sellerdesktop.offlinetest
+APP_DISPLAY_NAME = İBUL Satıcı Test

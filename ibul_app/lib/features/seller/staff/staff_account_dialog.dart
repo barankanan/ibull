@@ -1,63 +1,20 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
+import '../../../core/constants.dart';
 import '../../../models/sub_admin.dart';
 import '../../../services/store_service.dart';
 import '../panel/helpers/seller_panel_module_helpers.dart';
 import '../panel/models/seller_panel_types.dart';
 import 'staff_business_catalog.dart';
+import 'staff_dialog_chrome.dart';
+import 'staff_dialog_parts.dart';
+import 'staff_page_access_widgets.dart';
+import 'staff_live_summary.dart';
 import 'staff_permission_summary.dart';
-import 'staff_permission_widgets.dart';
 
-class StaffAccountDraft {
-  const StaffAccountDraft({
-    required this.name,
-    required this.email,
-    required this.password,
-    required this.staffRole,
-    required this.branchId,
-    required this.permissions,
-    required this.jobTitle,
-    this.visibleModules = const <String>[],
-    this.revokedPermissions = const <SellerPermission>[],
-  });
-
-  final String name;
-  final String email;
-  final String password;
-  final String staffRole;
-  final String jobTitle;
-  final String branchId;
-  final List<SellerPermission> permissions;
-  final List<String> visibleModules;
-  final List<SellerPermission> revokedPermissions;
-}
-
-const _staffAccent = Color(0xFF6C63FF);
-
-Future<void> showStaffAccountDialog({
-  required BuildContext context,
-  required StaffBusinessKind kind,
-  required bool isOwner,
-  required Set<String> heldPermissions,
-  required List<Map<String, dynamic>> branches,
-  required Future<void> Function(StaffAccountDraft draft) onSubmit,
-  SubAdmin? editing,
-  Set<SellerPermission> retainedPermissions = const <SellerPermission>{},
-}) {
-  return showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (dialogContext) => _StaffAccountDialog(
-      kind: kind,
-      isOwner: isOwner,
-      heldPermissions: heldPermissions,
-      branches: branches,
-      onSubmit: onSubmit,
-      editing: editing,
-      retainedPermissions: retainedPermissions,
-    ),
-  );
-}
+part 'staff_account_dialog_form.dart';
 
 class _StaffAccountDialog extends StatefulWidget {
   const _StaffAccountDialog({
@@ -93,15 +50,18 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
   late Set<SellerPermission> _selected;
   late Set<String> _pages;
   late Set<SellerPermission> _grantCeiling;
-  final Set<String> _openGroups = <String>{};
   String? _templateId;
   late Set<SellerPermission> _initialSelected;
   late Set<String> _initialPages;
   late String _initialTitle;
+  late String _initialName;
+  late String _initialEmail;
   String? _initialBranch;
   var _hidePassword = true;
   var _busy = false;
   String? _error;
+  final _summaryKey = GlobalKey();
+  final _summaryFocus = FocusNode(debugLabel: 'staff-summary');
 
   bool get _editing => widget.editing != null;
 
@@ -147,11 +107,34 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
       isOwner: widget.isOwner,
       held: widget.heldPermissions,
     );
-    _openGroups.addAll(sellerPermissionGroups.map((group) => group.title));
     _initialSelected = <SellerPermission>{..._selected};
     _initialPages = <String>{..._pages};
     _initialTitle = _jobTitle.text;
+    _initialName = _name.text;
+    _initialEmail = _email.text;
     _initialBranch = _branchId;
+    for (final c in [_name, _email, _password, _jobTitle]) {
+      c.addListener(_onText);
+    }
+  }
+
+  void _togglePassword() => setState(() => _hidePassword = !_hidePassword);
+
+  void _setBranch(String? value) => setState(() => _branchId = value);
+
+  void _pickTemplate(StaffRoleTemplate role) {
+    setState(() {
+      if (role.id == 'custom') {
+        // Özel Yetki: mevcut seçimi koru, yalnız şablonu işaretle.
+        _templateId = 'custom';
+        return;
+      }
+      _applyTemplate(role, fillTitle: true);
+    });
+  }
+
+  void _onText() {
+    if (mounted) setState(() {});
   }
 
   Set<SellerPermission> _pageOperations(SellerModule module) {
@@ -231,6 +214,9 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
       _selected = <SellerPermission>{..._initialSelected};
       _pages = <String>{..._initialPages};
       _jobTitle.text = _initialTitle;
+      _name.text = _initialName;
+      _email.text = _initialEmail;
+      _password.clear();
       _branchId = _initialBranch;
       _templateId = null;
       _error = null;
@@ -243,24 +229,29 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
       _pages.length != _initialPages.length ||
       !_pages.containsAll(_initialPages) ||
       _jobTitle.text != _initialTitle ||
+      _name.text != _initialName ||
+      _email.text != _initialEmail ||
+      _password.text.isNotEmpty ||
       _branchId != _initialBranch;
 
-  Future<void> _preview() {
-    final persisted = _selected.where(staffPermissionPersists).toList()
-      ..sort((a, b) => a.name.compareTo(b.name));
-    return showStaffPreviewDialog(
-      context: context,
-      who: _name.text.trim().isNotEmpty
-          ? _name.text.trim()
-          : (widget.editing?.displayName ?? 'Personel'),
-      lines: staffPermissionSummary(_selected),
-      pages: [
-        for (final module in _pageChoices)
-          if (_pages.contains(module.name))
-            '${sellerModuleLabel(module)} (${staffPageLevelLabel(_levelOf(module))})',
-      ],
-      permissionNames: [for (final p in persisted) p.name],
-    );
+  String get _who => _name.text.trim().isNotEmpty
+      ? _name.text.trim()
+      : (widget.editing?.displayName ?? 'Personel');
+
+  /// Geniş ekranda sağ özet paneline gider; dar ekranda alt sayfa açar.
+  void _preview({required bool twoPane}) {
+    if (!twoPane) {
+      showStaffSummarySheet(context, _summary());
+      return;
+    }
+    final target = _summaryKey.currentContext;
+    if (target != null) {
+      Scrollable.ensureVisible(
+        target,
+        duration: const Duration(milliseconds: 250),
+      );
+    }
+    _summaryFocus.requestFocus();
   }
 
   @override
@@ -269,29 +260,8 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
     _email.dispose();
     _password.dispose();
     _jobTitle.dispose();
+    _summaryFocus.dispose();
     super.dispose();
-  }
-
-  List<SellerPermissionGroup> get _groups => staffGroupsForBusiness(
-        kind: widget.kind,
-        isOwner: widget.isOwner,
-        held: widget.heldPermissions,
-      );
-
-  String _permissionSubtitle(SellerPermission permission) {
-    final description = sellerPermissionDescription(permission);
-    if (staffPermissionPersists(permission)) return description;
-    final stored = widget.editing?.permissions.contains(permission) ?? false;
-    if (stored && _selected.contains(permission)) {
-      return '$description Kayıtlı yetki. Kaldırırsanız bir sonraki kayıtta silinir.';
-    }
-    return '$description Sunucu kaydı henüz açık değil.';
-  }
-
-  bool _canEditPermission(SellerPermission permission) {
-    if (staffPermissionPersists(permission)) return true;
-    final stored = widget.editing?.permissions.contains(permission) ?? false;
-    return stored && _selected.contains(permission);
   }
 
   Future<void> _toggle(SellerPermission permission, bool value) async {
@@ -438,414 +408,65 @@ class _StaffAccountDialogState extends State<_StaffAccountDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final media = MediaQuery.sizeOf(context);
-    const inset = EdgeInsets.symmetric(horizontal: 16, vertical: 20);
-    final maxWidth = media.width - inset.horizontal;
-    final maxHeight = media.height - inset.vertical;
-    return Dialog(
-      insetPadding: inset,
-      backgroundColor: const Color(0xFFF7F7F8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: maxWidth > 760 ? 760 : maxWidth,
-          maxHeight: maxHeight > 640 ? 640 : maxHeight,
-        ),
-        child: SizedBox(
-          width: maxWidth > 760 ? 760 : maxWidth,
-          height: maxHeight > 640 ? 640 : maxHeight,
-        child: Column(
-          children: [
-            _header(),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                children: [
-                  if (widget.kind == StaffBusinessKind.unknown)
-                    const _Note(
-                      text:
-                          'Mağaza kategorisi yüklenmeden personel hesabı açılmaz.',
-                    ),
-                  _field(
-                    controller: _name,
-                    label: 'Ad Soyad',
-                    enabled: !_busy && !_editing,
-                  ),
-                  _field(
-                    controller: _email,
-                    label: 'E-posta',
-                    enabled: !_busy && !_editing,
-                    keyboard: TextInputType.emailAddress,
-                  ),
-                  if (!_editing) _passwordField(),
-                  _field(
-                    controller: _jobTitle,
-                    label: 'Görev Adı / Ünvan',
-                    enabled: !_busy,
-                  ),
-                  const _Note(
-                    text:
-                        'Görev adı yalnızca görünen etikettir. Sayfa seçimi işlem yetkisi vermez.',
-                  ),
-                  if (_roles.isNotEmpty) _suggestionChips(),
-                  _branchField(),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Görebileceği Sayfalar',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  for (final module in _pageChoices) ...[
-                    StaffPageLevelRow(
-                      keyPrefix: module.name,
-                      title: sellerModuleLabel(module),
-                      plan: _plan(module),
-                      current: _levelOf(module),
-                      enabled: !_busy,
-                      onChanged: (level) => _setPageLevel(module, level),
-                      hint: (module == SellerModule.team ||
-                              module == SellerModule.store)
-                          ? 'Mağaza profili ve personel yönetimi bu seçimle açılmaz.'
-                          : (module == SellerModule.products ||
-                                  module == SellerModule.collections ||
-                                  module == SellerModule.campaigns ||
-                                  module == SellerModule.support)
-                              ? 'Bu sayfada salt-okunur yetki yok: erişim ya hiç yok ya tam yönetimdir.'
-                              : null,
-                    ),
-                  ],
-                  StaffSummaryCard(lines: staffPermissionSummary(_selected)),
-                  const SizedBox(height: 8),
-                  for (final gap in staffCapabilityGaps(widget.kind))
-                    _Note(text: gap),
-                  for (final group in _groups) _group(group),
-                  if (_error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        _error!,
-                        style: const TextStyle(color: Color(0xFFB42318)),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            _footer(),
-          ],
-        ),
-        ),
-      ),
-    );
-  }
-
-  String _branchName() {
-    final id = widget.editing?.branchId ?? _branchId;
-    for (final branch in widget.branches) {
-      if (branch['id'].toString() == id) {
-        return branch['name']?.toString() ?? 'Şube';
-      }
-    }
-    return id == null || id.isEmpty ? 'Şube yok' : 'Kayıtlı şube';
-  }
-
-  String _dateLabel(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
-
-  Widget _header() {
+    final size = MediaQuery.sizeOf(context);
+    final compact = size.width < 700;
+    final twoPane = size.width >= 1000;
     final member = widget.editing;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _editing
-                      ? (member?.displayName?.trim().isNotEmpty == true
-                            ? member!.displayName!.trim()
-                            : 'Personel yetkileri')
-                      : 'Personel hesabı oluştur',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              IconButton(
-                onPressed: _busy ? null : () => Navigator.pop(context),
-                icon: const Icon(Icons.close),
-              ),
-            ],
-          ),
-          if (member != null)
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                Chip(
-                  visualDensity: VisualDensity.compact,
-                  label: Text(member.status == 'active' ? 'Aktif' : 'Pasif'),
-                ),
-                Chip(
-                  visualDensity: VisualDensity.compact,
-                  label: Text(_branchName()),
-                ),
-                Chip(
-                  visualDensity: VisualDensity.compact,
-                  label: Text(
-                    staffMemberRoleLabel(
-                      kind: widget.kind,
-                      storedRole: member.staffRole,
-                      permissions: member.permissions.toSet(),
-                    ),
-                  ),
-                ),
-                if (member.createdAt != null)
-                  Chip(
-                    visualDensity: VisualDensity.compact,
-                    label: Text('Oluşturulma ${_dateLabel(member.createdAt!)}'),
-                  ),
-              ],
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _footer() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(bottom: Radius.circular(18)),
-      ),
-      child: Wrap(
-        alignment: WrapAlignment.end,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          TextButton(
-            onPressed: _busy ? null : () => Navigator.pop(context),
-            child: const Text('Vazgeç'),
-          ),
-          TextButton(
-            onPressed: _busy || !_changed ? null : _revert,
-            child: const Text('Geri al'),
-          ),
-          OutlinedButton(
-            onPressed: _busy ? null : _preview,
-            child: const Text('Önizleme'),
-          ),
-          ElevatedButton(
-            onPressed: _busy || widget.kind == StaffBusinessKind.unknown
-                ? null
-                : _save,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _staffAccent,
-              foregroundColor: Colors.white,
-            ),
-            child: Text(_busy ? 'Kaydediliyor...' : 'Kaydet'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _field({
-    required TextEditingController controller,
-    required String label,
-    required bool enabled,
-    TextInputType? keyboard,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: TextField(
-        controller: controller,
-        enabled: enabled,
-        keyboardType: keyboard,
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: Colors.white,
-          border: const OutlineInputBorder(),
+    final content = Column(
+      children: [
+        StaffDialogHeader(
+          compact: compact,
+          title: _editing ? 'Personel yetkileri' : 'Personel hesabı oluştur',
+          subtitle: _editing
+              ? (member?.displayName?.trim().isNotEmpty == true
+                    ? member!.displayName!.trim()
+                    : null)
+              : null,
+          chips: member == null ? const [] : _memberChips(member),
+          onClose: _busy ? null : () => Navigator.pop(context),
         ),
-      ),
-    );
-  }
-
-  Widget _passwordField() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: TextField(
-        controller: _password,
-        enabled: !_busy,
-        obscureText: _hidePassword,
-        enableSuggestions: false,
-        autocorrect: false,
-        decoration: InputDecoration(
-          labelText: 'Şifre',
-          helperText: 'En az 8 karakter.',
-          filled: true,
-          fillColor: Colors.white,
-          border: const OutlineInputBorder(),
-          suffixIcon: IconButton(
-            onPressed: () => setState(() => _hidePassword = !_hidePassword),
-            icon: Icon(
-              _hidePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-            ),
-          ),
+        Expanded(
+          child: twoPane
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: _formPane(compact: false)),
+                    _summaryPane(),
+                  ],
+                )
+              : _formPane(compact: compact),
         ),
-      ),
+        StaffDialogFooter(
+          busy: _busy,
+          changed: _changed,
+          canSave: widget.kind != StaffBusinessKind.unknown,
+          error: _error,
+          onRevert: _revert,
+          onCancel: () => Navigator.pop(context),
+          onPreview: () => _preview(twoPane: twoPane),
+          onSave: _save,
+        ),
+      ],
     );
-  }
-
-  Widget _suggestionChips() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (final role in _roles)
-            ChoiceChip(
-              label: Text(role.label),
-              selected: role.id == 'custom'
-                  ? (_templateId == null || _templateId == 'custom')
-                  : _templateId == role.id,
-              selectedColor: _staffAccent.withValues(alpha: 0.16),
-              onSelected: _busy
-                  ? null
-                  : (_) => setState(() {
-                        if (role.id == 'custom') {
-                          // Özel Yetki: mevcut seçimi koru, yalnız şablonu işaretle.
-                          _templateId = 'custom';
-                          return;
-                        }
-                        _applyTemplate(role, fillTitle: true);
-                      }),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _branchField() {
-    if (widget.branches.isEmpty && !_editing) {
-      return const _Note(text: 'Önce işletmenize aktif bir şube tanımlayın.');
+    if (compact) {
+      return Dialog.fullscreen(
+        backgroundColor: AppColors.background,
+        child: SafeArea(child: content),
+      );
     }
-    final branchIds = widget.branches
-        .map((branch) => branch['id'].toString())
-        .toSet();
-    if (_editing && (_branchId == null || !branchIds.contains(_branchId))) {
-      return _readonly('Şube', widget.editing?.branchId ?? 'Kayıtlı şube');
-    }
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: DropdownButtonFormField<String>(
-        initialValue: _branchId,
-        isExpanded: true,
-        decoration: const InputDecoration(
-          labelText: 'Şube',
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(),
-        ),
-        items: [
-          for (final branch in widget.branches)
-            DropdownMenuItem(
-              value: branch['id'].toString(),
-              child: Text(branch['name']?.toString() ?? 'Şube'),
-            ),
-        ],
-        onChanged: _busy
-            ? null
-            : (value) => setState(() => _branchId = value),
+    final width = math.min(twoPane ? 1120.0 : 820.0, size.width * 0.92);
+    final height = math.min(760.0, size.height * 0.92);
+    return Dialog(
+      insetPadding: const EdgeInsets.all(12),
+      backgroundColor: AppColors.background,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: SizedBox(
+        key: const ValueKey('staff-dialog-box'),
+        width: width,
+        height: height,
+        child: content,
       ),
-    );
-  }
-
-  Widget _readonly(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: Colors.white,
-          border: const OutlineInputBorder(),
-        ),
-        child: Text(value),
-      ),
-    );
-  }
-
-  Widget _group(SellerPermissionGroup group) {
-    final open = _openGroups.contains(group.title);
-    return Container(
-      margin: const EdgeInsets.only(top: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE6E6EA)),
-      ),
-      child: Column(
-        children: [
-          ListTile(
-            title: Text(
-              group.title,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            trailing: Icon(open ? Icons.expand_less : Icons.expand_more),
-            onTap: () => setState(() {
-              if (open) {
-                _openGroups.remove(group.title);
-              } else {
-                _openGroups.add(group.title);
-              }
-            }),
-          ),
-          if (open)
-            for (final permission in group.permissions)
-              CheckboxListTile(
-                value: _selected.contains(permission),
-                dense: true,
-                title: Text(sellerPermissionLabel(permission)),
-                subtitle: Text(_permissionSubtitle(permission)),
-                onChanged: _busy || !_canEditPermission(permission)
-                    ? null
-                    : (value) => _toggle(permission, value == true),
-              ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Note extends StatelessWidget {
-  const _Note({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF4F2FF),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Text(text, style: const TextStyle(fontSize: 12)),
     );
   }
 }

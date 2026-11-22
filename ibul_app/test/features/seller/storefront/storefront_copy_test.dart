@@ -75,6 +75,15 @@ void main() {
       expect(StorefrontCatalog.matchesVehicle(item, 'bmw'), isFalse);
     });
 
+    test('vehicle search is Turkish case and accent insensitive', () {
+      final item = listing(title: 'İkinci El Şahin', brand: 'Tofaş');
+      expect(StorefrontCatalog.matchesVehicle(item, 'ikinci'), isTrue);
+      expect(StorefrontCatalog.matchesVehicle(item, 'İKİNCİ'), isTrue);
+      expect(StorefrontCatalog.matchesVehicle(item, 'sahin'), isTrue);
+      expect(StorefrontCatalog.matchesVehicle(item, 'TOFAŞ'), isTrue);
+      expect(StorefrontCatalog.matchesVehicle(item, 'bmw'), isFalse);
+    });
+
     test('sale and rental category filters stay separate', () {
       final rows = [
         listing(type: VehicleListingType.sale),

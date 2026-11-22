@@ -137,6 +137,19 @@ class RestaurantLocalPrintQueueService {
       await update(job.restaurantId, refused);
       return refused;
     }
+    final noPrinter =
+        job.printerSnapshot['resolution_error']?.toString().trim() ?? '';
+    if (noPrinter.isNotEmpty) {
+      // No printer is known for this station. Nothing is sent, so the
+      // result is a definite failure, never "uncertain".
+      final unrouted = job.copyWith(
+        status: RestaurantLocalPrintJobStatus.failed,
+        attempts: job.attempts + 1,
+        lastError: noPrinter,
+      );
+      await update(job.restaurantId, unrouted);
+      return unrouted;
+    }
     final claimed = await claim(job.restaurantId, job.localJobId);
     if (claimed == null) {
       final current = (await list(job.restaurantId))
@@ -416,6 +429,7 @@ Map<String, dynamic> _kitchenBody(RestaurantLocalPrintJobRecord job) {
   final payload = job.payloadSnapshot;
   final items = payload['items'];
   return <String, dynamic>{
+    ...lanPrinterTargetFields(job.printerSnapshot),
     'print_job_id': job.localJobId,
     'job_id': job.localJobId,
     'idempotency_key': job.localJobId,
@@ -434,6 +448,27 @@ Map<String, dynamic> _kitchenBody(RestaurantLocalPrintJobRecord job) {
     'display_table_label': job.tableName,
     'title': 'MUTFAK SİPARİŞİ',
     'items': items is List ? items : const <Map<String, dynamic>>[],
+  };
+}
+
+/// The printer target the bridge reads from a kitchen request. Only a
+/// snapshot built from a saved printer (it names its transport) is passed
+/// on; anything else leaves the bridge on its own default target.
+Map<String, dynamic> lanPrinterTargetFields(Map<String, dynamic> snapshot) {
+  final transport = snapshot['transport_type']?.toString().trim() ?? '';
+  if (transport.isEmpty) return const <String, dynamic>{};
+  const skipped = <String>{
+    'role',
+    'printer_role',
+    'document_type',
+    'station_id',
+    'station_name',
+    'resolution_error',
+  };
+  return <String, dynamic>{
+    for (final entry in snapshot.entries)
+      if (!skipped.contains(entry.key) && entry.value != null)
+        entry.key: entry.value,
   };
 }
 
@@ -463,7 +498,11 @@ Future<_BridgeHttpResult> _bridgeSend({
     final request = await client.openUrl(method, uri).timeout(timeout);
     request.headers.contentType = ContentType.json;
     if (body != null) {
-      request.add(utf8.encode(jsonEncode(body)));
+      final bytes = utf8.encode(jsonEncode(body));
+      // The Python bridge reads Content-Length and rejects a chunked body
+      // ("Request body is required"), which Dart sends when no length is set.
+      request.contentLength = bytes.length;
+      request.add(bytes);
     }
     final requestMicros = requestWatch.elapsedMicroseconds;
     final responseWatch = Stopwatch()..start();

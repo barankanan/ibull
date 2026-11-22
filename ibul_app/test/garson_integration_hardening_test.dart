@@ -620,8 +620,19 @@ void main() {
       expect(r.showEditWarning, isTrue);
     });
 
-    // served/closed/completed: canEdit=false → isLocked=true
-    for (final s in ['served', 'closed', 'completed']) {
+    // served: düzenleme revizyon olarak işlenir (fark fişi gider), ama tam
+    // mutfak yeniden baskısı kapalıdır; aktarma ve geri alma kapalıdır.
+    test('G6a. served → canEdit:true, canResend:true (revizyon), reprint/transfer/undo kapalı', () {
+      final r = GarsonOperationRules.forStatus('served');
+      expect(r.canEdit, isTrue);
+      expect(r.canResend, isTrue);
+      expect(r.canUndo, isFalse);
+      expect(r.canTransfer, isFalse);
+      expect(KitchenPrintPolicy.canReprint('served'), isFalse);
+    });
+
+    // closed/completed: canEdit=false → isLocked=true
+    for (final s in ['closed', 'completed']) {
       test('G6. $s → canEdit:FALSE (kilitli)', () {
         final r = GarsonOperationRules.forStatus(s);
         expect(r.canEdit, isFalse, reason: "'$s' düzenlenemez olmalı");

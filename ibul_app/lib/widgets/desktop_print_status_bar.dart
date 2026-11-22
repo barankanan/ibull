@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../app/ibul_router.dart';
 import '../services/desktop_print_hub.dart';
+import '../services/printer_readiness.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DesktopPrintStatusBar
@@ -40,7 +41,11 @@ class _PrintChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (dotColor, statusLabel) = _statusInfo(hub.bridgeStatus);
+    // The chip no longer reads the bridge alone: "Yazıcı Hazır" needs a saved
+    // printer, the print permission, this device's role and a reachable
+    // printer as well (see printer_readiness.dart).
+    final readiness = hub.readiness;
+    final (dotColor, statusLabel) = statusInfo(readiness);
     final hasError = hub.lastJobError != null;
     final hasCount = hub.dispatchedCount > 0;
 
@@ -66,7 +71,7 @@ class _PrintChip extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               // Bridge status indicator
-              if (hub.bridgeStatus == BridgeStatus.checking)
+              if (readiness.level == PrinterReadinessLevel.checking)
                 const SizedBox(
                   width: 8,
                   height: 8,
@@ -153,13 +158,19 @@ class _PrintChip extends StatelessWidget {
     );
   }
 
-  static (Color, String) _statusInfo(BridgeStatus status) {
-    return switch (status) {
-      BridgeStatus.online => (const Color(0xFF10B981), 'Yazıcı Hazır'),
-      BridgeStatus.offline => (const Color(0xFFEF4444), 'Yazıcı Kapalı'),
-      BridgeStatus.error => (const Color(0xFFF97316), 'Yazıcı Hata'),
-      BridgeStatus.checking => (const Color(0xFFF59E0B), 'Kontrol…'),
-      BridgeStatus.unknown => (const Color(0xFF9CA3AF), 'Yazıcı'),
-    };
-  }
+  static (Color, String) statusInfo(PrinterReadiness readiness) =>
+      printerChipStyle(readiness);
+}
+
+/// Dot colour and chip text for one readiness verdict.
+(Color, String) printerChipStyle(PrinterReadiness readiness) {
+  final color = switch (readiness.level) {
+    PrinterReadinessLevel.ready => const Color(0xFF10B981),
+    PrinterReadinessLevel.bridgeDown ||
+    PrinterReadinessLevel.unreachable => const Color(0xFFEF4444),
+    PrinterReadinessLevel.checking => const Color(0xFFF59E0B),
+    PrinterReadinessLevel.notPrintCenter => const Color(0xFF9CA3AF),
+    _ => const Color(0xFFF97316),
+  };
+  return (color, readiness.chipLabel);
 }

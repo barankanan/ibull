@@ -286,6 +286,10 @@ class LocalPrintService {
           url: url,
           durationMs: watch.elapsedMilliseconds,
           statusCode: response.statusCode,
+          // Callers read the print permission, the printer target and the
+          // queue counters from the health body. Without it a healthy bridge
+          // was reported as "service state unknown".
+          details: jsonBody,
         );
       }
 
@@ -541,8 +545,39 @@ class LocalPrintService {
   }
 
   /// Scan active /24 subnets for ESC/POS printers on [port] (default 9100).
+  ///
+  /// The bridge probes every address with a very short connect timeout, so on
+  /// a cold network (addresses not yet resolved) a printer that is there can
+  /// be missed once. A scan that answered but found nothing is repeated once
+  /// before the operator is told there is no printer.
   Future<Map<String, dynamic>?> scanEthernetPrinters({
     int port = 9100,
+    String? printerHost,
+    Duration? timeout,
+  }) async {
+    final first = await _scanEthernetPrintersOnce(
+      port: port,
+      printerHost: printerHost,
+      timeout: timeout,
+    );
+    if (!_scanFoundNothing(first)) return first;
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    final second = await _scanEthernetPrintersOnce(
+      port: port,
+      printerHost: printerHost,
+      timeout: timeout,
+    );
+    return _scanFoundNothing(second) ? (second ?? first) : second;
+  }
+
+  static bool _scanFoundNothing(Map<String, dynamic>? result) {
+    if (result == null || result['ok'] != true) return false;
+    final devices = result['devices'];
+    return devices is List && devices.isEmpty;
+  }
+
+  Future<Map<String, dynamic>?> _scanEthernetPrintersOnce({
+    required int port,
     String? printerHost,
     Duration? timeout,
   }) async {

@@ -132,7 +132,7 @@ String encodeLanQr(LanCenterRecord record) {
   ).toString();
 }
 
-LanCenterRecord? decodeLanQr(String raw) {
+LanCenterRecord? decodeLanQr(String raw, {int? expectedPort}) {
   final uri = Uri.tryParse(raw.trim());
   if (uri == null || uri.scheme != 'ibul-lan' || uri.host != 'pair') return null;
   final host = uri.queryParameters['host']?.trim() ?? '';
@@ -141,7 +141,7 @@ LanCenterRecord? decodeLanQr(String raw) {
   final machine = uri.queryParameters['machine']?.trim() ?? '';
   final fingerprint = uri.queryParameters['fingerprint']?.trim() ?? '';
   if (port == null ||
-      port != lanOrderPort ||
+      port != (expectedPort ?? lanOrderPort) ||
       restaurant.isEmpty ||
       machine.isEmpty ||
       fingerprint.isEmpty ||

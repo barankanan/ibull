@@ -17,8 +17,11 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
 import '../../core/config/runtime_config.dart';
+import '../../services/restaurant_offline/waiter_lan_link.dart';
+import '../../services/desktop_print_hub.dart';
 import '../../features/seller/panel/widgets/seller_download_app_content.dart';
 import '../../models/desktop_printer_setup_models.dart';
 import '../../models/printer_discovery_result.dart';
@@ -140,6 +143,10 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
 
   /// Aynı seller altındaki kayıtlı yazıcı adları (çakışma kontrolü için).
   List<String> _existingPrinterNames = const <String>[];
+
+  /// Saved printers other than the one being edited: "host:port" -> record
+  /// code. The same device scanned again must not become a second record.
+  Map<String, String> _existingEndpoints = const <String, String>{};
 
   /// Web: masaüstü yazıcı yardımcısı (local print agent) durumu.
   /// null = kontrol ediliyor, true = bağlı, false = yok.
@@ -366,6 +373,13 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
           for (final printer in printers)
             if (printer.id != (widget.existing?.id ?? '')) printer.name,
         ];
+        _existingEndpoints = <String, String>{
+          for (final printer in printers)
+            if (printer.id != (widget.existing?.id ?? '') &&
+                printer.isEthernetConnection &&
+                printer.ethernetHost.isNotEmpty)
+              '${printer.ethernetHost}:${printer.ethernetPort}': printer.code,
+        };
       });
     } catch (_) {
       // Offline/hata: çakışma kontrolü best-effort kalır.
@@ -443,6 +457,21 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     final port = int.tryParse(_portCtrl.text.trim()) ??
         PrinterModel.ethernetDefaultPort;
     final hostHint = _ipCtrl.text.trim();
+    if (_handheld) {
+      // A phone has no print bridge of its own. The search is done by the
+      // restaurant's computer and comes back over the paired LAN channel.
+      if (WaiterLanLink.instance.paired) {
+        await _runCenterScan(port, hostHint);
+        return;
+      }
+      if (!_useMobileDirectTcp) {
+        setState(() {
+          _scanning = false;
+          _scanError = WaiterLanLink.centerNeededForScan;
+        });
+        return;
+      }
+    }
     if (_useMobileDirectTcp) {
       await _runMobileAutoScan(port);
       return;
@@ -477,6 +506,50 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
             ? diagnostic.message
             : 'Ağ taraması başarısız. IP adresini manuel girebilirsiniz.';
       });
+    } finally {
+      if (mounted) {
+        setState(() => _scanning = false);
+      }
+    }
+  }
+
+  bool get _handheld {
+    if (kIsWeb) return false;
+    try {
+      return Platform.isIOS || Platform.isAndroid;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Phone or tablet paired with the restaurant's computer: that computer
+  /// runs the search and the real reason is shown when it cannot.
+  Future<void> _runCenterScan(int port, String hostHint) async {
+    try {
+      final raw = await WaiterLanLink.instance.scanPrintersThroughCenter(
+        port: port,
+        printerHost: hostHint,
+      );
+      if (!mounted) return;
+      final result = parseEthernetScanResult(raw);
+      setState(() {
+        _scanResult = result;
+        if (!result.ok) {
+          _scanError = result.message.isNotEmpty
+              ? result.message
+              : 'Ana bilgisayar ağ taramasını tamamlayamadı. IP adresini manuel girebilirsiniz.';
+        }
+      });
+      if (result.devices.isNotEmpty) {
+        unawaited(_prefetchExistingPrinterNames());
+      }
+    } on StateError catch (error) {
+      if (!mounted) return;
+      setState(() => _scanError = error.message);
+    } catch (error) {
+      if (!mounted) return;
+      debugPrint('[EthernetPrinter][center_scan_error] $error');
+      setState(() => _scanError = WaiterLanLink.centerNeededForScan);
     } finally {
       if (mounted) {
         setState(() => _scanning = false);
@@ -1129,6 +1202,17 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
 
   // ── save action ────────────────────────────────────────────────────────
 
+  /// Every screen answers "is a printer registered?" from the same hub
+  /// verdict, so a save must make the hub re-read the printer records now
+  /// instead of waiting for its next poll. There is no hub in some contexts
+  /// (widget tests, web); that is fine.
+  void _notifyPrinterSaved() {
+    try {
+      final hub = Provider.of<DesktopPrintHub>(context, listen: false);
+      unawaited(hub.refreshReadinessInputs());
+    } catch (_) {}
+  }
+
   Future<void> _save() async {
     if (_saving) return;
     final form = _validateForm();
@@ -1173,6 +1257,20 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       });
       return;
     }
+    // The same device (same IP and port) under another record code would
+    // become a second printer; the record code of this device updates the
+    // one record instead, so only a different code is refused.
+    final sameEndpointCode = _existingEndpoints['$host:$port'];
+    final thisCode = 'eth_${host.replaceAll('.', '_')}_$port';
+    if (sameEndpointCode != null && sameEndpointCode != thisCode) {
+      setState(() {
+        _saving = false;
+        _formError =
+            '$host:$port adresindeki yazıcı zaten kayıtlı. Aynı yazıcı ikinci '
+            'kez eklenmez; kayıtlı yazıcıyı düzenleyin.';
+      });
+      return;
+    }
     try {
       final repo = widget.repository ?? PrinterRepository();
       PrinterModel saved;
@@ -1198,13 +1296,14 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
         saved = migrationError.printer;
         printSizeMigrationWarning = true;
       }
-      if (_connectionOk) {
-        await repo.recordTestPrintResult(
-          printerId: saved.id,
-          success: _printOk || _connectionOk,
-        );
+      // A TCP connection is not a printed receipt. Only a test receipt the
+      // bridge accepted may be recorded as a passed test; a connection that
+      // was never followed by a test print leaves the status untouched.
+      if (_printOk) {
+        await repo.recordTestPrintResult(printerId: saved.id, success: true);
       }
       if (!mounted) return;
+      _notifyPrinterSaved();
       setState(() {
         _savedToDb = true;
         _saveStatusMessage = printSizeMigrationWarning

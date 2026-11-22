@@ -18,6 +18,42 @@ class RestaurantLocalOrderQueueService {
   static final Map<String, List<RestaurantLocalOrderRecord>> _memory =
       <String, List<RestaurantLocalOrderRecord>>{};
 
+  /// The journal folder of each restaurant, once any instance knows it. The
+  /// sync service has no folder of its own; without this its "sent to the
+  /// cloud" marks never reached the journal, and the next launch read every
+  /// one of those orders as still waiting.
+  static final Map<String, Directory> _journalDirectories =
+      <String, Directory>{};
+
+  Directory? _journalFor(String restaurantId) {
+    final own = journalDirectory;
+    if (own != null) {
+      _journalDirectories[restaurantId] = own;
+      return own;
+    }
+    return _journalDirectories[restaurantId];
+  }
+
+  /// The center calls this when it starts. From then on every instance
+  /// writes this restaurant's journal, and what is already loaded (it may be
+  /// newer than the file) is written to it once.
+  Future<void> adoptJournal(String restaurantId) async {
+    final id = restaurantId.trim();
+    final own = journalDirectory;
+    if (id.isEmpty || own == null) return;
+    _journalDirectories[id] = own;
+    final orders = await list(id);
+    if (orders.isNotEmpty) await _persist(id, orders);
+  }
+
+  static DateTime _newest(List<RestaurantLocalOrderRecord> orders) {
+    var newest = DateTime.fromMillisecondsSinceEpoch(0);
+    for (final order in orders) {
+      if (order.updatedAt.isAfter(newest)) newest = order.updatedAt;
+    }
+    return newest;
+  }
+
   static String storageKey(String restaurantId) =>
       'restaurant_offline_order_queue_v1_${restaurantId.trim()}';
 
@@ -31,15 +67,31 @@ class RestaurantLocalOrderQueueService {
     }
     final journal = _readJournal(id);
     if (journal != null) {
-      final parsed = _ordersFromPayload(journal);
+      var parsed = _ordersFromPayload(journal);
+      // A mark written while the journal folder was not known is only in
+      // the device store. The newer complete record wins, so an order
+      // already sent to the cloud is not sent again.
+      try {
+        final stored = await _readStored(id);
+        if (stored != null &&
+            stored.length >= parsed.length &&
+            _newest(stored).isAfter(_newest(parsed))) {
+          parsed = stored;
+        }
+      } catch (_) {
+        // The journal is readable; an unreadable store copy changes nothing.
+      }
       _memory[id] = parsed;
       return parsed;
     }
+    final stored = await _readStored(id);
+    _memory[id] = stored ?? const <RestaurantLocalOrderRecord>[];
+    return _memory[id]!;
+  }
+
+  Future<List<RestaurantLocalOrderRecord>?> _readStored(String id) async {
     final rawText = await _store.readString(storageKey(id));
-    if (rawText == null || rawText.trim().isEmpty) {
-      _memory[id] = const <RestaurantLocalOrderRecord>[];
-      return const <RestaurantLocalOrderRecord>[];
-    }
+    if (rawText == null || rawText.trim().isEmpty) return null;
     Object? raw;
     try {
       raw = jsonDecode(rawText);
@@ -52,11 +104,9 @@ class RestaurantLocalOrderQueueService {
         'Yerel sipariş kaydı bozuk. Üzerine yazılmadı.',
       );
     }
-    final parsed = _readMapList(rows)
+    return _readMapList(rows)
         .map(RestaurantLocalOrderRecord.fromJson)
         .toList(growable: false);
-    _memory[id] = parsed;
-    return parsed;
   }
 
   Future<RestaurantLocalOrderRecord?> getByLocalId({
@@ -180,7 +230,7 @@ class RestaurantLocalOrderQueueService {
       'orders': orders.map((order) => order.toJson()).toList(),
     };
     final key = storageKey(restaurantId);
-    final directory = journalDirectory;
+    final directory = _journalFor(restaurantId);
     if (directory != null) {
       await writeAtomicQueueJournal(
         directory: directory,
@@ -198,14 +248,16 @@ class RestaurantLocalOrderQueueService {
 
   void clearMemoryForTests() {
     _memory.clear();
+    _journalDirectories.clear();
   }
 
   static void clearAllMemoryForTests() {
     _memory.clear();
+    _journalDirectories.clear();
   }
 
   Map<String, dynamic>? _readJournal(String restaurantId) {
-    final directory = journalDirectory;
+    final directory = _journalFor(restaurantId);
     if (directory == null) return null;
     final file = File('${directory.path}/orders_$restaurantId.json');
     if (!file.existsSync()) return null;

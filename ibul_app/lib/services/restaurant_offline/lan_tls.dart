@@ -1,10 +1,12 @@
-import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'lan_cert_material.dart';
 import 'lan_client_key.dart';
+import 'lan_file_mode.dart';
 import 'lan_pairing_guard.dart';
 
 /// `IBUL_OPENSSL` points at a helper inside the app bundle when App Sandbox
@@ -102,24 +104,9 @@ class LanTlsMaterial {
       ..setTrustedCertificates(serverCertificatePath);
   }
 
+  /// SHA-256 of the DER, computed in process (a sandboxed app cannot start
+  /// `openssl`, and the answer is the same).
   static Future<String> certificateFingerprint(String pemPath) async {
-    try {
-      final result = await Process.run(lanOpenSslExecutable(), <String>[
-        'x509',
-        '-in',
-        pemPath,
-        '-noout',
-        '-fingerprint',
-        '-sha256',
-      ]);
-      if (result.exitCode == 0) {
-        final text = '${result.stdout}';
-        final separator = text.lastIndexOf('=');
-        if (separator >= 0) {
-          return normalizeFingerprint(text.substring(separator + 1));
-        }
-      }
-    } catch (_) {}
     return certificateSha256Hex(await File(pemPath).readAsString());
   }
 
@@ -127,6 +114,12 @@ class LanTlsMaterial {
     final der = certificate?.der;
     if (der == null || der.isEmpty) return '';
     return sha256.convert(der).toString();
+  }
+
+  static String publicKeyPinOf(X509Certificate? certificate) {
+    final der = certificate?.der;
+    if (der == null || der.isEmpty) return '';
+    return certificatePublicKeySha256Hex(der);
   }
 
   static String normalizeFingerprint(String value) {
@@ -138,75 +131,19 @@ class LanTlsMaterial {
   /// certificate was written. Clients that pinned the old fingerprint
   /// must pair again.
   static Future<bool> ensureServerAddress(Directory directory, String ip) async {
-    final serverPem = File('${directory.path}/server.pem');
-    final serverKey = File('${directory.path}/server.key');
-    final caPem = File('${directory.path}/ca.pem');
-    final caKey = File('${directory.path}/ca.key');
-    if (!serverPem.existsSync() || !serverKey.existsSync() || !caPem.existsSync()) {
-      return false;
-    }
-    final current = await Process.run(lanOpenSslExecutable(), <String>[
-      'x509', '-in', serverPem.path, '-noout', '-ext', 'subjectAltName',
-    ]);
-    final text = '${current.stdout}';
-    if (text.contains('127.0.0.1') && text.contains(ip)) return false;
-    final ext = File('${directory.path}/server.ext');
-    final csr = '${directory.path}/server.csr';
-    await ext.writeAsString(
-      'subjectAltName=IP:127.0.0.1,DNS:localhost,IP:$ip\n',
-    );
-    await _openssl(<String>[
-      'req', '-new', '-key', serverKey.path, '-out', csr, '-subj', '/CN=ibul-lan',
-    ]);
-    await _openssl(<String>[
-      'x509', '-req', '-in', csr,
-      '-CA', caPem.path, '-CAkey', caKey.path, '-CAcreateserial',
-      '-out', serverPem.path, '-days', '825', '-extfile', ext.path,
-    ]);
-    return true;
+    return reissueServerCertificateWithDart(directory, ip);
   }
 
+  /// First-run material, generated in process: no external `openssl`, so the
+  /// App Sandbox build can create it. Key generation is CPU heavy, so it runs
+  /// off the UI isolate.
   static Future<void> _generate(Directory directory) async {
-    final caPem = '${directory.path}/ca.pem';
-    final caKey = '${directory.path}/ca.key';
-    final serverPem = '${directory.path}/server.pem';
-    final serverKey = '${directory.path}/server.key';
-    final serverCsr = '${directory.path}/server.csr';
-    final operatorPem = '${directory.path}/operator.pem';
-    final operatorKey = '${directory.path}/operator.key';
-    final operatorCsr = '${directory.path}/operator.csr';
-    final ext = File('${directory.path}/server.ext');
-    await ext.writeAsString(
-      'subjectAltName=IP:127.0.0.1,DNS:localhost\n',
+    final path = directory.path;
+    await Isolate.run(
+      () => writeDartTlsMaterial(Directory(path), sanIps: const <String>['127.0.0.1']),
     );
-    await _openssl(<String>[
-      'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
-      '-keyout', caKey, '-out', caPem, '-days', '825',
-      '-subj', '/CN=ibul-lan-ca',
-    ]);
-    await _openssl(<String>[
-      'req', '-newkey', 'rsa:2048', '-nodes',
-      '-keyout', serverKey, '-out', serverCsr,
-      '-subj', '/CN=ibul-lan',
-    ]);
-    await _openssl(<String>[
-      'x509', '-req', '-in', serverCsr,
-      '-CA', caPem, '-CAkey', caKey, '-CAcreateserial',
-      '-out', serverPem, '-days', '825',
-      '-extfile', ext.path,
-    ]);
-    await _openssl(<String>[
-      'req', '-newkey', 'rsa:2048', '-nodes',
-      '-keyout', operatorKey, '-out', operatorCsr,
-      '-subj', '/CN=ibul-operator',
-    ]);
-    await _openssl(<String>[
-      'x509', '-req', '-in', operatorCsr,
-      '-CA', caPem, '-CAkey', caKey, '-CAcreateserial',
-      '-out', operatorPem, '-days', '825',
-    ]);
-    for (final name in <String>[caKey, serverKey, operatorKey]) {
-      await _restrict(name, '600');
+    for (final name in <String>['ca.key', 'server.key', 'operator.key', 'evidence.key']) {
+      await _restrict('$path/$name', '600');
     }
   }
 
@@ -214,21 +151,7 @@ class LanTlsMaterial {
   static Future<void> ensureEvidenceKey(Directory directory) async {
     final path = '${directory.path}/evidence.key';
     if (File(path).existsSync()) return;
-    try {
-      await _openssl(<String>[
-        'genpkey',
-        '-algorithm',
-        'RSA',
-        '-pkeyopt',
-        'rsa_keygen_bits:2048',
-        '-out',
-        path,
-      ]);
-    } catch (_) {
-      if (!File(path).existsSync()) {
-        await writeDartTlsMaterial(directory, sanIps: const <String>['127.0.0.1']);
-      }
-    }
+    await Isolate.run(() => writeDartRsaKey(path));
     if (File(path).existsSync()) await _restrict(path, '600');
   }
 
@@ -237,24 +160,12 @@ class LanTlsMaterial {
   ) async {
     await ensureEvidenceKey(directory);
     final path = '${directory.path}/evidence.key';
-    final modulus = await Process.run(lanOpenSslExecutable(), <String>[
-      'rsa',
-      '-in',
-      path,
-      '-noout',
-      '-modulus',
-    ]);
-    if (modulus.exitCode != 0) {
-      throw StateError('Baskı kanıtı anahtarı okunamadı.');
-    }
-    final text = '${modulus.stdout}'.trim();
-    final separator = text.indexOf('=');
-    if (separator < 0) throw StateError('Baskı kanıtı anahtarı okunamadı.');
-    final hex = text.substring(separator + 1).trim().toLowerCase();
-    if (hex.length < 512 || hex.length.isOdd) {
+    final identity = evidenceIdentityFromPem(await File(path).readAsString());
+    if (identity == null) throw StateError('Baskı kanıtı anahtarı okunamadı.');
+    if (identity.modulusHex.length < 512 || identity.modulusHex.length.isOdd) {
       throw StateError('Baskı kanıtı anahtarı yetersiz.');
     }
-    return (id: await _evidenceKeyId(hex), modulusHex: hex, path: path);
+    return (id: identity.id, modulusHex: identity.modulusHex, path: path);
   }
 
   /// Retires the current evidence key and creates the next one.
@@ -269,34 +180,25 @@ class LanTlsMaterial {
     await ensureEvidenceKey(directory);
   }
 
-  static Future<String> _evidenceKeyId(String modulusHex) async {
-    final bytes = <int>[];
-    for (var index = 0; index < modulusHex.length; index += 2) {
-      bytes.add(int.parse(modulusHex.substring(index, index + 2), radix: 16));
-    }
-    final process = await Process.start(lanOpenSslExecutable(), <String>['dgst', '-sha256']);
-    process.stdin.add(bytes);
-    await process.stdin.close();
-    final out = await process.stdout.transform(utf8.decoder).join();
-    if (await process.exitCode != 0) {
-      throw StateError('Baskı kanıtı anahtar kimliği okunamadı.');
-    }
-    final digest = out.substring(out.lastIndexOf('=') + 1).trim().toLowerCase();
-    if (digest.length < 16) {
-      throw StateError('Baskı kanıtı anahtar kimliği okunamadı.');
-    }
-    return digest.substring(0, 16);
-  }
+  /// iOS cannot start processes and keeps app files in its own sandbox, so
+  /// no `chmod` is attempted there (it threw and stopped phone pairing).
+  @visibleForTesting
+  static bool restrictNeedsChmod({required bool isWindows, required bool isIOS}) =>
+      !isWindows && !isIOS;
 
   static Future<void> _restrict(String path, String mode) async {
-    if (Platform.isWindows) return;
-    await Process.run('chmod', <String>[mode, path]);
-  }
-
-  static Future<void> _openssl(List<String> args) async {
-    final result = await Process.run(lanOpenSslExecutable(), args);
-    if (result.exitCode != 0) {
-      throw StateError('Yerel TLS sertifikası oluşturulamadı.');
+    if (!restrictNeedsChmod(
+      isWindows: Platform.isWindows,
+      isIOS: Platform.isIOS,
+    )) {
+      return;
+    }
+    final bits = int.parse(mode, radix: 8);
+    if (chmodInProcess(path, bits)) return;
+    try {
+      await Process.run('chmod', <String>[mode, path]);
+    } on ProcessException {
+      // A sandboxed app cannot start chmod; the container is already private.
     }
   }
 }

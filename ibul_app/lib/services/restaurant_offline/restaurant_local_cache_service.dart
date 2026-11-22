@@ -134,6 +134,9 @@ class RestaurantLocalCacheService {
       'id': product.id,
       'name': product.name,
       'price': product.price,
+      // Without the stock the restored menu showed every product as sold
+      // out and no order could be taken offline.
+      'stock': product.stock,
       'station_id': product.stationId,
       'station_name': product.stationName,
       'station_code': product.stationCode,

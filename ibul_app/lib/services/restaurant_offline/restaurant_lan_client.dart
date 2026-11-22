@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -10,14 +11,24 @@ class RestaurantLanClient {
     this.baseUri, {
     required this.securityContext,
     required this.pinnedServerFingerprint,
+    this.pinnedServerKey = '',
     this.staffId,
   });
 
   final Uri baseUri;
   final SecurityContext securityContext;
   final String pinnedServerFingerprint;
+  /// Public key pin of an already paired center. The center re-issues its
+  /// certificate when its address changes but keeps the key, and the TLS
+  /// handshake proves it holds that key. Empty: only the exact certificate.
+  final String pinnedServerKey;
+  /// What the accepted server presented on the last request.
+  String seenServerFingerprint = '';
+  String seenServerKey = '';
   String? staffId;
   int seq = 0;
+  Duration connectTimeout = const Duration(seconds: 4);
+  Duration responseTimeout = const Duration(seconds: 20);
 
   Future<Map<String, dynamic>> get(String path) {
     return _send('GET', path);
@@ -53,9 +64,20 @@ class RestaurantLanClient {
     Map<String, String> headers = const <String, String>{},
   }) async {
     final client = HttpClient(context: securityContext);
+    // A center that is switched off must not hold the waiter for the
+    // operating system's own connect timeout (over a minute).
+    client.connectionTimeout = connectTimeout;
     client.badCertificateCallback = (certificate, host, port) {
-      return LanTlsMaterial.fingerprintOf(certificate) ==
-          pinnedServerFingerprint;
+      final fingerprint = LanTlsMaterial.fingerprintOf(certificate);
+      final key = LanTlsMaterial.publicKeyPinOf(certificate);
+      final accepted =
+          fingerprint == pinnedServerFingerprint ||
+          (pinnedServerKey.isNotEmpty && key == pinnedServerKey);
+      if (accepted) {
+        seenServerFingerprint = fingerprint;
+        seenServerKey = key;
+      }
+      return accepted;
     };
     try {
       final request = method == 'GET'
@@ -66,8 +88,11 @@ class RestaurantLanClient {
         request.headers.contentType = ContentType.json;
         request.add(utf8.encode(jsonEncode(body)));
       }
-      final response = await request.close();
-      final text = await utf8.decoder.bind(response).join();
+      final response = await request.close().timeout(responseTimeout);
+      final text = await utf8.decoder
+          .bind(response)
+          .join()
+          .timeout(responseTimeout);
       final decoded = text.isEmpty ? <String, dynamic>{} : jsonDecode(text);
       final map = decoded is Map
           ? Map<String, dynamic>.from(decoded)
@@ -75,6 +100,10 @@ class RestaurantLanClient {
       map['status'] = response.statusCode;
       return map;
     } on SocketException {
+      throw const SocketException(
+        'Ana bilgisayar kapalı veya yerel ağa ulaşılamıyor.',
+      );
+    } on TimeoutException {
       throw const SocketException(
         'Ana bilgisayar kapalı veya yerel ağa ulaşılamıyor.',
       );

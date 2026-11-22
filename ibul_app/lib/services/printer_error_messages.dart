@@ -108,6 +108,7 @@ class EthernetDiscoveredDevice {
     this.subnet,
     this.networkHint = '',
     this.latencyMs,
+    this.printerVerified = false,
   });
 
   final String host;
@@ -121,11 +122,17 @@ class EthernetDiscoveredDevice {
   /// TCP bağlantı gecikmesi (ms); tarama probe'u ölçtüyse dolu.
   final int? latencyMs;
 
+  /// Yalnızca geçerli bir ESC/POS durum yanıtı gelirse true. Portun açık
+  /// olması cihazı yazıcı yapmaz; alanı göndermeyen eski köprü de
+  /// "doğrulanmadı" sayılır.
+  final bool printerVerified;
+
   String get endpointLabel => '$host:$port';
 
   String get reachabilityLabel {
-    if (reachable && portOpen) return 'Ulaşılabilir';
-    if (portOpen) return 'Port açık';
+    if (printerVerified) return 'Yazıcı doğrulandı';
+    if (reachable && portOpen) return 'Port açık · yazıcı doğrulanamadı';
+    if (portOpen) return 'Port açık · yazıcı doğrulanamadı';
     return 'Yanıt yok';
   }
 
@@ -139,6 +146,8 @@ class EthernetDiscoveredDevice {
           ? json['same_subnet'] as bool
           : (json['sameSubnet'] is bool ? json['sameSubnet'] as bool : null),
       subnet: json['subnet']?.toString(),
+      printerVerified:
+          json['printer_verified'] == true || json['printerVerified'] == true,
       networkHint: json['suggested_message']?.toString().trim() ?? '',
       latencyMs: int.tryParse(
         json['latency_ms']?.toString() ?? json['latencyMs']?.toString() ?? '',
@@ -768,6 +777,33 @@ PrinterErrorPresentation presentPrinterErrorCode(
         canRetry: true,
         canOpenLogs: isWindows,
         canDownloadInstaller: isWindows,
+      );
+    case 'dependency_missing':
+      // The bridge answers; the printer may be fine. The bridge's own Python
+      // environment lacks a package (Pillow), so fiş görseli üretilemiyor.
+      return const PrinterErrorPresentation(
+        code: 'dependency_missing',
+        title: 'Yazıcı servisinde bileşen eksik',
+        message:
+            'Yazıcı servisi çalışıyor ve yazıcıya bağlantı sorun değil, ancak '
+            'servisin Python ortamında Pillow kurulu değil; fiş görseli '
+            'oluşturulamadı. Servisi gerekli bileşenlerle yeniden kurun '
+            '(requirements.txt).',
+        primaryActionLabel: 'Tekrar Dene',
+        severity: PrinterErrorSeverity.error,
+        canRetry: false,
+      );
+    case 'render_failed':
+    case 'kitchen_render_failed':
+      return const PrinterErrorPresentation(
+        code: 'render_failed',
+        title: 'Fiş hazırlanamadı',
+        message:
+            'Fiş içeriği oluşturulurken servis hata verdi. Yazıcı bağlantısı '
+            'sorun değil; teknik ayrıntıya bakın.',
+        primaryActionLabel: 'Tekrar Dene',
+        severity: PrinterErrorSeverity.error,
+        canRetry: true,
       );
     case 'tcp_timeout':
       return const PrinterErrorPresentation(

@@ -14,6 +14,7 @@ import 'package:ibul_app/services/restaurant_offline/lan_tls.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_connectivity_service.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_lan_host.dart';
 import 'package:ibul_app/services/staff_login_policy.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Waiter device flow against the existing local host.
 /// Success is shown only after the host confirms a durable save.
@@ -52,8 +53,21 @@ class _RestaurantLanWaiterPageState extends State<RestaurantLanWaiterPage> {
   @override
   void initState() {
     super.initState();
+    _prefillStaffFromSession();
     _restore();
     RestaurantConnectivityService.instance.addListener(_onNetwork);
+  }
+
+  /// A signed-in waiter does not type a staff id: the account that signed in
+  /// is the person the center checks. Nothing is filled when no one is signed
+  /// in or Supabase is not started (the isolated demo entry).
+  void _prefillStaffFromSession() {
+    try {
+      final id = Supabase.instance.client.auth.currentUser?.id ?? '';
+      if (id.isNotEmpty && _staffController.text.trim().isEmpty) {
+        _staffController.text = id;
+      }
+    } catch (_) {}
   }
 
   @override

@@ -123,8 +123,8 @@ void main() {
     await tester.tap(find.text('Aç'));
     await tester.pumpAndSettle();
     expect(find.text('Garson'), findsNothing);
-    expect(find.text('Masa Aktar'), findsNothing);
-    expect(find.text('Hesabı Kes'), findsNothing);
+    expect(find.text('Masa aktar'), findsNothing);
+    expect(find.text('Masa kapat'), findsNothing);
     expect(find.widgetWithText(ChoiceChip, 'Mağaza Müdürü'), findsOneWidget);
     expect(find.widgetWithText(ChoiceChip, 'Satış Personeli'), findsOneWidget);
     expect(find.text('Garson'), findsNothing);
@@ -158,13 +158,13 @@ void main() {
     await tester.tap(find.widgetWithText(ChoiceChip, 'Garson'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-      find.text('Hesabı Kes'),
+      find.text('Masa kapat'),
       240,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Hesabı Kes'), findsOneWidget);
-    final closeTile = tester.widget<CheckboxListTile>(
-      find.widgetWithText(CheckboxListTile, 'Hesabı Kes'),
+    expect(find.text('Masa kapat'), findsOneWidget);
+    final closeTile = tester.widget<SwitchListTile>(
+      find.byKey(const ValueKey('perm-closeBill')),
     );
     expect(closeTile.value, isFalse);
     expect(closeTile.onChanged, isNotNull);
@@ -339,13 +339,13 @@ void main() {
     );
     await tester.tap(find.text('Aç'));
     await tester.pumpAndSettle();
-    final tile = find.widgetWithText(CheckboxListTile, 'Masa Aktar');
+    final tile = find.byKey(const ValueKey('perm-transferTable'));
     await tester.scrollUntilVisible(
       tile,
       240,
       scrollable: find.byType(Scrollable).first,
     );
-    final checkbox = tester.widget<CheckboxListTile>(tile);
+    final checkbox = tester.widget<SwitchListTile>(tile);
     expect(checkbox.onChanged, isNotNull);
     checkbox.onChanged!(false);
     await tester.pumpAndSettle();

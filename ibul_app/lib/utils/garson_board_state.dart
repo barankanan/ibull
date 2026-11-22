@@ -749,6 +749,50 @@ Map<String, dynamic> lanFloorOrderFromRecord({
   };
 }
 
+/// Card text for a locally saved order whose kitchen ticket did not print.
+/// Null for every other order: a printed local order and any cloud order keep
+/// their usual status text.
+String? lanFloorPrintStatusLabel(Map<String, dynamic>? order) {
+  if (order == null) return null;
+  final local = order['local_order_id']?.toString().trim() ?? '';
+  if (local.isEmpty) return null;
+  switch (order['print_status']?.toString().trim()) {
+    case 'failed':
+      return 'Kaydedildi · Fiş basılamadı';
+    case 'uncertain':
+      return 'Kaydedildi · Fiş belirsiz';
+    case 'pending':
+      return 'Kaydedildi · Fiş bekliyor';
+    default:
+      return null;
+  }
+}
+
+/// The local floor orders after reading the journal again.
+///
+/// A journal row that has reached the cloud is shown by the cloud's own
+/// order; keeping the local copy as well put the same order on the table
+/// card twice. Synced rows are therefore dropped from the local list, and
+/// rows still waiting replace their earlier copy. Nothing is removed from
+/// the journal itself.
+List<Map<String, dynamic>> lanFloorOrdersAfterJournal({
+  required List<Map<String, dynamic>> current,
+  required List<Map<String, dynamic>> waiting,
+  required Set<String> syncedLocalOrderIds,
+}) {
+  final waitingKeys = <String>{
+    for (final order in waiting) floorOrderKey(order),
+  };
+  return <Map<String, dynamic>>[
+    for (final order in current)
+      if (!syncedLocalOrderIds.contains(floorOrderKey(order)) &&
+          !waitingKeys.contains(floorOrderKey(order)))
+        order,
+    for (final order in waiting)
+      if (floorOrderKey(order).isNotEmpty) order,
+  ];
+}
+
 DateTime? _floorOrderUpdatedAt(Map<String, dynamic> order) {
   return DateTime.tryParse(order['updated_at']?.toString() ?? '');
 }

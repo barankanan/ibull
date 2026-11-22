@@ -12,6 +12,7 @@ import 'package:ibul_app/services/local_print_service.dart';
 import 'package:ibul_app/services/macos_admin_release_models.dart';
 import 'package:ibul_app/services/macos_usb_permission_recovery_service.dart';
 import 'package:ibul_app/services/printer_event_log_service.dart';
+import 'package:ibul_app/services/printer_link_status.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -19,11 +20,69 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    // Fiziksel baskı kapısı: bilinmiyorsa kapalıdır. Bu dosyadaki aktarım
+    // testleri açık servisi varsayar; kapalı/bilinmiyor davranışı aşağıda
+    // ayrıca doğrulanır.
+    PhysicalPrintGate.resetForTests();
+    PhysicalPrintGate.observe(true);
   });
 
   tearDown(() {
     debugDefaultTargetPlatformOverride = null;
+    PhysicalPrintGate.resetForTests();
   });
+
+  for (final scenario in <String, bool?>{
+    'closed': false,
+    'unknown': null,
+  }.entries) {
+    test(
+      'printPhysicalToPrinter sends nothing when the physical print gate is ${scenario.key}',
+      () async {
+        PhysicalPrintGate.resetForTests();
+        PhysicalPrintGate.observe(scenario.value);
+        final fakeRepo = _FakePrinterRepository();
+        final fakeStation = _FakePrintStationService();
+        final fakePrint = _FakeLocalPrintService(
+          discoveredPrinters: <Map<String, dynamic>>[
+            _usbPrinter(
+              'usb:pos58',
+              'POS58 USB',
+              'POS58_USB',
+              vendorId: '0x0416',
+              productId: '0x5011',
+            ),
+          ],
+          receiptResponse: <String, dynamic>{'ok': true},
+          kitchenResponse: <String, dynamic>{'ok': true},
+        );
+        final orchestrator = DesktopPrintOrchestrator(
+          printerRepository: fakeRepo,
+          printStationService: fakeStation,
+          printServiceFactory: () => fakePrint,
+        );
+
+        final result = await orchestrator.printPhysicalToPrinter(
+          UnifiedPrinterModel.fromBridgeMap(
+            _usbPrinter(
+              'usb:pos58',
+              'POS58 USB',
+              'POS58_USB',
+              vendorId: '0x0416',
+              productId: '0x5011',
+            ),
+            os: DesktopPrinterOs.macos,
+          ),
+          PrintPayload.testForRole(PrinterSetupRole.adisyon),
+        );
+
+        expect(result.ok, isFalse);
+        expect(result.status, 'print_system_disabled');
+        expect(fakePrint.lastReceiptPayload, isNull);
+        expect(fakePrint.lastKitchenPayload, isNull);
+      },
+    );
+  }
 
   test('savePrinterRoles persists normalized local role mappings', () async {
     final fakeRepo = _FakePrinterRepository();

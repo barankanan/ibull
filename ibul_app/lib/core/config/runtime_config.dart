@@ -16,6 +16,20 @@ const String _kLegacySupabaseAnonKey = String.fromEnvironment(
 /// Set only by the macOS SellerOfflinetest configuration.
 /// Production builds leave this false, so their generated fallback stays.
 const bool _kIsolatedDesktop = bool.fromEnvironment('IBUL_ISOLATED_DESKTOP');
+
+/// A Debug build that talks to the real backend may keep every automatic
+/// print start (the local bridge and the print hub that claims queued jobs)
+/// switched off, so signing in cannot print anything by itself. It is only a
+/// build-time switch: turning printing on again means a rebuild without it.
+const bool _kPrintStartDisabled = bool.fromEnvironment('IBUL_DISABLE_PRINT_START');
+
+/// Optional test-bridge port for the isolated build. Only 18771 is honoured.
+const int _kIsolatedBridgePort = int.fromEnvironment(
+  'IBUL_ISOLATED_BRIDGE_PORT',
+);
+const String _kTestBridgeCommand = String.fromEnvironment(
+  'IBUL_TEST_BRIDGE_COMMAND',
+);
 const String _kIbulGoogleClientId = String.fromEnvironment(
   'IBUL_GOOGLE_CLIENT_ID',
 );
@@ -155,6 +169,12 @@ class AppRuntimeConfig {
 
   static bool get isolatedDesktop => _kIsolatedDesktop;
 
+  /// True when this build must not start the bridge or the print hub.
+  static bool get printStartDisabled => _kPrintStartDisabled;
+
+  static const String printStartDisabledMessage =
+      'Bu Debug derlemesinde yazıcı servisi kapalı. Fiziksel baskı başlatılmaz.';
+
   /// Isolated seller builds never read the generated Supabase URL or key.
   /// A dart-define that itself points at supabase.co is refused as well.
   @visibleForTesting
@@ -183,22 +203,102 @@ class AppRuntimeConfig {
     return host == 'supabase.co' || host.endsWith('.supabase.co');
   }
 
-  /// Production keeps port 3001. The isolated desktop build cannot use it.
+  /// The one bridge port an isolated build may talk to. It belongs to a
+  /// throw-away test bridge started by hand with its own data folder, never to
+  /// the live bridge on 3001. Any other value of
+  /// `IBUL_ISOLATED_BRIDGE_PORT` is ignored.
+  static const int isolatedTestBridgePort = 18771;
+
+  /// Where an isolated build sends bridge traffic: the dead probe address by
+  /// default, or the test bridge when exactly [isolatedTestBridgePort] is set.
   @visibleForTesting
-  static Uri localPrintBridgeUri({bool? isolatedDesktop}) {
+  static Uri isolatedBridgeUri({int configuredPort = _kIsolatedBridgePort}) {
+    if (configuredPort == isolatedTestBridgePort) {
+      return Uri.parse('http://127.0.0.1:$isolatedTestBridgePort');
+    }
+    return Uri.parse(isolatedProbeUrl);
+  }
+
+  /// True when a build with printing switched off is pointed at the
+  /// hand-started test bridge. Such a build may send an operator-started test
+  /// print to that bridge; it still never starts a bridge, never runs the
+  /// print hub and never hands a bridge the cloud queue credentials.
+  static bool controlledTestBridge({
+    bool? printStartDisabled,
+    int isolatedBridgePort = _kIsolatedBridgePort,
+  }) =>
+      (printStartDisabled ?? _kPrintStartDisabled) &&
+      isolatedBridgePort == isolatedTestBridgePort;
+
+  /// A test build that starts and stops its own throw-away bridge, so the
+  /// real "Başlat / Durdur" path can be exercised without the live bridge.
+  /// All of these must hold: a launcher command was compiled in, the bridge
+  /// port is the test port, and the cloud is not the production project. The
+  /// command is a path to a script; it is never read from user input.
+  static bool managedTestBridge({
+    String command = _kTestBridgeCommand,
+    int isolatedBridgePort = _kIsolatedBridgePort,
+    String? supabaseUrl,
+  }) =>
+      command.trim().isNotEmpty &&
+      isolatedBridgePort == isolatedTestBridgePort &&
+      !hostIsProductionSupabase(supabaseUrl ?? AppRuntimeConfig.supabaseUrl);
+
+  static String get testBridgeCommand => _kTestBridgeCommand.trim();
+
+  static const String controlledTestBridgeDownMessage =
+      'Test köprüsü çalışmıyor (127.0.0.1:$isolatedTestBridgePort). '
+      'Bu derleme köprü başlatmaz; test köprüsünü elle başlatın.';
+
+  /// Production keeps port 3001. The isolated desktop build cannot use it, and
+  /// neither can a print-disabled build that is pointed at the test bridge.
+  static Uri localPrintBridgeUri({
+    bool? isolatedDesktop,
+    int isolatedBridgePort = _kIsolatedBridgePort,
+    bool? printStartDisabled,
+  }) {
     final blocked = isolatedDesktop ?? _kIsolatedDesktop;
-    if (blocked) return Uri.parse(isolatedProbeUrl);
+    if (blocked) return isolatedBridgeUri(configuredPort: isolatedBridgePort);
+    if (controlledTestBridge(
+          printStartDisabled: printStartDisabled,
+          isolatedBridgePort: isolatedBridgePort,
+        ) ||
+        managedTestBridge(isolatedBridgePort: isolatedBridgePort)) {
+      return Uri.parse('http://127.0.0.1:$isolatedTestBridgePort');
+    }
+    // A print-disabled build that is not pointed at the hand-started test
+    // bridge must never reach the live bridge on 3001, whatever screen asks.
+    if (printStartDisabled ?? _kPrintStartDisabled) {
+      return Uri.parse(isolatedProbeUrl);
+    }
     return Uri.parse('http://127.0.0.1:$productionPrintBridgePort');
   }
 
-  @visibleForTesting
-  static Uri coercePrintBridgeUri(Uri uri, {bool? isolatedDesktop}) {
+  static Uri coercePrintBridgeUri(
+    Uri uri, {
+    bool? isolatedDesktop,
+    int isolatedBridgePort = _kIsolatedBridgePort,
+    bool? printStartDisabled,
+  }) {
     final blocked = isolatedDesktop ?? _kIsolatedDesktop;
-    if (!blocked) return uri;
+    final testOnly = controlledTestBridge(
+          printStartDisabled: printStartDisabled,
+          isolatedBridgePort: isolatedBridgePort,
+        ) ||
+        managedTestBridge(isolatedBridgePort: isolatedBridgePort);
+    final disabled = printStartDisabled ?? _kPrintStartDisabled;
+    if (!blocked && !testOnly && !disabled) return uri;
     final host = uri.host.toLowerCase();
     final local = host == '127.0.0.1' || host == 'localhost' || host == '::1';
+    if (disabled && !blocked && !testOnly) {
+      return local && uri.port == productionPrintBridgePort
+          ? Uri.parse(isolatedProbeUrl)
+          : uri;
+    }
     if (local && uri.port == productionPrintBridgePort) {
-      return Uri.parse(isolatedProbeUrl);
+      return blocked
+          ? isolatedBridgeUri(configuredPort: isolatedBridgePort)
+          : Uri.parse('http://127.0.0.1:$isolatedTestBridgePort');
     }
     return uri;
   }

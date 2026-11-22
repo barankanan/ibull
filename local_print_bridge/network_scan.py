@@ -1,6 +1,7 @@
 """Scan local /24 subnets for ESC/POS printers listening on a TCP port."""
 from __future__ import annotations
 
+import errno
 import ipaddress
 import logging
 import socket
@@ -9,8 +10,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 from .network_transport import DEFAULT_TCP_PORT
+from .printer_identity import is_local_scan_ipv4
 
 LOGGER = logging.getLogger("local_print_bridge.network_scan")
+
+# ESC/POS real-time status request (DLE EOT 1). It asks the printer for one
+# status byte and prints nothing. An open port alone never makes a device a
+# printer; only a valid status reply does.
+ESC_POS_STATUS_QUERY = b"\x10\x04\x01"
+DEFAULT_VERIFY_TIMEOUT_S = 0.6
 
 DEFAULT_SCAN_TIMEOUT_S = 0.18
 DEFAULT_MAX_WORKERS = 64
@@ -168,15 +176,38 @@ def scan_no_device_reason(
     devices: list[dict[str, object]],
     printer_host: str = "",
     local_ips: list[str] | None = None,
+    probe_blocked_count: int = 0,
+    probe_closed_count: int = 0,
 ) -> str:
     """Explain why automatic scan returned no printers."""
     if devices:
         return ""
+    # Nothing answered and most probes were refused by the OS/network rather
+    # than closed: the scan could not look, so "no printer found" would lie.
+    if probe_blocked_count > 0 and probe_blocked_count >= probe_closed_count:
+        return "local_network_blocked"
     host_text = printer_host.strip()
     local = local_ips or []
     if host_text and local and ipv4_same_subnet(host_text, local) is False:
         return "printer_on_different_subnet"
     return "no_open_port_on_scanned_subnets"
+
+
+# Errors that mean "the OS or network refused to even try", not "no printer
+# here". A closed port (ECONNREFUSED) or silence (timeout) is the normal
+# answer for an empty address; these are not. On macOS a process without the
+# Local Network permission gets EHOSTUNREACH for every LAN address.
+_BLOCKED_PROBE_ERRNOS = frozenset(
+    code
+    for code in (
+        getattr(errno, "EHOSTUNREACH", None),
+        getattr(errno, "ENETUNREACH", None),
+        getattr(errno, "ENETDOWN", None),
+        getattr(errno, "EPERM", None),
+        getattr(errno, "EACCES", None),
+    )
+    if code is not None
+)
 
 
 def _probe_tcp_port(
@@ -185,12 +216,22 @@ def _probe_tcp_port(
     *,
     timeout: float,
     connect_fn: Callable[[tuple[str, int], float], object] | None = None,
+    error_sink: dict[str, int] | None = None,
 ) -> bool:
     connect = connect_fn or socket.create_connection
     try:
         with connect((host, port), timeout) as _sock:
             return True
-    except OSError:
+    except OSError as exc:
+        if error_sink is not None:
+            # EHOSTUNREACH is also what a genuinely absent host can return on
+            # some networks, so this only counts; the caller decides by ratio.
+            key = (
+                "blocked"
+                if getattr(exc, "errno", None) in _BLOCKED_PROBE_ERRNOS
+                else "closed"
+            )
+            error_sink[key] = error_sink.get(key, 0) + 1
         return False
 
 
@@ -204,6 +245,7 @@ def scan_subnet_for_port(
     skip_hosts: set[str] | None = None,
     printer_host_hint: str = "",
     budget_s: float = DEFAULT_SCAN_BUDGET_S,
+    error_sink: dict[str, int] | None = None,
 ) -> list[dict[str, object]]:
     """Return hosts in ``cidr`` where ``port`` accepts a TCP connection.
 
@@ -240,6 +282,7 @@ def scan_subnet_for_port(
                 port,
                 timeout=timeout,
                 connect_fn=connect_fn,
+                error_sink=error_sink,
             ): host
             for host in hosts
         }
@@ -265,6 +308,62 @@ def scan_subnet_for_port(
     return found
 
 
+def _is_escpos_status_byte(value: int) -> bool:
+    """DLE EOT 1 reply: bits 0 and 7 clear, bit 1 and bit 4 set."""
+    return (value & 0x93) == 0x12
+
+
+def verify_escpos_status(
+    host: str,
+    port: int,
+    *,
+    timeout: float = DEFAULT_VERIFY_TIMEOUT_S,
+    connect_fn: Callable[[tuple[str, int], float], object] | None = None,
+) -> dict[str, object]:
+    """Ask one device for its ESC/POS status byte. Never prints.
+
+    Only local addresses are contacted. A device that does not answer, or
+    answers with something that is not a printer status, stays unverified.
+    """
+    if not is_local_scan_ipv4(host):
+        return {"verified": False, "reason": "not_local_address"}
+    connect = connect_fn or socket.create_connection
+    try:
+        with connect((host, port), timeout) as sock:
+            sock.settimeout(timeout)  # type: ignore[attr-defined]
+            sock.sendall(ESC_POS_STATUS_QUERY)  # type: ignore[attr-defined]
+            reply = sock.recv(8)  # type: ignore[attr-defined]
+    except (OSError, AttributeError):
+        return {"verified": False, "reason": "no_status_reply"}
+    if not reply:
+        return {"verified": False, "reason": "no_status_reply"}
+    if _is_escpos_status_byte(reply[0]):
+        return {"verified": True, "reason": "escpos_status", "status_byte": reply[0]}
+    return {"verified": False, "reason": "unexpected_reply"}
+
+
+def annotate_scan_candidate(
+    device: dict[str, object],
+    *,
+    verify_timeout: float = DEFAULT_VERIFY_TIMEOUT_S,
+    connect_fn: Callable[[tuple[str, int], float], object] | None = None,
+) -> dict[str, object]:
+    """Mark an open-port hit as a verified printer or an unverified service."""
+    result = verify_escpos_status(
+        str(device.get("host") or ""),
+        int(device.get("port") or DEFAULT_TCP_PORT),
+        timeout=verify_timeout,
+        connect_fn=connect_fn,
+    )
+    verified = bool(result.get("verified"))
+    annotated = dict(device)
+    annotated["printer_verified"] = verified
+    annotated["kind"] = "escpos_printer" if verified else "unverified_tcp_service"
+    annotated["identity"] = str(result.get("reason") or "")
+    annotated["auto_print"] = False
+    return annotated
+
+
 def scan_local_network_printers(
     local_ips: list[str],
     *,
@@ -274,8 +373,15 @@ def scan_local_network_printers(
     connect_fn: Callable[[tuple[str, int], float], object] | None = None,
     printer_host_hint: str = "",
     budget_s: float = DEFAULT_SCAN_BUDGET_S,
+    verify: bool = True,
+    verify_timeout: float = DEFAULT_VERIFY_TIMEOUT_S,
 ) -> dict[str, object]:
-    """Scan /24 subnets derived from ``local_ips`` for open ``port`` listeners."""
+    """Scan /24 subnets derived from ``local_ips`` for open ``port`` listeners.
+
+    With ``verify`` (default) every open-port hit is checked with a read-only
+    ESC/POS status request. Hits that do not answer stay in the list as
+    ``unverified_tcp_service``: they are shown, never trusted as printers.
+    """
     subnets = unique_scan_subnets(local_ips)
     if not subnets:
         return {
@@ -290,6 +396,7 @@ def scan_local_network_printers(
     skip_hosts = {ip.strip() for ip in local_ips if ip.strip()}
     devices: list[dict[str, object]] = []
     seen_endpoints: set[tuple[str, int]] = set()
+    probe_errors: dict[str, int] = {}
     # Split wall-clock budget across discovered subnets.
     per_subnet_budget = max(0.4, float(budget_s) / max(1, len(subnets)))
     for cidr in subnets:
@@ -302,6 +409,7 @@ def scan_local_network_printers(
             skip_hosts=skip_hosts,
             printer_host_hint=printer_host_hint,
             budget_s=per_subnet_budget,
+            error_sink=probe_errors,
         ):
             key = (str(item["host"]), int(item["port"]))
             if key in seen_endpoints:
@@ -309,10 +417,27 @@ def scan_local_network_printers(
             seen_endpoints.add(key)
             devices.append({**item, "subnet": cidr})
 
+    if verify and devices:
+        with ThreadPoolExecutor(max_workers=min(8, len(devices))) as pool:
+            devices = list(
+                pool.map(
+                    lambda device: annotate_scan_candidate(
+                        device,
+                        verify_timeout=verify_timeout,
+                        connect_fn=connect_fn,
+                    ),
+                    devices,
+                )
+            )
+
     return {
         "ok": True,
         "local_ips": local_ips,
         "subnets": subnets,
         "port": port,
         "devices": devices,
+        "probe_blocked_count": probe_errors.get("blocked", 0),
+        "probe_closed_count": probe_errors.get("closed", 0),
+        "verified_count": sum(1 for d in devices if d.get("printer_verified") is True),
+        "unverified_count": sum(1 for d in devices if d.get("printer_verified") is False),
     }

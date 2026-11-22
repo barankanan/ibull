@@ -679,6 +679,11 @@ class StoreService {
             haystack.contains('column'));
   }
 
+  /// Budget for the lookups every panel page waits on at start. Without it a
+  /// network that accepts the connection but never answers (Wi-Fi without
+  /// internet) left the phone on a spinner with no error and no offline start.
+  static const Duration cloudLookupTimeout = Duration(seconds: 8);
+
   /// Fetches the store row for [sellerId], preferring the receipt columns but
   /// transparently falling back to the base columns when the receipt migration
   /// has not been applied — so a pending migration never breaks profile load
@@ -692,7 +697,8 @@ class StoreService {
           .from('stores')
           .select('$_storeProfileBaseColumns,$_storeProfileReceiptColumns')
           .eq('seller_id', sellerId)
-          .maybeSingle();
+          .maybeSingle()
+          .timeout(cloudLookupTimeout);
     } on PostgrestException catch (error) {
       if (_isUndefinedColumnError(error)) {
         debugPrint(
@@ -705,7 +711,8 @@ class StoreService {
             .from('stores')
             .select(_storeProfileBaseColumns)
             .eq('seller_id', sellerId)
-            .maybeSingle();
+            .maybeSingle()
+            .timeout(cloudLookupTimeout);
       }
       rethrow;
     }
@@ -810,7 +817,8 @@ class StoreService {
           .from('stores')
           .select('seller_id')
           .eq('seller_id', userId)
-          .maybeSingle();
+          .maybeSingle()
+          .timeout(cloudLookupTimeout);
       final directSellerId = storeRow?['seller_id']?.toString().trim() ?? '';
       if (directSellerId.isNotEmpty) return directSellerId;
     } catch (error, stackTrace) {
@@ -841,7 +849,8 @@ class StoreService {
           .select('store_id, status')
           .eq('status', 'active')
           .or(filters.join(','))
-          .maybeSingle();
+          .maybeSingle()
+          .timeout(cloudLookupTimeout);
       final ownerId = subAdminRow?['store_id']?.toString().trim() ?? '';
       if (ownerId.isNotEmpty) return ownerId;
     } catch (error, stackTrace) {

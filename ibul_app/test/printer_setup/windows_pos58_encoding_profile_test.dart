@@ -5,6 +5,7 @@ import 'package:ibul_app/models/turkish_encoding_calibration.dart';
 import 'package:ibul_app/services/desktop_print_orchestrator.dart';
 import 'package:ibul_app/services/desktop_print_ports.dart';
 import 'package:ibul_app/services/local_print_service.dart';
+import 'package:ibul_app/services/printer_link_status.dart';
 import 'package:ibul_app/services/printer_encoding_profile_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -14,7 +15,12 @@ void main() {
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    // Gate is closed by default; fakes only, no physical printer is involved.
+    PhysicalPrintGate.resetForTests();
+    PhysicalPrintGate.observe(true);
   });
+
+  tearDown(PhysicalPrintGate.resetForTests);
 
   UnifiedPrinterModel pos58() => UnifiedPrinterModel.fromBridgeMap(
     <String, dynamic>{

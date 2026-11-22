@@ -44,6 +44,7 @@ from .network_transport import (
     DEFAULT_TCP_PORT,
     DEFAULT_TIMEOUT_SECONDS,
     NetworkTcpTransport,
+    write_may_have_started,
 )
 from .printers import (
     PrinterRecord,
@@ -75,7 +76,7 @@ from .raster import (
     warm_font_cache,
 )
 from .receipt import ReceiptRenderer, _cut
-from .runtime_paths import bridge_env_path, bridge_server_log_path
+from .runtime_paths import bridge_data_dir, bridge_env_path, bridge_server_log_path
 from .transport import CupsRawTransport, TransportError
 from .usb_transport import UsbDirectTransport
 from .windows_transport import WindowsSpoolTransport, _import_win32print
@@ -156,6 +157,50 @@ def _local_ipv4_addresses() -> list[str]:
     return results
 
 
+_LAN_ADDRESS_CACHE_TTL_S = 30.0
+_LAN_ADDRESS_CACHE_LOCK = threading.Lock()
+_LAN_ADDRESS_CACHE: tuple[float, list[str]] | None = None
+_LAN_ADDRESS_REFRESHING = False
+
+
+def _refresh_lan_address_cache() -> None:
+    global _LAN_ADDRESS_CACHE, _LAN_ADDRESS_REFRESHING
+    try:
+        found = _local_ipv4_addresses()
+        with _LAN_ADDRESS_CACHE_LOCK:
+            _LAN_ADDRESS_CACHE = (time.monotonic(), found)
+    finally:
+        with _LAN_ADDRESS_CACHE_LOCK:
+            _LAN_ADDRESS_REFRESHING = False
+
+
+def _cached_lan_addresses() -> list[str]:
+    """LAN addresses for /health without waiting on the network.
+
+    Looking them up resolves this computer's name and may run ``ifconfig``.
+    When the internet drops, that lookup can hang for many seconds, and the
+    seller app asks /health right before every ticket: a slow answer there
+    makes the first orders of an outage fail to print. /health therefore
+    returns the last known list and refreshes it in the background.
+    """
+    global _LAN_ADDRESS_REFRESHING
+    with _LAN_ADDRESS_CACHE_LOCK:
+        cached = _LAN_ADDRESS_CACHE
+        fresh = cached is not None and (
+            time.monotonic() - cached[0] < _LAN_ADDRESS_CACHE_TTL_S
+        )
+        start = not fresh and not _LAN_ADDRESS_REFRESHING
+        if start:
+            _LAN_ADDRESS_REFRESHING = True
+    if start:
+        threading.Thread(
+            target=_refresh_lan_address_cache,
+            name="ibul-print-bridge-lan-addresses",
+            daemon=True,
+        ).start()
+    return list(cached[1]) if cached is not None else []
+
+
 def _is_lan_or_loopback_client(ip: str) -> bool:
     """Allow only loopback / RFC1918 / link-local peers (defense-in-depth)."""
     text = (ip or "").strip()
@@ -220,7 +265,17 @@ _HTTP_PRINT_IDEM_MAX = 500
 # Last successful kitchen TCP target (LAN hot-path fallback; not a public endpoint).
 _LAST_KITCHEN_TCP_LOCK = threading.Lock()
 _LAST_KITCHEN_TCP: tuple[str, int] | None = None
-_LAST_KITCHEN_TCP_PATH = Path(__file__).resolve().parent / ".last_kitchen_tcp"
+_LAST_KITCHEN_TCP_PATH: Path | None = None  # tests may point this elsewhere
+
+
+def _last_kitchen_tcp_path() -> Path:
+    """Cache file inside this bridge's own data directory.
+
+    It used to live in the source tree, so every bridge started from one
+    checkout (the live one and an isolated test bridge) shared it, and a
+    request without a host could print on another instance's printer.
+    """
+    return _LAST_KITCHEN_TCP_PATH or bridge_data_dir() / "last_kitchen_tcp"
 
 
 def _load_last_kitchen_tcp() -> tuple[str, int] | None:
@@ -229,7 +284,7 @@ def _load_last_kitchen_tcp() -> tuple[str, int] | None:
         if _LAST_KITCHEN_TCP is not None:
             return _LAST_KITCHEN_TCP
         try:
-            raw = _LAST_KITCHEN_TCP_PATH.read_text(encoding="utf-8").strip()
+            raw = _last_kitchen_tcp_path().read_text(encoding="utf-8").strip()
             if not raw:
                 return None
             host, _, port_s = raw.partition(":")
@@ -254,7 +309,7 @@ def _remember_last_kitchen_tcp(host: str | None, port: int | None) -> None:
     with _LAST_KITCHEN_TCP_LOCK:
         _LAST_KITCHEN_TCP = (normalized, safe_port)
         try:
-            _LAST_KITCHEN_TCP_PATH.write_text(
+            _last_kitchen_tcp_path().write_text(
                 f"{normalized}:{safe_port}\n",
                 encoding="utf-8",
             )
@@ -527,8 +582,13 @@ def _runtime_diagnostics() -> dict[str, object]:
 
 def _error_response(exc: Exception, **extra: object) -> dict[str, object]:
     error_code = extra.pop("errorCode", None)
-    if error_code is None and hasattr(exc, "error_code"):
-        error_code = getattr(exc, "error_code", None)
+    own_code = getattr(exc, "error_code", None)
+    # A named setup failure (for example a missing dependency) must not be
+    # hidden behind the caller's generic code such as "render_failed".
+    if own_code == "dependency_missing" or (error_code is None and own_code):
+        error_code = own_code
+    if own_code == "dependency_missing":
+        extra.setdefault("missing_dependency", getattr(exc, "missing_dependency", ""))
     payload: dict[str, object] = {
         "ok": False,
         "error": str(exc),
@@ -2142,6 +2202,9 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         if request_path == "/print/kitchen":
             self._handle_print_kitchen()
             return
+        if request_path == "/shutdown":
+            self._handle_shutdown()
+            return
         if request_path == "/queue/clear":
             self._handle_queue_clear()
             return
@@ -2302,7 +2365,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 "log_count": self.log_store.count(),
                 "listen_host": self.settings.host,
                 "listen_port": self.settings.port,
-                "lan_addresses": _local_ipv4_addresses(),
+                "lan_addresses": _cached_lan_addresses(),
                 "lan_listen_enabled": self.settings.host
                 in {"0.0.0.0", "::", ""}
                 or not str(self.settings.host).startswith("127."),
@@ -3187,6 +3250,12 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                     "same_subnet": same_subnet,
                     "suggested_message": suggested_message,
                     "subnet": item.get("subnet"),
+                    # An open port is not a printer. Only a valid ESC/POS
+                    # status reply marks a device as a verified printer.
+                    "printer_verified": item.get("printer_verified") is True,
+                    "kind": str(item.get("kind") or "unverified_tcp_service"),
+                    "identity": str(item.get("identity") or ""),
+                    "auto_print": False,
                 }
             )
 
@@ -3194,10 +3263,29 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             devices=devices,
             printer_host=printer_host_hint,
             local_ips=local_ips,
+            probe_blocked_count=int(result.get("probe_blocked_count") or 0),
+            probe_closed_count=int(result.get("probe_closed_count") or 0),
         )
         mismatch_guidance = str(network_fields.get("mismatch_guidance") or "")
+        verified_total = sum(1 for d in devices if d.get("printer_verified") is True)
+        unverified_total = len(devices) - verified_total
         if devices:
-            scan_message = f"{len(devices)} yazıcı bulundu."
+            scan_message = (
+                f"{verified_total} doğrulanmış yazıcı bulundu."
+                + (
+                    f" {unverified_total} cihazın portu açık ama yazıcı olduğu "
+                    "doğrulanamadı; yazıcı olarak kaydetmeden önce kontrol edin."
+                    if unverified_total
+                    else ""
+                )
+            )
+        elif no_device_reason == "local_network_blocked":
+            scan_message = (
+                "Tarama yapılamadı: işletim sistemi veya ağ yerel ağ "
+                "bağlantılarını engelledi (bu bir \"yazıcı yok\" sonucu değil). "
+                "macOS'ta Sistem Ayarları → Gizlilik ve Güvenlik → Yerel Ağ "
+                "bölümünden İBUL'a izin verin veya IP'yi elle girin."
+            )
         elif no_device_reason == "printer_on_different_subnet":
             scan_message = (
                 "Aynı ağda port 9100 açık cihaz bulunamadı. "
@@ -3943,6 +4031,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         "bridge_usb_vendor_id": "PRINT_BRIDGE_USB_VENDOR_ID",
         "bridge_usb_product_id": "PRINT_BRIDGE_USB_PRODUCT_ID",
         "print_system_enabled": "PRINT_SYSTEM_ENABLED",
+        "print_jobs_not_before": "PRINT_STATION_JOBS_NOT_BEFORE",
     }
 
     def _handle_configure(self) -> None:
@@ -4005,6 +4094,11 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
 
         try:
             write_env_file(env_updates)
+            # The print handlers read the class-level settings. Without this
+            # reload a "print system off" switch only reached the queue
+            # consumer: direct /print/kitchen and /print/receipt requests kept
+            # printing until the bridge was restarted.
+            _reload_handlers(BridgeSettings.from_env())
             consumer = self.print_station_consumer
             if consumer is not None:
                 consumer.wake()
@@ -4023,6 +4117,27 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 "queue": self._queue_status_payload(),
             },
         )
+
+    def _handle_shutdown(self) -> None:
+        """Operator stop from the seller app on this computer only."""
+        from .graceful_stop import finish_work_then_stop
+
+        client = (self.client_address[0] if self.client_address else "") or ""
+        if not _is_loopback_client(client):
+            self._send_json(
+                HTTPStatus.FORBIDDEN,
+                {"ok": False, "error": "Yalnızca bu bilgisayardan durdurulabilir."},
+            )
+            return
+        consumer = self.print_station_consumer
+        queue_manager = self.queue_manager
+        started = finish_work_then_stop(
+            stop_server=self.server.shutdown,
+            queue_summary=queue_manager.summary if queue_manager is not None else None,
+            stop_consumer=consumer.stop if consumer is not None else None,
+            consumer_thread=getattr(consumer, "_thread", None),
+        )
+        self._send_json(HTTPStatus.OK, {"ok": True, "stopping": True, "started": started})
 
     def _queue_status_payload(self) -> dict[str, object]:
         base = build_print_station_queue_status()
@@ -4402,6 +4517,9 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         return f"{backend}:{queue_name}", queue_name, backend
 
     def _is_transient_transport_error(self, exc: Exception) -> bool:
+        # Bytes may already be on the printer: resending prints a duplicate.
+        if write_may_have_started(exc):
+            return False
         text = str(exc).lower()
         transient_markers = (
             "temporarily",
@@ -6025,6 +6143,24 @@ def _warm_runtime_assets(transport: _SmartTransport) -> None:
         LOGGER.warning("Pillow warm-up failed (non-fatal): %s", exc)
 
 
+
+def _build_http_server(settings: BridgeSettings) -> ThreadingHTTPServer:
+    """Binds the port, or serves on the socket launchd already listens on."""
+    from .launchd_socket import activated_socket, requested_name
+
+    inherited = activated_socket(requested_name())
+    if inherited is None:
+        return ThreadingHTTPServer((settings.host, settings.port), PrintBridgeHandler)
+    server = ThreadingHTTPServer(
+        (settings.host, settings.port), PrintBridgeHandler, bind_and_activate=False
+    )
+    server.socket.close()
+    inherited.setblocking(True)
+    server.socket = inherited
+    server.server_address = inherited.getsockname()[:2]
+    LOGGER.info("Serving on the launchd socket (started on demand)")
+    return server
+
 def serve() -> None:
     _configure_logging()
     settings = BridgeSettings.from_env()
@@ -6045,7 +6181,7 @@ def serve() -> None:
         log_store_provider=lambda: PrintBridgeHandler.log_store,
     )
 
-    server = ThreadingHTTPServer((settings.host, settings.port), PrintBridgeHandler)
+    server = _build_http_server(settings)
     LOGGER.info(
         "Local print bridge listening on http://%s:%s (transport=%s queue=%s)",
         settings.host,

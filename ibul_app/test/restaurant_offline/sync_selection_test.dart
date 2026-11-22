@@ -39,6 +39,82 @@ void main() {
     RestaurantLocalOrderQueueService.clearAllMemoryForTests();
   });
   group('selectOrdersForSync', () {
+    const suspect = 'local-order-1793736854400492-1173607028';
+
+    test('karantina listesi yalnız şüpheli 3 Kasım kaydını içerir', () {
+      expect(quarantinedLocalOrderIds, {suspect});
+    });
+
+    test('karantinadaki kimlik hiçbir durumda gönderilmez (otomatik, elle, '
+        'durumu ne olursa olsun)', () {
+      for (final status in RestaurantLocalOrderSyncStatus.values) {
+        final r = selectOrdersForSync(
+          [_o(suspect, sync: status, created: DateTime(2026, 11, 3, 23, 14))],
+          now: _now,
+          retryAfter: Duration.zero,
+        );
+        expect(r, isEmpty, reason: 'durum: $status');
+      }
+    });
+
+    test('uzun süre çevrimdışı kalmış geçerli siparişler yaş yüzünden '
+        'engellenmez; yalnız karantinadaki kimlik dışarıda kalır', () {
+      final r = selectOrdersForSync([
+        _o(
+          suspect,
+          sync: RestaurantLocalOrderSyncStatus.syncFailed,
+          created: DateTime(2026, 11, 3, 23, 14),
+        ),
+        // Aynı gece alınmış, kimliği farklı geçerli sipariş.
+        _o(
+          'local-order-1793736854400493-1173607029',
+          sync: RestaurantLocalOrderSyncStatus.syncFailed,
+          created: DateTime(2026, 11, 3, 23, 15),
+        ),
+        _o(
+          'otuz-gun',
+          sync: RestaurantLocalOrderSyncStatus.pendingSync,
+          created: _now.subtract(const Duration(days: 30)),
+        ),
+        _o(
+          'kirk-dokuz-saat',
+          sync: RestaurantLocalOrderSyncStatus.pendingSync,
+          created: _now.subtract(const Duration(hours: 49)),
+        ),
+        _o(
+          'dun',
+          sync: RestaurantLocalOrderSyncStatus.pendingSync,
+          created: _now.subtract(const Duration(hours: 20)),
+        ),
+      ], now: _now, retryAfter: Duration.zero);
+      expect(r.map((o) => o.localOrderId), [
+        'otuz-gun',
+        'kirk-dokuz-saat',
+        'dun',
+        'local-order-1793736854400493-1173607029',
+      ]);
+    });
+
+    test('karantina kümesi dışarıdan verilebilir (yeni şüpheli kayıt)', () {
+      final r = selectOrdersForSync(
+        [
+          _o(
+            'a',
+            sync: RestaurantLocalOrderSyncStatus.pendingSync,
+            created: _now,
+          ),
+          _o(
+            'b',
+            sync: RestaurantLocalOrderSyncStatus.pendingSync,
+            created: _now,
+          ),
+        ],
+        now: _now,
+        quarantined: const {'a'},
+      );
+      expect(r.map((o) => o.localOrderId), ['b']);
+    });
+
     test('hiç denenmemişler önce, en eski oluşturulan önce', () {
       final r = selectOrdersForSync([
         _o(

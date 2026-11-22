@@ -160,4 +160,52 @@ void main() {
       isTrue,
     );
   });
+
+  test('a bridge-observed closed gate blocks LAN direct print even when the cloud flag is stale-open', () {
+    // Offline LAN: the cloud flag falls back to open, but the bridge health
+    // already reported the service as off.
+    expect(
+      kitchenJobMayStartPhysicalPrint(
+        printSystemEnabled: true,
+        suppressPhysicalPrint: false,
+        physicalGateAllowed: false,
+      ),
+      isFalse,
+    );
+    // Gate never observed (tablet, just after launch): unchanged behaviour.
+    expect(
+      kitchenJobMayStartPhysicalPrint(
+        printSystemEnabled: true,
+        suppressPhysicalPrint: false,
+        physicalGateAllowed: null,
+      ),
+      isTrue,
+    );
+    // Gate known open does not override the other guards.
+    expect(
+      kitchenJobMayStartPhysicalPrint(
+        printSystemEnabled: true,
+        suppressPhysicalPrint: false,
+        physicalGateAllowed: true,
+      ),
+      isTrue,
+    );
+    expect(
+      kitchenJobMayStartPhysicalPrint(
+        printSystemEnabled: false,
+        suppressPhysicalPrint: false,
+        physicalGateAllowed: true,
+      ),
+      isFalse,
+    );
+    expect(
+      kitchenJobMayStartPhysicalPrint(
+        printSystemEnabled: true,
+        suppressPhysicalPrint: false,
+        localPrintStatus: 'uncertain',
+        physicalGateAllowed: true,
+      ),
+      isFalse,
+    );
+  });
 }

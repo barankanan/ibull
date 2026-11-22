@@ -36,6 +36,10 @@ import 'src/sections/ihiz_hero_section.dart';
 import 'src/sections/ihiz_login_marketing_section.dart';
 import 'src/sections/ihiz_why_section.dart';
 import 'src/theme/ihiz_brand.dart';
+import 'src/util/ihiz_courier_error_text.dart';
+import 'src/util/ihiz_delivery_action_gate.dart';
+import 'src/util/ihiz_location_poll_policy.dart';
+import 'src/util/ihiz_pickup_sync_outcome.dart';
 import 'src/util/ihiz_web_location.dart';
 import 'src/widgets/ihiz_landing_widgets.dart';
 import 'src/widgets/ihiz_marketing_chrome.dart';
@@ -495,309 +499,357 @@ class _IhizLandingPageState extends State<_IhizLandingPage> {
                             maxWidth: IhizBrand.contentMaxWidth,
                           ),
                           child: Padding(
-                              padding: EdgeInsets.fromLTRB(
-                                isMobile ? 16 : 28,
-                                isMobile ? 14 : 22,
-                                isMobile ? 16 : 28,
-                                isMobile ? 40 : 64,
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  IhizHeroSection(
-                                    onLogin: widget.onLogin,
+                            padding: EdgeInsets.fromLTRB(
+                              isMobile ? 16 : 28,
+                              isMobile ? 14 : 22,
+                              isMobile ? 16 : 28,
+                              isMobile ? 40 : 64,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                IhizHeroSection(
+                                  onLogin: widget.onLogin,
+                                  onApply: widget.onApply,
+                                ),
+                                SizedBox(height: isMobile ? 28 : 44),
+                                KeyedSubtree(
+                                  key: _deliveryKey,
+                                  child: const IhizWhySection(),
+                                ),
+                                SizedBox(height: isMobile ? 48 : 88),
+                                KeyedSubtree(
+                                  key: _returnKey,
+                                  child: _ComparisonCard(isMobile: isMobile),
+                                ),
+                                SizedBox(height: isMobile ? 48 : 88),
+                                IhizSectionShell(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Container(
+                                            width: 38,
+                                            height: 38,
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              color: const Color(
+                                                0xFF2E73FF,
+                                              ).withValues(alpha: 0.12),
+                                            ),
+                                            child: const Icon(
+                                              Icons.auto_awesome_rounded,
+                                              color: Color(0xFF2E73FF),
+                                              size: 21,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          const Text(
+                                            'Ne Yapıyoruz?',
+                                            style: TextStyle(
+                                              color: _ink,
+                                              fontSize: 22,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Satıcıları tek haritada topluyor, siparişi sana hızla ulaştırıyoruz.',
+                                        style: TextStyle(
+                                          color: _ink.withValues(alpha: 0.74),
+                                          fontSize: isMobile ? 14 : 15,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: const [
+                                          IhizLandingBadge(
+                                            icon: Icons.map_outlined,
+                                            label: 'Tek haritada satıcı',
+                                          ),
+                                          IhizLandingBadge(
+                                            icon: Icons.schedule_rounded,
+                                            label: '1 saat / 3 saat',
+                                          ),
+                                          IhizLandingBadge(
+                                            icon: Icons.verified_rounded,
+                                            label: '5 dk deneme & iade',
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                Container(
+                                  width: double.infinity,
+                                  padding: EdgeInsets.all(isMobile ? 14 : 18),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(28),
+                                    gradient: const LinearGradient(
+                                      colors: [
+                                        Color(0xFF10345F),
+                                        Color(0xFF1A5A9B),
+                                      ],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ),
+                                    border: Border.all(
+                                      color: const Color(0xFF2E6FB0),
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: const Color(
+                                          0xFF123E72,
+                                        ).withValues(alpha: 0.24),
+                                        blurRadius: 24,
+                                        offset: const Offset(0, 10),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.route_rounded,
+                                            color: Colors.white,
+                                            size: 20,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            '3 Adımda İHIZ',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: isMobile ? 18 : 20,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                          const Spacer(),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 6,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white.withValues(
+                                                alpha: 0.14,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                              border: Border.all(
+                                                color: Colors.white.withValues(
+                                                  alpha: 0.22,
+                                                ),
+                                              ),
+                                            ),
+                                            child: const Text(
+                                              'Hızlı Akış',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w800,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 12),
+                                      if (isMobile)
+                                        const Column(
+                                          children: [
+                                            _LandingFlowStep(
+                                              step: '01',
+                                              title: 'Eşleşme',
+                                              subtitle:
+                                                  'Yakın satıcı + müşteri',
+                                              icon: Icons.link_rounded,
+                                            ),
+                                            SizedBox(height: 8),
+                                            _LandingFlowStep(
+                                              step: '02',
+                                              title: 'Alım',
+                                              subtitle: 'Kurye ürünü alır',
+                                              icon: Icons.inventory_2_outlined,
+                                            ),
+                                            SizedBox(height: 8),
+                                            _LandingFlowStep(
+                                              step: '03',
+                                              title: 'Teslim',
+                                              subtitle: 'Kapıda hızlı teslim',
+                                              icon:
+                                                  Icons.local_shipping_outlined,
+                                            ),
+                                          ],
+                                        )
+                                      else
+                                        const Row(
+                                          children: [
+                                            Expanded(
+                                              child: _LandingFlowStep(
+                                                step: '01',
+                                                title: 'Eşleşme',
+                                                subtitle:
+                                                    'Yakın satıcı + müşteri',
+                                                icon: Icons.link_rounded,
+                                              ),
+                                            ),
+                                            SizedBox(width: 8),
+                                            Expanded(
+                                              child: _LandingFlowStep(
+                                                step: '02',
+                                                title: 'Alım',
+                                                subtitle: 'Kurye ürünü alır',
+                                                icon:
+                                                    Icons.inventory_2_outlined,
+                                              ),
+                                            ),
+                                            SizedBox(width: 8),
+                                            Expanded(
+                                              child: _LandingFlowStep(
+                                                step: '03',
+                                                title: 'Teslim',
+                                                subtitle: 'Kapıda hızlı teslim',
+                                                icon: Icons
+                                                    .local_shipping_outlined,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                IhizSectionShell(
+                                  child: Column(
+                                    children: [
+                                      if (isMobile)
+                                        const Column(
+                                          children: [
+                                            IhizLandingQuickCard(
+                                              title: 'Müşteri',
+                                              value:
+                                                  'Yakındaki ürünü hızlıca görür',
+                                              icon:
+                                                  Icons.person_search_outlined,
+                                              accent: Color(0xFF2E73FF),
+                                            ),
+                                            SizedBox(height: 10),
+                                            IhizLandingQuickCard(
+                                              title: 'Satıcı',
+                                              value:
+                                                  'Haritada daha görünür olur',
+                                              icon: Icons.storefront_outlined,
+                                              accent: Color(0xFF1F64D6),
+                                            ),
+                                            SizedBox(height: 10),
+                                            IhizLandingQuickCard(
+                                              title: 'Kurye',
+                                              value:
+                                                  'Teslim + deneme + iade yönetir',
+                                              icon: Icons.two_wheeler_outlined,
+                                              accent: Color(0xFF0F5CB0),
+                                            ),
+                                          ],
+                                        )
+                                      else
+                                        const Row(
+                                          children: [
+                                            Expanded(
+                                              child: IhizLandingQuickCard(
+                                                title: 'Müşteri',
+                                                value:
+                                                    'Yakındaki ürünü hızlıca görür',
+                                                icon: Icons
+                                                    .person_search_outlined,
+                                                accent: Color(0xFF2E73FF),
+                                              ),
+                                            ),
+                                            SizedBox(width: 10),
+                                            Expanded(
+                                              child: IhizLandingQuickCard(
+                                                title: 'Satıcı',
+                                                value:
+                                                    'Haritada daha görünür olur',
+                                                icon: Icons.storefront_outlined,
+                                                accent: Color(0xFF1F64D6),
+                                              ),
+                                            ),
+                                            SizedBox(width: 10),
+                                            Expanded(
+                                              child: IhizLandingQuickCard(
+                                                title: 'Kurye',
+                                                value:
+                                                    'Teslim + deneme + iade yönetir',
+                                                icon:
+                                                    Icons.two_wheeler_outlined,
+                                                accent: Color(0xFF0F5CB0),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      const SizedBox(height: 10),
+                                      const Row(
+                                        children: [
+                                          Expanded(
+                                            child: IhizLandingMiniStat(
+                                              value: '1 Saat',
+                                              label: 'Ekspres',
+                                            ),
+                                          ),
+                                          SizedBox(width: 8),
+                                          Expanded(
+                                            child: IhizLandingMiniStat(
+                                              value: '5 Dakika',
+                                              label: 'Deneme',
+                                            ),
+                                          ),
+                                          SizedBox(width: 8),
+                                          Expanded(
+                                            child: IhizLandingMiniStat(
+                                              value: 'Gününde',
+                                              label: 'İade',
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                SizedBox(height: isMobile ? 48 : 88),
+                                KeyedSubtree(
+                                  key: _supportKey,
+                                  child: IhizCourierCtaSection(
                                     onApply: widget.onApply,
                                   ),
-                                  SizedBox(height: isMobile ? 28 : 44),
-                                  KeyedSubtree(
-                                    key: _deliveryKey,
-                                    child: const IhizWhySection(),
-                                  ),
-                                  SizedBox(height: isMobile ? 48 : 88),
-                                  KeyedSubtree(
-                                    key: _returnKey,
-                                    child: _ComparisonCard(isMobile: isMobile),
-                                  ),
-                                  SizedBox(height: isMobile ? 48 : 88),
-                          IhizSectionShell(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
+                                ),
+                                const SizedBox(height: 16),
                                 Row(
                                   children: [
-                                    Container(
-                                      width: 38,
-                                      height: 38,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(12),
-                                        color: const Color(
-                                          0xFF2E73FF,
-                                        ).withValues(alpha: 0.12),
-                                      ),
-                                      child: const Icon(
-                                        Icons.auto_awesome_rounded,
-                                        color: Color(0xFF2E73FF),
-                                        size: 21,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    const Text(
-                                      'Ne Yapıyoruz?',
-                                      style: TextStyle(
-                                        color: _ink,
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Satıcıları tek haritada topluyor, siparişi sana hızla ulaştırıyoruz.',
-                                  style: TextStyle(
-                                    color: _ink.withValues(alpha: 0.74),
-                                    fontSize: isMobile ? 14 : 15,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children: const [
-                                    IhizLandingBadge(
-                                      icon: Icons.map_outlined,
-                                      label: 'Tek haritada satıcı',
-                                    ),
-                                    IhizLandingBadge(
-                                      icon: Icons.schedule_rounded,
-                                      label: '1 saat / 3 saat',
-                                    ),
-                                    IhizLandingBadge(
-                                      icon: Icons.verified_rounded,
-                                      label: '5 dk deneme & iade',
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Container(
-                            width: double.infinity,
-                            padding: EdgeInsets.all(isMobile ? 14 : 18),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(28),
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFF10345F), Color(0xFF1A5A9B)],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              border: Border.all(
-                                color: const Color(0xFF2E6FB0),
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(
-                                    0xFF123E72,
-                                  ).withValues(alpha: 0.24),
-                                  blurRadius: 24,
-                                  offset: const Offset(0, 10),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.route_rounded,
-                                      color: Colors.white,
-                                      size: 20,
+                                    Icon(
+                                      Icons.circle,
+                                      size: 10,
+                                      color: _ink.withValues(alpha: 0.42),
                                     ),
                                     const SizedBox(width: 8),
-                                    Text(
-                                      '3 Adımda İHIZ',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: isMobile ? 18 : 20,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
-                                    const Spacer(),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 6,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white.withValues(
-                                          alpha: 0.14,
-                                        ),
-                                        borderRadius: BorderRadius.circular(
-                                          999,
-                                        ),
-                                        border: Border.all(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.22,
-                                          ),
-                                        ),
-                                      ),
-                                      child: const Text(
-                                        'Hızlı Akış',
+                                    Expanded(
+                                      child: Text(
+                                        'iBul satıcı ağı + İHIZ kurye ile yerel ticaret tek akışta.',
                                         style: TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 12,
+                                          color: _ink.withValues(alpha: 0.68),
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w700,
                                         ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-                                if (isMobile)
-                                  const Column(
-                                    children: [
-                                      _LandingFlowStep(
-                                        step: '01',
-                                        title: 'Eşleşme',
-                                        subtitle: 'Yakın satıcı + müşteri',
-                                        icon: Icons.link_rounded,
-                                      ),
-                                      SizedBox(height: 8),
-                                      _LandingFlowStep(
-                                        step: '02',
-                                        title: 'Alım',
-                                        subtitle: 'Kurye ürünü alır',
-                                        icon: Icons.inventory_2_outlined,
-                                      ),
-                                      SizedBox(height: 8),
-                                      _LandingFlowStep(
-                                        step: '03',
-                                        title: 'Teslim',
-                                        subtitle: 'Kapıda hızlı teslim',
-                                        icon: Icons.local_shipping_outlined,
-                                      ),
-                                    ],
-                                  )
-                                else
-                                  const Row(
-                                    children: [
-                                      Expanded(
-                                        child: _LandingFlowStep(
-                                          step: '01',
-                                          title: 'Eşleşme',
-                                          subtitle: 'Yakın satıcı + müşteri',
-                                          icon: Icons.link_rounded,
-                                        ),
-                                      ),
-                                      SizedBox(width: 8),
-                                      Expanded(
-                                        child: _LandingFlowStep(
-                                          step: '02',
-                                          title: 'Alım',
-                                          subtitle: 'Kurye ürünü alır',
-                                          icon: Icons.inventory_2_outlined,
-                                        ),
-                                      ),
-                                      SizedBox(width: 8),
-                                      Expanded(
-                                        child: _LandingFlowStep(
-                                          step: '03',
-                                          title: 'Teslim',
-                                          subtitle: 'Kapıda hızlı teslim',
-                                          icon: Icons.local_shipping_outlined,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          IhizSectionShell(
-                            child: Column(
-                              children: [
-                                if (isMobile)
-                                  const Column(
-                                    children: [
-                                      IhizLandingQuickCard(
-                                        title: 'Müşteri',
-                                        value: 'Yakındaki ürünü hızlıca görür',
-                                        icon: Icons.person_search_outlined,
-                                        accent: Color(0xFF2E73FF),
-                                      ),
-                                      SizedBox(height: 10),
-                                      IhizLandingQuickCard(
-                                        title: 'Satıcı',
-                                        value: 'Haritada daha görünür olur',
-                                        icon: Icons.storefront_outlined,
-                                        accent: Color(0xFF1F64D6),
-                                      ),
-                                      SizedBox(height: 10),
-                                      IhizLandingQuickCard(
-                                        title: 'Kurye',
-                                        value: 'Teslim + deneme + iade yönetir',
-                                        icon: Icons.two_wheeler_outlined,
-                                        accent: Color(0xFF0F5CB0),
-                                      ),
-                                    ],
-                                  )
-                                else
-                                  const Row(
-                                    children: [
-                                      Expanded(
-                                        child: IhizLandingQuickCard(
-                                          title: 'Müşteri',
-                                          value:
-                                              'Yakındaki ürünü hızlıca görür',
-                                          icon: Icons.person_search_outlined,
-                                          accent: Color(0xFF2E73FF),
-                                        ),
-                                      ),
-                                      SizedBox(width: 10),
-                                      Expanded(
-                                        child: IhizLandingQuickCard(
-                                          title: 'Satıcı',
-                                          value: 'Haritada daha görünür olur',
-                                          icon: Icons.storefront_outlined,
-                                          accent: Color(0xFF1F64D6),
-                                        ),
-                                      ),
-                                      SizedBox(width: 10),
-                                      Expanded(
-                                        child: IhizLandingQuickCard(
-                                          title: 'Kurye',
-                                          value:
-                                              'Teslim + deneme + iade yönetir',
-                                          icon: Icons.two_wheeler_outlined,
-                                          accent: Color(0xFF0F5CB0),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                const SizedBox(height: 10),
-                                const Row(
-                                  children: [
-                                    Expanded(
-                                      child: IhizLandingMiniStat(
-                                        value: '1 Saat',
-                                        label: 'Ekspres',
-                                      ),
-                                    ),
-                                    SizedBox(width: 8),
-                                    Expanded(
-                                      child: IhizLandingMiniStat(
-                                        value: '5 Dakika',
-                                        label: 'Deneme',
-                                      ),
-                                    ),
-                                    SizedBox(width: 8),
-                                    Expanded(
-                                      child: IhizLandingMiniStat(
-                                        value: 'Gününde',
-                                        label: 'İade',
                                       ),
                                     ),
                                   ],
@@ -805,38 +857,7 @@ class _IhizLandingPageState extends State<_IhizLandingPage> {
                               ],
                             ),
                           ),
-                                  SizedBox(height: isMobile ? 48 : 88),
-                                  KeyedSubtree(
-                                    key: _supportKey,
-                                    child: IhizCourierCtaSection(
-                                      onApply: widget.onApply,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        Icons.circle,
-                                        size: 10,
-                                        color: _ink.withValues(alpha: 0.42),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          'iBul satıcı ağı + İHIZ kurye ile yerel ticaret tek akışta.',
-                                          style: TextStyle(
-                                            color: _ink.withValues(alpha: 0.68),
-                                            fontSize: 12.5,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
+                        ),
                         IhizSiteFooter(
                           onApply: widget.onApply,
                           onAdminLogin: widget.onAdminLogin,
@@ -3209,6 +3230,7 @@ class _IhizSitePageState extends State<IhizSitePage> {
   bool _mapPopupCardExpanded = true;
   _DeliveryStage _deliveryStage = _DeliveryStage.idle;
   bool _mapDeliveryPanelExpanded = true;
+  final IhizDeliveryActionGate _deliveryActionGate = IhizDeliveryActionGate();
   bool _courierOnline = false;
   DateTime? _workStartedAt;
   Duration _workedToday = Duration.zero;
@@ -3224,6 +3246,8 @@ class _IhizSitePageState extends State<IhizSitePage> {
   StreamSubscription<Position>? _positionStreamSubscription;
   Timer? _storesRefreshTimer;
   Timer? _webLocationTimer;
+  final IhizLocationPollPolicy _locationPollPolicy = IhizLocationPollPolicy();
+  bool _liveLocationWarningShown = false;
   List<_LiveStoreMarker> _liveStores = const [];
   List<_CourierPoolOrder> _courierPoolOrders = const [];
   String _storeSearchQuery = '';
@@ -3781,7 +3805,7 @@ class _IhizSitePageState extends State<IhizSitePage> {
           if (permission == LocationPermission.denied) {
             if (mounted) {
               setState(() {
-                _locationStatus = 'Tarayici konum izni reddedildi';
+                _locationStatus = 'Tarayıcı konum izni reddedildi';
               });
             }
             return;
@@ -3789,7 +3813,7 @@ class _IhizSitePageState extends State<IhizSitePage> {
           if (permission == LocationPermission.deniedForever) {
             if (mounted) {
               setState(() {
-                _locationStatus = 'Tarayici konum izni kalici kapali';
+                _locationStatus = 'Tarayıcı konum izni kalıcı olarak kapalı';
               });
             }
             return;
@@ -3814,7 +3838,7 @@ class _IhizSitePageState extends State<IhizSitePage> {
         if (permission == LocationPermission.deniedForever) {
           if (mounted) {
             setState(() {
-              _locationStatus = 'Konum izni kalici kapali';
+              _locationStatus = 'Konum izni kalıcı olarak kapalı';
             });
           }
           return;
@@ -3878,29 +3902,29 @@ class _IhizSitePageState extends State<IhizSitePage> {
   String _locationErrorMessage(Object? error) {
     final details = (error ?? '').toString().toLowerCase();
     if (details.contains('secure origin') || details.contains('https')) {
-      return 'Konum icin HTTPS veya localhost gerekli';
+      return 'Konum için HTTPS veya localhost gerekli';
     }
     if (details.contains('permission api')) {
-      return 'Tarayici bu izin API ozelligini desteklemiyor';
+      return 'Tarayıcı bu izin özelliğini desteklemiyor';
     }
     if (details.contains('denied')) {
-      return 'Tarayici konum izni reddedildi';
+      return 'Tarayıcı konum izni reddedildi';
     }
     if (details.contains('timeout')) {
-      return 'Konum istegi zaman asimina ugradi';
+      return 'Konum isteği zaman aşımına uğradı';
     }
     if (details.contains('position unavailable') ||
         details.contains('location information is unavailable') ||
         details.contains('not available')) {
-      return 'Cihaz konumu su an alinamiyor';
+      return 'Cihaz konumu şu an alınamıyor';
     }
     if (details.contains('unsupported')) {
-      return 'Tarayici konum ozelligini desteklemiyor';
+      return 'Tarayıcı konum özelliğini desteklemiyor';
     }
     if (details.contains('service')) {
-      return 'Konum servisi kapali olabilir';
+      return 'Konum servisi kapalı olabilir';
     }
-    return 'Konum alinamadi, tekrar deneyin';
+    return 'Konum alınamadı, tekrar deneyin';
   }
 
   void _updateCourierLocation({
@@ -3958,6 +3982,14 @@ class _IhizSitePageState extends State<IhizSitePage> {
           timer.cancel();
           return;
         }
+        // Boşta/çevrimdışıyken GPS'i daha seyrek sorgula (pil ve veri).
+        if (!_locationPollPolicy.shouldPoll(
+          now: DateTime.now(),
+          hasActiveDelivery: _hasActiveDelivery,
+          courierOnline: _courierOnline,
+        )) {
+          return;
+        }
 
         try {
           final position = await Geolocator.getCurrentPosition(
@@ -3971,7 +4003,10 @@ class _IhizSitePageState extends State<IhizSitePage> {
             location: LatLng(position.latitude, position.longitude),
             statusMessage: 'Canlı konum güncellendi',
           );
-        } catch (_) {}
+          _handleLiveLocationRecovered();
+        } catch (_) {
+          _handleLiveLocationFailure();
+        }
       });
       return;
     }
@@ -3989,8 +4024,35 @@ class _IhizSitePageState extends State<IhizSitePage> {
               location: LatLng(position.latitude, position.longitude),
               statusMessage: 'Canlı konum güncellendi',
             );
+            _handleLiveLocationRecovered();
           },
+          // İzin geri alınır veya konum servisi kapanırsa akış hata verir;
+          // yakalanmazsa işlenmemiş asenkron hata olur ve durum bayat kalır.
+          onError: (Object _) => _handleLiveLocationFailure(immediate: true),
         );
+  }
+
+  /// Canlı konum art arda alınamazsa eski "güncellendi" bilgisini göstermek
+  /// yerine kuryeyi uyarır. Son bilinen konum korunur.
+  void _handleLiveLocationFailure({bool immediate = false}) {
+    final becameStale = _locationPollPolicy.recordFailure();
+    if (!mounted || !(becameStale || immediate)) return;
+    setState(() {
+      _liveLocationWarningShown = true;
+      _locationStatus =
+          'Canlı konum alınamıyor, son bilinen konum gösteriliyor';
+    });
+  }
+
+  /// Kurye hareket etmediyse konum güncellemesi durum metnini değiştirmez;
+  /// uyarı gösterilmişse başarılı sorguda açıkça temizlenir.
+  void _handleLiveLocationRecovered() {
+    _locationPollPolicy.recordSuccess();
+    if (!mounted || !_liveLocationWarningShown) return;
+    setState(() {
+      _liveLocationWarningShown = false;
+      _locationStatus = 'Canlı konum güncellendi';
+    });
   }
 
   double? _courierToStoreDistanceMeters(LatLng storePoint) {
@@ -5425,6 +5487,19 @@ class _IhizSitePageState extends State<IhizSitePage> {
 
   Future<void> _pickupPackage(int index) async {
     if (index < 0 || index >= _orders.length) return;
+    if (_deliveryActionGate.isBusy) return;
+    if (_hasActiveDelivery) {
+      // Zaten aktif bir teslimat var: aynı paket için sunucuya tekrar
+      // "teslim alındı" yazma (mükerrer geçmiş/bildirim) ve aşamayı geri alma.
+      if (_isCurrentActiveOrder(index)) {
+        setState(() {
+          _selectedOrderIndex = index;
+          _selectedTabIndex = 1;
+        });
+        _focusActiveDeliveryRoute();
+      }
+      return;
+    }
     final selectedOrder = _orders[index];
     final selectedOrderItemId = selectedOrder.orderItemId?.trim() ?? '';
     final isExternalOrder = _isExternalOrder(selectedOrder);
@@ -5453,13 +5528,54 @@ class _IhizSitePageState extends State<IhizSitePage> {
         _mobileMapController.move(_storePointForIndex(index), 15.4);
       });
     }
-    await _markOrderAsPickedUp(selectedOrder);
+    final outcome = await _deliveryActionGate
+        .runExclusive<IhizPickupSyncOutcome>(
+          () => _markOrderAsPickedUp(selectedOrder),
+        );
+    if (!mounted || outcome == null) return;
+    if (!outcome.keepsActiveDelivery) {
+      // Sunucu teslim almayı uygulamadı: iyimser yerel aktif teslimatı geri al
+      // ki kurye sunucuda başlamamış bir teslimata kilitlenmesin.
+      if (_hasActiveDelivery && _isCurrentActiveOrder(index)) {
+        _resetDeliveryFlow();
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _lastDeliverySyncError == ihizPickupNoLongerAvailableSyncError
+                ? 'Bu paket artık teslim alınamıyor. '
+                      '${_deliverySyncFailureHint()} Görev listesi yenilendi.'
+                : 'Paket teslim alınamadı, görev havuza geri döndü. '
+                      '${_deliverySyncFailureHint()}',
+          ),
+        ),
+      );
+    } else if (outcome == IhizPickupSyncOutcome.unverified) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Bağlantı sorunu: teslim alma kaydı sunucuda doğrulanamadı. '
+            'İnternet bağlantınızı kontrol edin.',
+          ),
+        ),
+      );
+    }
   }
 
-  Future<void> _markOrderAsPickedUp(_OrderCardData order) async {
+  Future<IhizPickupSyncOutcome> _markOrderAsPickedUp(
+    _OrderCardData order,
+  ) async {
     final orderItemId = order.orderItemId?.trim() ?? '';
     final orderId = order.orderId?.trim() ?? '';
-    if (orderItemId.isEmpty || orderId.isEmpty) return;
+    if (orderItemId.isEmpty || orderId.isEmpty) {
+      return IhizPickupSyncOutcome.localOnly;
+    }
+    // Birincil yazım (order_items durumu) sunucuda uygulandı mı?
+    var committed = false;
+    // Sunucu yazımı açıkça reddetti mi (güncellenen satır yok)?
+    var rejected = false;
+    // Paket artık havuzda değil mi (başka kurye aldı / durum değişti)?
+    var lostToStatusChange = false;
 
     final now = DateTime.now().toUtc().toIso8601String();
     final trackingCode = _resolveTrackingCode(
@@ -5487,10 +5603,12 @@ class _IhizSitePageState extends State<IhizSitePage> {
             .select('id')
             .maybeSingle();
         if (updatedOrderItem == null) {
+          rejected = true;
           throw Exception(
             'İade alımı için order_items güncellenemedi. Kurye RLS yetkisi kontrol edilmeli.',
           );
         }
+        committed = true;
         unawaited(_persistActiveDeliveryState());
 
         try {
@@ -5563,7 +5681,7 @@ class _IhizSitePageState extends State<IhizSitePage> {
         } catch (syncError) {
           debugPrint('IHIZ return pickup parent status sync warn: $syncError');
         }
-        return;
+        return IhizPickupSyncOutcome.committed;
       }
 
       final updatedOrderItem = await Supabase.instance.client
@@ -5576,13 +5694,32 @@ class _IhizSitePageState extends State<IhizSitePage> {
             'updated_at': now,
           })
           .eq('id', orderItemId)
+          // Yalnızca hâlâ havuzdaysa teslim al: iki kurye aynı paketi aynı
+          // anda alamasın, durumu değişmiş siparişin üzerine yazılmasın.
+          .eq('status', ihizPickupReadyStatus)
           .select('id')
           .maybeSingle();
       if (updatedOrderItem == null) {
+        rejected = true;
+        try {
+          final currentRow = await Supabase.instance.client
+              .from('order_items')
+              .select('status')
+              .eq('id', orderItemId)
+              .maybeSingle();
+          lostToStatusChange = isPickupLostToStatusChange(
+            currentRow?['status']?.toString(),
+          );
+        } catch (statusReadError) {
+          debugPrint('IHIZ pickup conflict status read warn: $statusReadError');
+        }
         throw Exception(
-          'order_items güncellenemedi. Kurye hesabı yetkisi (RLS) kontrol edilmeli.',
+          lostToStatusChange
+              ? 'order_items teslim alınamadı: durum artık $ihizPickupReadyStatus değil.'
+              : 'order_items güncellenemedi. Kurye hesabı yetkisi (RLS) kontrol edilmeli.',
         );
       }
+      committed = true;
       unawaited(_persistActiveDeliveryState());
 
       await Supabase.instance.client.from('order_item_status_history').insert({
@@ -5649,11 +5786,54 @@ class _IhizSitePageState extends State<IhizSitePage> {
           debugPrint('IHIZ wallet capture warn: $walletError');
         }
       }
+      return IhizPickupSyncOutcome.committed;
     } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Sipariş havuzu güncellenemedi: $error')),
+      if (committed) {
+        // Teslim alma yazıldı; yalnızca yan adım (geçmiş/bildirim) başarısız.
+        debugPrint('IHIZ pickup side-step error: $error');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Paket teslim alındı, ancak sipariş geçmişi güncellenemedi. '
+                '${ihizCourierSyncFailureHint(_compactSupabaseError(error))}',
+              ),
+            ),
+          );
+        }
+        return IhizPickupSyncOutcome.committed;
+      }
+      debugPrint('IHIZ mark picked up error: $error');
+      _lastDeliverySyncError = lostToStatusChange
+          ? ihizPickupNoLongerAvailableSyncError
+          : _compactSupabaseError(error);
+      // 5xx yanıtlarında yazımın uygulanıp uygulanmadığı belirsizdir.
+      final serverRejected =
+          rejected ||
+          (error is PostgrestException &&
+              !RegExp(r'^5\d\d$').hasMatch((error.code ?? '').trim()));
+      String? verifiedStatus;
+      if (!serverRejected) {
+        try {
+          final row = await Supabase.instance.client
+              .from('order_items')
+              .select('status')
+              .eq('id', orderItemId)
+              .maybeSingle();
+          verifiedStatus = row?['status']?.toString();
+        } catch (verifyError) {
+          debugPrint('IHIZ pickup verify read warn: $verifyError');
+        }
+      }
+      final outcome = resolveFailedPickupOutcome(
+        serverRejected: serverRejected,
+        isReturnPickup: isReturnPickup,
+        verifiedStatus: verifiedStatus,
       );
+      if (outcome == IhizPickupSyncOutcome.committed) {
+        unawaited(_persistActiveDeliveryState());
+      }
+      return outcome;
     }
   }
 
@@ -5714,8 +5894,7 @@ class _IhizSitePageState extends State<IhizSitePage> {
     final orderId = order.orderId?.trim() ?? '';
     _lastDeliverySyncError = null;
     if (orderItemId.isEmpty || orderId.isEmpty) {
-      _lastDeliverySyncError =
-          'Teslim kaydi icin orderItemId/orderId eksik geldi.';
+      _lastDeliverySyncError = ihizMissingOrderIdSyncError;
       return false;
     }
 
@@ -5831,12 +6010,49 @@ class _IhizSitePageState extends State<IhizSitePage> {
             'updated_at': now,
           })
           .eq('id', orderItemId)
+          // Sonlanmış (teslim/iptal/iade) siparişin üzerine yazma.
+          .not('status', 'in', ihizDeliveryBlockedStatusFilter)
           .select('id')
           .maybeSingle();
+      // Kalem zaten teslim edilmiş ve geçmiş kaydı da varsa bildirim/geçmiş
+      // yeniden yazılmaz (mükerrer "teslim edildi" bildirimi olmasın).
+      var deliveredRecordExists = false;
       if (updatedOrderItem == null) {
-        throw Exception(
-          'order_items delivered güncellemesi uygulanmadı. Kurye RLS yetkisi eksik olabilir.',
-        );
+        String? currentStatus;
+        try {
+          final currentRow = await Supabase.instance.client
+              .from('order_items')
+              .select('status')
+              .eq('id', orderItemId)
+              .maybeSingle();
+          currentStatus = currentRow?['status']?.toString();
+        } catch (statusReadError) {
+          debugPrint(
+            'IHIZ delivered conflict status read warn: $statusReadError',
+          );
+        }
+        final conflict = resolveDeliveryConflict(currentStatus);
+        if (conflict == IhizDeliveryConflict.orderClosed) {
+          debugPrint('IHIZ mark delivered blocked: item status=$currentStatus');
+          _lastDeliverySyncError = ihizDeliveryOrderClosedSyncError;
+          return false;
+        }
+        if (conflict != IhizDeliveryConflict.alreadyDelivered) {
+          throw Exception(
+            'order_items delivered güncellemesi uygulanmadı. Kurye RLS yetkisi eksik olabilir.',
+          );
+        }
+        try {
+          final existing = await Supabase.instance.client
+              .from('order_item_status_history')
+              .select('status')
+              .eq('order_item_id', orderItemId)
+              .eq('status', 'delivered')
+              .limit(1);
+          deliveredRecordExists = (existing as List).isNotEmpty;
+        } catch (historyReadError) {
+          debugPrint('IHIZ delivered history read warn: $historyReadError');
+        }
       }
 
       try {
@@ -5854,6 +6070,11 @@ class _IhizSitePageState extends State<IhizSitePage> {
           // saymak yerine sadece loglayip akisi devam ettiriyoruz.
           debugPrint('IHIZ order fallback sync warn: $orderSyncError');
         }
+      }
+
+      if (deliveredRecordExists) {
+        _lastDeliverySyncError = null;
+        return true;
       }
 
       try {
@@ -5938,32 +6159,8 @@ class _IhizSitePageState extends State<IhizSitePage> {
     return error.toString().replaceFirst('Exception:', '').trim();
   }
 
-  String _deliverySyncFailureHint() {
-    final raw = (_lastDeliverySyncError ?? '').trim();
-    if (raw.isEmpty) {
-      return 'Kurye yetkisi/policy veya baglanti ayarini kontrol edin.';
-    }
-    final normalized = raw.toLowerCase();
-    if (normalized.contains('row-level security') ||
-        normalized.contains('permission') ||
-        normalized.contains('policy')) {
-      if (normalized.contains('order_items')) {
-        return 'Kurye hesabının order_items UPDATE yetkisi yok. RLS courier policy eksik.';
-      }
-      if (normalized.contains('orders')) {
-        return 'Kurye hesabının orders UPDATE yetkisi yok. RLS courier policy eksik.';
-      }
-      return 'Kurye hesabı policy (RLS) yetkisine takıldı. order_items/orders courier policylerini kontrol edin.';
-    }
-    if (normalized.contains('failed host lookup') ||
-        normalized.contains('socket') ||
-        normalized.contains('network') ||
-        normalized.contains('timeout')) {
-      return 'Sunucuya baglanti saglanamadi. Ag ve internet baglantisini kontrol edin.';
-    }
-    final compactRaw = raw.length > 180 ? '${raw.substring(0, 180)}...' : raw;
-    return 'Teknik hata: $compactRaw';
-  }
+  String _deliverySyncFailureHint() =>
+      ihizCourierSyncFailureHint(_lastDeliverySyncError);
 
   void _startCustomerRoute() {
     if (!_hasActiveDelivery) return;
@@ -5982,12 +6179,30 @@ class _IhizSitePageState extends State<IhizSitePage> {
     final activeOrder = _activeDeliveryOrder;
     if (activeOrder == null) return;
 
-    final synced = await _markOrderDelivered(activeOrder);
+    final synced = await _deliveryActionGate.runExclusive<bool>(
+      () => _markOrderDelivered(activeOrder),
+    );
     if (!mounted) return;
+    if (synced == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Önceki işlem sürüyor, lütfen bekleyin.')),
+      );
+      return;
+    }
     if (!synced) {
+      if (_lastDeliverySyncError == ihizDeliveryOrderClosedSyncError) {
+        // Sipariş sunucuda iptal/iade edilmiş: kurye tamamlanamayan bir
+        // teslimata kilitlenmesin, yerel teslimatı kapat ve havuzu yenile.
+        final hint = _deliverySyncFailureHint();
+        _resetDeliveryFlow();
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Teslim kaydedilemedi. $hint')));
+        return;
+      }
       final baseText = codeVerified
-          ? 'Kod dogrulandi ancak teslim durumu yazilamadi.'
-          : 'Teslim durumu yazilamadi.';
+          ? 'Kod doğrulandı ancak teslim durumu kaydedilemedi.'
+          : 'Teslim durumu kaydedilemedi.';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$baseText ${_deliverySyncFailureHint()}')),
       );
@@ -6029,7 +6244,7 @@ class _IhizSitePageState extends State<IhizSitePage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Teslim onayi icin hedef noktaya daha yakin olmaniz gerekiyor '
+              'Teslim onayı için hedef noktaya daha yakın olmanız gerekiyor '
               '(limit: ${_deliveryGeoFenceMeters.round()} m, kalan: ${distanceToTarget.round()} m).',
             ),
           ),
@@ -6129,7 +6344,7 @@ class _IhizSitePageState extends State<IhizSitePage> {
                       );
                       if (digits.length != 4) {
                         setDialogState(() {
-                          validationMessage = 'Lutfen 4 haneli kod girin.';
+                          validationMessage = 'Lütfen 4 haneli kod girin.';
                         });
                         return;
                       }
@@ -6185,7 +6400,15 @@ class _IhizSitePageState extends State<IhizSitePage> {
     );
 
     if (!mounted || shouldCancel != true) return;
-    await _cancelActiveDelivery(selectedReason);
+    final cancelled = await _deliveryActionGate.runExclusive<bool>(() async {
+      await _cancelActiveDelivery(selectedReason);
+      return true;
+    });
+    if (cancelled == null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Önceki işlem sürüyor, lütfen bekleyin.')),
+      );
+    }
   }
 
   Future<String?> _pickDeliveryIssueReason() async {
@@ -6399,9 +6622,42 @@ class _IhizSitePageState extends State<IhizSitePage> {
               'updated_at': now,
             })
             .eq('id', orderItemId)
+            // Sonlanmış (teslim/iptal/iade) siparişin üzerine iptal yazma.
+            .not('status', 'in', ihizDeliveryBlockedStatusFilter)
             .select('id')
             .maybeSingle();
         if (updatedOrderItem == null) {
+          String? currentStatus;
+          try {
+            final currentRow = await Supabase.instance.client
+                .from('order_items')
+                .select('status')
+                .eq('id', orderItemId)
+                .maybeSingle();
+            currentStatus = currentRow?['status']?.toString();
+          } catch (statusReadError) {
+            debugPrint(
+              'IHIZ cancel conflict status read warn: $statusReadError',
+            );
+          }
+          final blockedMessage = ihizCancelBlockedMessage(currentStatus);
+          if (blockedMessage != null) {
+            // Sipariş sunucuda zaten sonlanmış: durum, geçmiş ve müşteri
+            // bildirimi yeniden yazılmaz; yalnızca yerel teslimat kapatılır.
+            debugPrint('IHIZ cancel blocked: item status=$currentStatus');
+            _lastDeliverySyncError = null;
+            _resetDeliveryFlow();
+            if (!mounted) return;
+            if (shouldStayOnMap) {
+              setState(() {
+                _selectedTabIndex = 1;
+              });
+            }
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(blockedMessage)));
+            return;
+          }
           throw Exception(
             'order_items cancelled güncellemesi uygulanmadı. Kurye RLS yetkisi eksik olabilir.',
           );
@@ -6471,7 +6727,7 @@ class _IhizSitePageState extends State<IhizSitePage> {
         debugPrint('IHIZ cancel delivery sync error: $error');
       }
     } else {
-      syncError = 'Sipariş kimliği bulunamadı (order_id/order_item_id).';
+      syncError = ihizMissingOrderIdSyncError;
     }
 
     if (syncError != null && syncError.trim().isNotEmpty) {
@@ -7200,6 +7456,9 @@ class _IhizSitePageState extends State<IhizSitePage> {
                                       ),
                                     );
                                   } catch (error) {
+                                    debugPrint(
+                                      'IHIZ support ticket error: $error',
+                                    );
                                     setSheetState(() {
                                       isSubmitting = false;
                                     });
@@ -7209,7 +7468,8 @@ class _IhizSitePageState extends State<IhizSitePage> {
                                     ).showSnackBar(
                                       SnackBar(
                                         content: Text(
-                                          'Destek bildirimi gönderilemedi: $error',
+                                          'Destek bildirimi gönderilemedi. '
+                                          '${ihizCourierSyncFailureHint(_compactSupabaseError(error))}',
                                         ),
                                       ),
                                     );
@@ -7253,6 +7513,9 @@ class _IhizSitePageState extends State<IhizSitePage> {
                                       initialMessage: note,
                                     );
                                   } catch (error) {
+                                    debugPrint(
+                                      'IHIZ live chat start error: $error',
+                                    );
                                     setSheetState(() {
                                       isSubmitting = false;
                                     });
@@ -7262,7 +7525,8 @@ class _IhizSitePageState extends State<IhizSitePage> {
                                     ).showSnackBar(
                                       SnackBar(
                                         content: Text(
-                                          'Canlı sohbet başlatılamadı: $error',
+                                          'Canlı sohbet başlatılamadı. '
+                                          '${ihizCourierSyncFailureHint(_compactSupabaseError(error))}',
                                         ),
                                       ),
                                     );
@@ -7880,7 +8144,7 @@ class _IhizSitePageState extends State<IhizSitePage> {
                   border: Border.all(color: const Color(0xFFDDE6F4)),
                 ),
                 child: const Text(
-                  'Canli magazaya ait konum bulunamadi.',
+                  'Mağazaya ait canlı konum bulunamadı.',
                   style: TextStyle(
                     color: Color(0xFF5B6B86),
                     fontWeight: FontWeight.w700,
@@ -8588,8 +8852,8 @@ class _IhizSitePageState extends State<IhizSitePage> {
           const SizedBox(height: 12),
           Text(
             isExternalOrder
-                ? 'Bu ayri sipariste haritada sadece magazaya gidis rotasi gosterilir.'
-                : '${layout.zoneLabel} bolgesine teslim edilecek',
+                ? 'Bu ayrı siparişte haritada yalnızca mağazaya gidiş rotası gösterilir.'
+                : '${layout.zoneLabel} bölgesine teslim edilecek',
             style: const TextStyle(
               color: Color(0xFF5B6B86),
               fontWeight: FontWeight.w700,

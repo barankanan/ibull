@@ -1,3 +1,4 @@
+import '../../../utils/text_normalizer.dart';
 import '../../vehicle/models/vehicle_enums.dart';
 import '../../vehicle/models/vehicle_listing.dart';
 import '../../vehicle/services/vehicle_service.dart';
@@ -11,7 +12,7 @@ abstract final class StorefrontCatalog {
   }
 
   static bool matchesVehicle(VehicleListing listing, String rawQuery) {
-    final query = rawQuery.trim().toLowerCase();
+    final query = TextNormalizer.normalize(rawQuery);
     if (query.isEmpty) return true;
     final haystack = [
       listing.title,
@@ -21,8 +22,8 @@ abstract final class StorefrontCatalog {
       listing.vehicleClass,
       listing.city ?? '',
       listing.district ?? '',
-    ].join(' ').toLowerCase();
-    return haystack.contains(query);
+    ].join(' ');
+    return TextNormalizer.normalize(haystack).contains(query);
   }
 
   static List<VehicleListing> filterVehicles(

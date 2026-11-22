@@ -134,14 +134,20 @@ async function authenticate(request) {
   return { id: user.id };
 }
 
+// The service credential comes in two formats. The legacy `service_role` key is a
+// JWT and travels as a bearer token. The newer `sb_secret_...` key is NOT a JWT:
+// sent as a bearer token the database rejects it ("Expected 3 parts in JWT"), so it
+// goes on `apikey` alone and the platform maps it to the service role.
+export function serviceKeyHeaders(key) {
+  const headers = { apikey: key, 'content-type': 'application/json' };
+  if (String(key).split('.').length === 3) headers.authorization = `Bearer ${key}`;
+  return headers;
+}
+
 async function postRpc(baseUrl, token, name, body) {
   const response = await fetch(`${baseUrl}/rest/v1/rpc/${name}`, {
     method: 'POST',
-    headers: {
-      authorization: `Bearer ${token}`,
-      apikey: DenoOrNode.env('SUPABASE_ANON_KEY'),
-      'content-type': 'application/json',
-    },
+    headers: serviceKeyHeaders(token),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs()),
   });
@@ -217,6 +223,11 @@ export async function inspectEvidenceRequest(request) {
   }
 }
 
+function hasEvidenceClaim(body) {
+  const raw = body?.p_local_print_evidence;
+  return raw !== null && raw !== undefined && String(raw).trim() !== '';
+}
+
 export async function submitEvidenceOrder(inspection) {
   try {
     const order = await postRpc(
@@ -233,9 +244,12 @@ export async function submitEvidenceOrder(inspection) {
         p_job_type: inspection.body.p_job_type ?? 'new_order',
         p_order_type: inspection.body.p_order_type ?? 'table',
         p_local_order_id: inspection.body.p_local_order_id ?? null,
-        p_local_print_evidence: inspection.evidence == null
-          ? null
-          : (inspection.accepted ? inspection.body.p_local_print_evidence : 'rejected'),
+        // Evidence that was sent but cannot be verified (malformed, forged,
+        // revoked key, wrong branch) is never dropped to "no evidence": that
+        // would let the server print an order that may already be on paper.
+        p_local_print_evidence: hasEvidenceClaim(inspection.body)
+          ? (inspection.accepted ? inspection.body.p_local_print_evidence : 'rejected')
+          : null,
         p_verified_actor: inspection.userId,
         p_evidence_branch: inspection.accepted ? inspection.branchId : null,
       },

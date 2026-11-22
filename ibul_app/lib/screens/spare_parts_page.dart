@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/product_model.dart';
 import '../models/db_product.dart';
 import '../services/database_helper.dart';
+import '../utils/text_normalizer.dart';
 
 class SparePartsPage extends StatefulWidget {
   final dynamic product;
@@ -646,13 +647,17 @@ class _SparePartsPageState extends State<SparePartsPage> {
     // Filtreleme: Cihaz modeline uygun yedek parçaları bul
     List<Product> filteredProducts = allProducts.where((product) {
       // Ürün adında cihaz modeli geçmeli
-      bool matchesDevice = product.name.toLowerCase().contains(deviceModel.toLowerCase());
+      // TextNormalizer: Türkçe I/ı, İ/i ve aksan farkları eşleşmeyi bozmasın.
+      final normalizedName = TextNormalizer.normalize(product.name);
+      bool matchesDevice =
+          normalizedName.contains(TextNormalizer.normalize(deviceModel));
       
       // Kategori filtresi varsa kontrol et
       if (_selectedFilter != 'Tümü' && categoryFilter.isNotEmpty) {
-        bool matchesCategory = product.name.toLowerCase().contains(categoryFilter.toLowerCase()) ||
-                              (product.category != null && product.category!.toLowerCase().contains(categoryFilter.toLowerCase())) ||
-                              (product.subCategory != null && product.subCategory!.toLowerCase().contains(categoryFilter.toLowerCase()));
+        final normalizedFilter = TextNormalizer.normalize(categoryFilter);
+        bool matchesCategory = normalizedName.contains(normalizedFilter) ||
+                              (product.category != null && TextNormalizer.normalize(product.category!).contains(normalizedFilter)) ||
+                              (product.subCategory != null && TextNormalizer.normalize(product.subCategory!).contains(normalizedFilter));
         return matchesDevice && matchesCategory;
       }
       

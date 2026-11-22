@@ -11,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ibul_app/core/app_state.dart';
 import 'package:ibul_app/core/build_profile.dart';
 import 'package:ibul_app/core/cart_state.dart';
+import 'package:ibul_app/core/compare_state.dart';
 import 'package:ibul_app/core/constants.dart';
 import 'package:ibul_app/core/favorite_state.dart';
 import 'package:ibul_app/core/review_state.dart';
@@ -56,6 +57,7 @@ class _ProfileRunnerApp extends StatelessWidget {
         ChangeNotifierProvider<AppState>(create: (_) => AppState()),
         ChangeNotifierProvider<CartState>(create: (_) => CartState()),
         ChangeNotifierProvider<FavoriteState>(create: (_) => FavoriteState()),
+        ChangeNotifierProvider<CompareState>.value(value: CompareState()),
         ChangeNotifierProvider<ReviewState>(create: (_) => ReviewState()),
       ],
       child: MaterialApp(

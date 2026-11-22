@@ -36,6 +36,24 @@ class PrintAgentMac {
     return PrintAgentPolicy.plistForEnvironment(env ?? Platform.environment);
   }
 
+  /// The agent this build may use. An isolated test or a build with the
+  /// compile-time flag names it directly; otherwise the app bundle decides:
+  /// a Release package that carries the live agent (Info.plist
+  /// `IbulAllowLivePrintAgent`) answers the live label, every other build is
+  /// refused by the native side and keeps the older development path.
+  static Future<String?> resolvePlist([Map<String, String>? env]) async {
+    final fixed = plistForEnvironment(env);
+    if (fixed != null) return fixed;
+    if (!Platform.isMacOS) return null;
+    final probe = await status(PrintAgentPolicy.livePlistName);
+    if (probe.status == 'live_label_blocked' ||
+        probe.status == 'channel_error' ||
+        probe.status == 'unsupported') {
+      return null;
+    }
+    return PrintAgentPolicy.livePlistName;
+  }
+
   static Future<PrintAgentStatus> status(String plistName) {
     return _invoke('status', plistName);
   }

@@ -212,6 +212,41 @@ void main() {
     });
   }
 
+  // Gerçek ana sayfa rail'i (sabit 312px) — yukarıdaki testler 320px kullanır.
+  for (final width in <double>[360, 390, 393, 430]) {
+    testWidgets('gerçek MobileProductRail $width genişlikte taşmaz', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(Size(width, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        host(
+          MobileProductRail(
+            title: 'Sana Özel',
+            products: [
+              sample(
+                id: 'rail-deal',
+                name: 'İndirimli Kulaklık Extra Uzun Ürün Adı Satır Testi',
+                price: '1499 TL',
+                oldPrice: '1899 TL',
+              ),
+              sample(id: 'rail-plain', name: 'Sade Ürün', price: '899 TL'),
+            ],
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      final card = find.byType(ProductCard).first;
+      expect(
+        tester.getSize(card).height,
+        closeTo(ProductCard.homeRailCardHeight(tester.element(card)), 1),
+      );
+    });
+  }
+
   testWidgets('satıcı profil kartı discount_price ile 1499 ve 1399 gösterir', (
     tester,
   ) async {

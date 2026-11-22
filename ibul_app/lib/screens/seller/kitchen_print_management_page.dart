@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
@@ -24,7 +25,10 @@ import '../../services/discovered_printer_normalize.dart';
 import '../../services/desktop_print_orchestrator.dart';
 import '../../services/order_print_job_service.dart';
 import '../../services/print_job_repository.dart';
+import '../../services/desktop_print_hub.dart';
 import '../../services/printer_event_log_service.dart';
+import '../../services/printer_link_status.dart';
+import '../../services/printer_readiness.dart';
 import '../../services/print_station_service.dart';
 import '../../services/printer_repository.dart';
 import '../../services/restaurant_printer_dispatch_resolver.dart';
@@ -42,6 +46,10 @@ import '../../widgets/restaurant_offline_banner.dart';
 import '../../services/store_service.dart';
 import '../../services/local_print_service.dart';
 import '../../services/bridge_manager.dart';
+import '../../services/print_service_start_gate.dart';
+import '../../services/restaurant_offline/lan_staff_probe.dart';
+import '../../services/restaurant_offline/restaurant_center_access.dart';
+import '../../services/restaurant_offline/restaurant_center_control.dart';
 import 'printer_guide_dialog.dart';
 import 'restaurant_printer_setup_route.dart';
 import 'printer_system_setup_wizard.dart';
@@ -213,27 +221,32 @@ class _KitchenPrintManagementPageState
     setState(() {
       _eligibilityLoading = true;
     });
+    String? category;
     try {
       final profile = await _storeService.getStoreProfileForSellerId(
         widget.restaurantId,
       );
-      final category = profile?['category']?.toString();
-      if (!mounted) return;
-      final allowed = canUseRestaurantPrinterSystem(category);
-      setState(() {
-        _eligibilityAllowed = allowed;
-        _eligibilityLoading = false;
-        _storeCategory = category?.trim() ?? '';
-      });
-      if (allowed) {
-        await _loadPrintStationState();
-      }
+      category = profile?['category']?.toString();
     } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _eligibilityAllowed = false;
-        _eligibilityLoading = false;
-      });
+      category = null;
+    }
+    // Opened during an internet cut: the cloud cannot say what this business
+    // is, so the type this device verified earlier is used. Without it the
+    // operator could not reach "Başlat" until the internet came back.
+    if ((category ?? '').trim().isEmpty) {
+      category = await readVerifiedStoreCategory(widget.restaurantId);
+    }
+    if (!mounted) return;
+    final allowed = canUseRestaurantPrinterSystem(category);
+    setState(() {
+      _eligibilityAllowed = allowed;
+      _eligibilityLoading = false;
+      _storeCategory = category?.trim() ?? '';
+    });
+    if (allowed) {
+      try {
+        await _loadPrintStationState();
+      } catch (_) {}
     }
   }
 
@@ -1052,7 +1065,7 @@ class _KitchenPrintManagementPageState
       return;
     }
     if (_printSystemEnabled == enabled &&
-        !(enabled && _isQueuePrintSystemDisabled)) {
+        !(enabled && (_isQueuePrintSystemDisabled || _centerClosedThisSession))) {
       return;
     }
 
@@ -1066,22 +1079,83 @@ class _KitchenPrintManagementPageState
     });
 
     try {
-      final result = await _printStationService.setPrintSystemEnabled(
-        restaurantId: widget.restaurantId,
-        enabled: enabled,
-        previousEnabled: previousEnabled,
-      );
-      if (!result) {
-        throw Exception('Baskı sistemi güncellenemedi.');
+      // On the host computer this switch is the printer center's Başlat /
+      // Durdur: it also opens or closes the local order center.
+      String? centerNotice;
+      var heldOldJobs = 0;
+      if (_hostsRestaurantCenter) {
+        if (enabled) {
+          final started = await _startRestaurantCenter();
+          if (!started.access.allowed) throw Exception(started.message);
+          // The print service itself did not come up: say why. Going on would
+          // only end in a misleading "start the bridge first" message.
+          if (!started.bridgeOk) {
+            throw Exception(
+              started.message.trim().isEmpty
+                  ? 'Yazıcı servisi başlatılamadı.'
+                  : started.message,
+            );
+          }
+          if (!started.centerRunning) centerNotice = started.message;
+          heldOldJobs = started.heldOldJobs;
+        } else {
+          await RestaurantCenterControl.stop();
+        }
+      }
+      var savedOnThisComputerOnly = false;
+      try {
+        final result = await _printStationService.setPrintSystemEnabled(
+          restaurantId: widget.restaurantId,
+          enabled: enabled,
+          previousEnabled: previousEnabled,
+        );
+        if (!result) {
+          throw Exception('Baskı sistemi güncellenemedi.');
+        }
+      } catch (_) {
+        // During an internet cut the center must still start and stop on
+        // this computer; the cloud record follows when the internet returns.
+        if (!_hostsRestaurantCenter || await _cloudAnswers()) rethrow;
+        await _setPrintSystemOnThisComputer(enabled);
+        final service = _printStationService;
+        final restaurantId = widget.restaurantId;
+        RestaurantCenterControl.oweCloudSetting(restaurantId, () async {
+          final patched = await service.patchStationConfiguration(
+            restaurantId: restaurantId,
+            fields: <String, dynamic>{
+              'print_system_enabled': enabled,
+              'updated_at': DateTime.now().toIso8601String(),
+            },
+          );
+          if (patched == null) throw Exception('not saved');
+        });
+        savedOnThisComputerOnly = true;
+      }
+      if (_hostsRestaurantCenter && !enabled) {
+        await RestaurantCenterControl.closePrintServiceSafely();
       }
       await _loadPrintStationState();
       if (!mounted) return;
+      // Başlat / Durdur changed the bridge: the status chip and the header
+      // follow now, not at the hub's next 30-second poll.
+      try {
+        unawaited(
+          Provider.of<DesktopPrintHub>(context, listen: false).checkBridge(),
+        );
+      } catch (_) {}
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            enabled
-                ? 'Yazıcı servisi açıldı'
-                : 'Yazıcı servisi kapalı. Yeni fiziksel baskı gönderilmez. Yazıcıya daha önce iletilmiş baytlar geri alınamaz.',
+            (enabled
+                    ? (centerNotice == null || centerNotice.isEmpty
+                      ? (heldOldJobs == 0
+                            ? 'Yazıcı servisi açıldı'
+                            : 'Yazıcı servisi açıldı. Önceden bekleyen $heldOldJobs fiş kendiliğinden basılmaz; kuyruktan başlatabilirsiniz.')
+                      : 'Yazıcı servisi açıldı. Yerel merkez açılamadı: $centerNotice')
+                    : 'Yazıcı servisi kapalı. Yeni fiziksel baskı gönderilmez. Yazıcıya daha önce iletilmiş baytlar geri alınamaz.') +
+                (savedOnThisComputerOnly
+                    ? ' İnternet yok: ayar bu bilgisayarda uygulandı, internet gelince buluta kaydedilecek.'
+                    : ''),
           ),
           backgroundColor: enabled
               ? const Color(0xFF16A34A)
@@ -1089,6 +1163,12 @@ class _KitchenPrintManagementPageState
         ),
       );
     } catch (error) {
+      // A start that did not finish leaves nothing half open: orders must
+      // not be accepted by a center that cannot print them.
+      if (_hostsRestaurantCenter && enabled) {
+        await RestaurantCenterControl.stop();
+        await RestaurantCenterControl.closePrintServiceSafely();
+      }
       if (!mounted) return;
       final message = error.toString().replaceFirst('Exception: ', '').trim();
       setState(() {
@@ -1115,8 +1195,34 @@ class _KitchenPrintManagementPageState
     }
   }
 
+  Future<bool> _cloudAnswers() async {
+    final connectivity = RestaurantConnectivityService.instance;
+    try {
+      await connectivity.refresh(priorCloudFailure: true);
+    } catch (_) {}
+    return connectivity.hasNetwork && connectivity.supabaseReachable;
+  }
+
+  /// Switches printing on or off in the print service of this computer only.
+  /// "Durdur" must close even when the service no longer answers.
+  Future<void> _setPrintSystemOnThisComputer(bool enabled) async {
+    final service = LocalPrintService();
+    try {
+      final answer = await service.configurePrintStationStrict(
+        <String, dynamic>{'print_system_enabled': enabled},
+      );
+      if (enabled && (answer == null || answer['ok'] != true)) {
+        throw Exception('Yazıcı servisi bu bilgisayarda açılamadı.');
+      }
+    } catch (_) {
+      if (enabled) rethrow;
+    } finally {
+      service.dispose();
+    }
+  }
+
   bool _guardPrintSystemDisabled() {
-    final effectivelyOff = _isQueuePrintSystemDisabled || !_printSystemEnabled;
+    final effectivelyOff = !_printSystemUiEnabled;
     if (!_printSystemEnabledLoaded || !effectivelyOff) {
       return false;
     }
@@ -1594,7 +1700,7 @@ class _KitchenPrintManagementPageState
       _syncProductRoutingCacheFromLists(products, stations);
       for (final product in products) {
         final stationId =
-            _productStationDraft[product.id] ?? product.stationId;
+            _draftStationFor(product);
         if (stationId != null && stationId.isNotEmpty) {
           _upsertProductMappingCache(product, stationId, stations);
         }
@@ -1614,6 +1720,22 @@ class _KitchenPrintManagementPageState
         });
       }
       rethrow;
+    }
+  }
+
+  /// The switch must never fail silently: a rejected update (policy, network)
+  /// is reported and the list is left as the database has it.
+  Future<void> _toggleStationActive(String stationId, bool active) async {
+    try {
+      await _stationRepository.setStationActive(stationId, active);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(stationSaveErrorMessage(error)),
+          duration: const Duration(seconds: 6),
+        ),
+      );
     }
   }
 
@@ -1690,14 +1812,27 @@ class _KitchenPrintManagementPageState
         return;
       }
 
-      await _stationRepository.upsertStation(
-        restaurantId: widget.restaurantId,
-        stationId: station?.id,
-        name: nameCtrl.text,
-        code: codeCtrl.text,
-        color: colorCtrl.text.trim().isEmpty ? null : colorCtrl.text.trim(),
-        isActive: isActive,
-      );
+      try {
+        await _stationRepository.upsertStation(
+          restaurantId: widget.restaurantId,
+          stationId: station?.id,
+          name: nameCtrl.text,
+          code: codeCtrl.text,
+          color: colorCtrl.text.trim().isEmpty ? null : colorCtrl.text.trim(),
+          isActive: isActive,
+        );
+      } catch (error) {
+        // A rejected save used to vanish: the list just stayed empty. Say what
+        // happened, and never show the success message below.
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(stationSaveErrorMessage(error)),
+            duration: const Duration(seconds: 6),
+          ),
+        );
+        return;
+      }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1731,6 +1866,9 @@ class _KitchenPrintManagementPageState
       selectedPrinterId: saved.id,
       printerCount: 1,
     );
+    // The header card counts saved printers from the bridge snapshot, so it
+    // must be re-read too; otherwise "Yazıcı eklenmedi" lingers after a save.
+    unawaited(_loadPrintStationState(invalidateBridgeCache: true));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1857,12 +1995,19 @@ class _KitchenPrintManagementPageState
           (
             productId: product.id,
             productName: product.name,
-            stationId: _productStationDraft[product.id] ?? product.stationId,
+            stationId: _draftStationFor(product),
           ),
       ],
       stationById: stationById,
     );
   }
+
+  /// The station the row currently shows. A draft of "Atanmadı" is a real
+  /// choice (null), not "no draft"; `??` used to fall back to the old station.
+  String? _draftStationFor(SellerProduct product) =>
+      _productStationDraft.containsKey(product.id)
+      ? _productStationDraft[product.id]
+      : product.stationId;
 
   Future<void> _persistProductStationSelectionToDb(
     SellerProduct product,
@@ -1871,7 +2016,7 @@ class _KitchenPrintManagementPageState
   ) async {
     if (stationId == null || stationId.isEmpty) return;
     try {
-      await Supabase.instance.client
+      final saved = await Supabase.instance.client
           .from('products')
           .update({
             'station_id': stationId,
@@ -1879,7 +2024,11 @@ class _KitchenPrintManagementPageState
                 _productRoutingDraft[product.id] ?? product.printerRoutingEnabled,
           })
           .eq('id', product.id)
-          .eq('seller_id', widget.restaurantId);
+          .eq('seller_id', widget.restaurantId)
+          .select('id');
+      if ((saved as List).isEmpty) {
+        throw StateError('Ürün eşlemesi kaydedilemedi: bu hesabın yetkisi yok.');
+      }
       StationModel? station;
       for (final candidate in stations) {
         if (candidate.id == stationId) {
@@ -1904,8 +2053,15 @@ class _KitchenPrintManagementPageState
           stationCode: station.code.toUpperCase(),
         ),
       );
-    } catch (_) {
-      // Dropdown seçimi bellek önbelleğinde; DB yazımı best-effort.
+    } catch (error) {
+      // The row shows the failure; the choice is not reported as saved.
+      if (!mounted) return;
+      final msg = error.toString().replaceFirst('Exception: ', '').trim();
+      setState(() {
+        _productSaveErrorMap[product.id] = msg.length > 80
+            ? '${msg.substring(0, 80)}…'
+            : msg;
+      });
     }
   }
 
@@ -1944,7 +2100,7 @@ class _KitchenPrintManagementPageState
   Future<void> _saveProductRouting(SellerProduct product) async {
     if (_productSavingMap[product.id] == true) return;
     final selectedStation =
-        _productStationDraft[product.id] ?? product.stationId;
+        _draftStationFor(product);
     final routingEnabled =
         _productRoutingDraft[product.id] ?? product.printerRoutingEnabled;
 
@@ -1957,14 +2113,26 @@ class _KitchenPrintManagementPageState
       _productSaveErrorMap.remove(product.id);
     });
     try {
-      await Supabase.instance.client
+      final saved = await Supabase.instance.client
           .from('products')
           .update({
             'station_id': selectedStation,
             'printer_routing_enabled': routingEnabled,
           })
           .eq('id', product.id)
-          .eq('seller_id', widget.restaurantId);
+          .eq('seller_id', widget.restaurantId)
+          .select('id');
+      // A policy that filters the row out answers with no error and no row.
+      if ((saved as List).isEmpty) {
+        throw StateError('Ürün eşlemesi kaydedilemedi: bu hesabın yetkisi yok.');
+      }
+      if (selectedStation == null || selectedStation.isEmpty) {
+        await KitchenProductMappingCacheStore.removeProduct(
+          restaurantId: widget.restaurantId,
+          productId: product.id,
+          productName: product.name,
+        );
+      }
 
       _logPrinterSettings(
         'Products',
@@ -2074,6 +2242,8 @@ class _KitchenPrintManagementPageState
             error: error,
             stackTrace: stackTrace,
           );
+          // Pass the failure on: a swallowed error left the tab on a spinner.
+          Error.throwWithStackTrace(error, stackTrace);
         });
   }
 
@@ -2160,6 +2330,18 @@ class _KitchenPrintManagementPageState
                   snapshot.connectionState == ConnectionState.waiting &&
                       stations.isEmpty
                   ? const Center(child: CircularProgressIndicator())
+                  : (snapshot.hasError && stations.isEmpty)
+                  // A failing stream must not read as "no areas yet".
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          stationLoadErrorMessage(snapshot.error!),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Color(0xFFB91C1C)),
+                        ),
+                      ),
+                    )
                   : stations.isEmpty
                   ? const Center(
                       child: Text(
@@ -2190,8 +2372,17 @@ class _KitchenPrintManagementPageState
   bool get _localServiceWorking =>
       _bridgeReachable && (_bridgeHealthy || _hasDetectedPrinters);
 
+  /// On a restaurant's host computer the switch is on only between this
+  /// session's Başlat and Durdur, whatever a bridge left running reports.
+  bool get _centerClosedThisSession =>
+      _hostsRestaurantCenter &&
+      PrintServiceStartGate.restaurantRules &&
+      !RestaurantCenterControl.startedThisSession;
+
   bool get _printSystemUiEnabled =>
-      !_isQueuePrintSystemDisabled && _printSystemEnabled;
+      !_isQueuePrintSystemDisabled &&
+      _printSystemEnabled &&
+      !_centerClosedThisSession;
 
   int _queueBucketCount(String bucket) {
     return _recentPrintJobs
@@ -2200,7 +2391,7 @@ class _KitchenPrintManagementPageState
   }
 
   PrinterCenterStatusItem _localServiceStatusItem() {
-    const label = 'Yazıcı servisi (bu cihaz)';
+    const label = 'Yazıcı servisi';
     if (!_localServiceStatusKnown) {
       return _loadingPrintStationState
           ? const PrinterCenterStatusItem(
@@ -2215,6 +2406,14 @@ class _KitchenPrintManagementPageState
               tone: PrinterCenterTone.neutral,
               detail: 'Durum okunamadı. Yenile ile tekrar deneyin. Baskı gönderilmez.',
             );
+    }
+    if (!_bridgeReachable && _centerClosedThisSession) {
+      return const PrinterCenterStatusItem(
+        label: label,
+        value: 'Yazıcı merkezi kapalı',
+        tone: PrinterCenterTone.warning,
+        detail: 'Başlatmak için Yazıcı Servisi anahtarını açın.',
+      );
     }
     if (!_bridgeReachable) {
       return const PrinterCenterStatusItem(
@@ -2233,13 +2432,40 @@ class _KitchenPrintManagementPageState
       );
     }
     if (_localServiceWorking) {
+      // "Servis açık" is not "yazıcı hazır". The same verdict the status chip
+      // uses decides whether this card may turn green.
+      // Saved printer records are the only source for "is a printer added"; the
+      // bridge scan lists devices, not registrations.
+      final savedPrinters = _allPrintersCache.length;
+      final roleCount = _allPrintersCache.fold<int>(
+        0,
+        (n, p) => n + p.assignedRoles.length,
+      );
+      final readiness = describePrinterReadiness(
+        bridge: ReadinessBridge.online,
+        registeredPrinters: savedPrinters,
+        stationAssignments: roleCount,
+        serviceEnabled: true,
+        isPrintCenter: _isThisDevicePrintStation,
+        printerReachable: PhysicalPrintGate.published?.printerReachable,
+      );
+      if (!readiness.isReady) {
+        return PrinterCenterStatusItem(
+          label: label,
+          value: readiness.headline,
+          tone: readiness.level == PrinterReadinessLevel.notPrintCenter
+              ? PrinterCenterTone.info
+              : PrinterCenterTone.warning,
+          detail: readiness.detail,
+        );
+      }
       return PrinterCenterStatusItem(
         label: label,
-        value: 'Yazıcı servisi açık',
+        value: readiness.headline,
         tone: PrinterCenterTone.success,
         detail: _hasDetectedPrinters
-            ? 'Taramada ${_bridgePrinters.length} yazıcı görüldü.'
-            : 'Servis yanıt veriyor ve baskı izni açık.',
+            ? '${readiness.detail} Taramada ${_bridgePrinters.length} yazıcı görüldü.'
+            : readiness.detail,
       );
     }
     return const PrinterCenterStatusItem(
@@ -2312,13 +2538,35 @@ class _KitchenPrintManagementPageState
           );
   }
 
+  bool get _hostsRestaurantCenter => restaurantCenterDesktopHost();
+
+  Future<RestaurantCenterStart> _startRestaurantCenter() {
+    return RestaurantCenterControl.start(
+      restaurantId: widget.restaurantId,
+      readMembership: lanStaffAuthorityReader(
+        (fn, params) => Supabase.instance.client.rpc(fn, params: params),
+        widget.restaurantId,
+      ),
+    );
+  }
+
   Future<void> _startLocalPrintService() async {
-    final result = await BridgeManager.ensureReady();
+    final String message;
+    final bool ok;
+    if (_hostsRestaurantCenter) {
+      final started = await _startRestaurantCenter();
+      message = started.message;
+      ok = started.access.allowed && started.bridgeOk;
+    } else {
+      final result = await BridgeManager.ensureReady();
+      message = result.message;
+      ok = result.ok;
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(result.message),
-        backgroundColor: result.ok ? Colors.green : Colors.red,
+        content: Text(message),
+        backgroundColor: ok ? Colors.green : Colors.red,
       ),
     );
     _triggerPrintersRefresh(reason: 'bridge_start');
@@ -2392,9 +2640,6 @@ class _KitchenPrintManagementPageState
   Widget _buildPrinterCenterHeader() {
     final connectivity = RestaurantConnectivityService.instance;
     final readiness = _printReadiness();
-    final printSystemValue = !_printSystemEnabledLoaded
-        ? 'Yükleniyor'
-        : (_printSystemUiEnabled ? 'Açık' : 'Kapalı');
     final activeCount = _allPrintersCache.where((p) => p.isActive).length;
     final lastSeenAt =
         _remotePrintStationConfig?['last_seen_at']?.toString() ?? '-';
@@ -2459,47 +2704,32 @@ class _KitchenPrintManagementPageState
             const SizedBox(height: 12),
           ],
           PrinterCenterStatusStrip(
+            // Three answers, each stated once: is the service ready, is a
+            // printer saved, and is this device the center. The queue and
+            // the remote-center signal live under "Bağlantı detayları".
             items: [
               _localServiceStatusItem(),
               PrinterCenterStatusItem(
-                label: 'Yazıcı servisi',
-                value: printSystemValue,
-                tone: readiness.tone,
-                detail: readiness.short,
-              ),
-              PrinterCenterStatusItem(
-                label: 'Kayıtlı yazıcılar',
-                value: '${_allPrintersCache.length} kayıt',
+                label: 'Kayıtlı yazıcı',
+                value: _allPrintersCache.isEmpty
+                    ? 'Eklenmedi'
+                    : '${_allPrintersCache.length} yazıcı',
                 tone: _allPrintersCache.isEmpty
                     ? PrinterCenterTone.warning
                     : PrinterCenterTone.neutral,
                 detail: _allPrintersCache.isEmpty
-                    ? 'Henüz yazıcı eklenmedi.'
-                    : '$activeCount aktif kayıt',
+                    ? 'Mutfak ve adisyon fişleri basılamaz.'
+                    : '$activeCount aktif',
               ),
               PrinterCenterStatusItem(
-                label: 'Kuyruk',
-                value:
-                    '${_queueBucketCount('pending')} bekliyor · '
-                    '${_queueBucketCount('failed')} başarısız · '
-                    '${_queueBucketCount('uncertain')} belirsiz',
-                tone: _queueBucketCount('failed') + _queueBucketCount('uncertain') > 0
-                    ? PrinterCenterTone.warning
-                    : PrinterCenterTone.neutral,
-                detail:
-                    'TCP yazımı fiziksel çıktı doğrulaması değildir. '
-                    'Kapalı serviste bekleyen: ${_queueBucketCount('paused_closed')}. '
-                    'Karantina: ${_queueBucketCount('quarantine')}.',
-              ),
-              PrinterCenterStatusItem(
-                label: 'Bu cihazın rolü',
+                label: 'Cihaz rolü',
                 value: _isThisDevicePrintStation
                     ? 'Yazıcı merkezi'
                     : 'Yalnızca sipariş gönderir',
                 tone: PrinterCenterTone.info,
                 detail: _isThisDevicePrintStation
                     ? 'Fişleri bu cihaz basar.'
-                    : 'Fişleri merkez cihaz basar.',
+                    : readiness.short,
               ),
             ],
           ),
@@ -2540,6 +2770,17 @@ class _KitchenPrintManagementPageState
                 PrinterCenterKeyValue(
                   label: 'Eksik/sorunlu eşleştirme',
                   value: '${_issueMappingCount()}',
+                ),
+                PrinterCenterKeyValue(
+                  label: 'Baskı kuyruğu',
+                  value:
+                      '${_queueBucketCount('pending')} bekliyor · '
+                      '${_queueBucketCount('failed')} başarısız · '
+                      '${_queueBucketCount('uncertain')} belirsiz '
+                      '(servis kapalıyken bekleyen: '
+                      '${_queueBucketCount('paused_closed')}, karantina: '
+                      '${_queueBucketCount('quarantine')}). '
+                      'TCP yazımı fiziksel çıktı doğrulaması değildir.',
                 ),
               ],
             ),
@@ -2619,7 +2860,7 @@ class _KitchenPrintManagementPageState
         ? 'Durum yükleniyor...'
         : isQueueDisabled
         ? 'Kapalı (yazıcı servisi baskıyı durdurmuş)'
-        : _printSystemStateLabel(_printSystemEnabled);
+        : _printSystemStateLabel(uiEnabled);
 
     return PrinterCenterCard(
       title: 'Yazıcı Servisi',
@@ -3385,6 +3626,10 @@ class _KitchenPrintManagementPageState
         ? 'USB Direct'
         : (printer.backend == DesktopPrinterBackend.cups ? 'CUPS' : 'Windows');
     final queue = printer.queueName.trim();
+    final busy = _adoptingLocalPrinter;
+    final error = (_adoptLocalPrinterError ?? '').trim();
+    // One quiet call-to-action: a single primary "Kaydet", and the role
+    // choices behind "Rol ata" instead of four competing buttons.
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -3392,79 +3637,90 @@ class _KitchenPrintManagementPageState
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const Text(
-            'Yerel yazıcı bulundu ama kayıtlı değil',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+          const Icon(
+            Icons.print_outlined,
+            size: 22,
+            color: Color(0xFF6B7280),
           ),
-          const SizedBox(height: 6),
-          Text(
-            'Yazıcı adı: $queue\nBackend: $backendLabel',
-            style: const TextStyle(
-              fontSize: 12.5,
-              color: Color(0xFF4B5563),
-              height: 1.4,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Yazıcı bulundu, henüz kayıtlı değil',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  queue.isEmpty ? backendLabel : '$queue · $backendLabel',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: Color(0xFF6B7280),
+                  ),
+                ),
+                if (error.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    error,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: Color(0xFFB91C1C),
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-          if (_adoptLocalPrinterError != null &&
-              _adoptLocalPrinterError!.trim().isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(
-              _adoptLocalPrinterError!,
-              style: const TextStyle(
-                fontSize: 12.5,
-                color: Color(0xFFB91C1C),
-                height: 1.4,
+          const SizedBox(width: 12),
+          PopupMenuButton<String>(
+            enabled: !busy,
+            tooltip: 'Rol ata',
+            onSelected: (action) =>
+                _adoptLocalPrinter(printer: printer, action: action),
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'save_receipt',
+                child: Text('Kaydet · adisyon yazıcısı yap'),
               ),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton(
-                onPressed: _adoptingLocalPrinter
-                    ? null
-                    : () => _adoptLocalPrinter(printer: printer, action: 'save'),
-                child: _adoptingLocalPrinter
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Yazıcıyı Kaydet'),
+              PopupMenuItem(
+                value: 'save_kitchen',
+                child: Text('Kaydet · mutfak yazıcısı yap'),
               ),
-              OutlinedButton(
-                onPressed: _adoptingLocalPrinter
-                    ? null
-                    : () => _adoptLocalPrinter(
-                          printer: printer,
-                          action: 'save_receipt',
-                        ),
-                child: const Text('Kaydet ve Adisyon Yazıcısı Yap'),
-              ),
-              OutlinedButton(
-                onPressed: _adoptingLocalPrinter
-                    ? null
-                    : () => _adoptLocalPrinter(
-                          printer: printer,
-                          action: 'save_kitchen',
-                        ),
-                child: const Text('Kaydet ve Mutfak Yazıcısı Yap'),
-              ),
-              OutlinedButton(
-                onPressed: _adoptingLocalPrinter
-                    ? null
-                    : () => _adoptLocalPrinter(
-                          printer: printer,
-                          action: 'save_both',
-                        ),
-                child: const Text('Kaydet ve İkisi İçin Kullan'),
+              PopupMenuItem(
+                value: 'save_both',
+                child: Text('Kaydet · ikisi için kullan'),
               ),
             ],
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Text(
+                'Rol ata',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF6D28D9),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          FilledButton(
+            onPressed: busy
+                ? null
+                : () => _adoptLocalPrinter(printer: printer, action: 'save'),
+            child: busy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Kaydet'),
           ),
         ],
       ),
@@ -3675,8 +3931,7 @@ class _KitchenPrintManagementPageState
                 value: isActive,
                 activeThumbColor: const Color(0xFF16A34A),
                 activeTrackColor: const Color(0xFFBBF7D0),
-                onChanged: (v) =>
-                    _stationRepository.setStationActive(station.id, v),
+                onChanged: (v) => _toggleStationActive(station.id, v),
               ),
             ),
           ),
@@ -4765,7 +5020,16 @@ class _KitchenPrintManagementPageState
               ),
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
+          // The buttons wrap onto a second line on a phone instead of
+          // running off the right edge.
+          Expanded(
+            child: Wrap(
+              alignment: WrapAlignment.end,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 6,
+              runSpacing: 6,
+              children: [
           SizedBox(
             height: 32,
             child: FilledButton.icon(
@@ -4787,7 +5051,6 @@ class _KitchenPrintManagementPageState
               label: const Text('Sistem Kur'),
             ),
           ),
-          const SizedBox(width: 6),
           // Test button
           SizedBox(
             height: 32,
@@ -4796,8 +5059,19 @@ class _KitchenPrintManagementPageState
                 if (_guardPrintSystemDisabled()) {
                   return;
                 }
+                // With no role assigned yet both selections are empty. Fall back
+                // to a saved printer (active first) instead of letting the dialog
+                // pick whatever the bridge sees, which is how "Bridge varsayılanı"
+                // and USB/CUPS ended up ahead of a saved Ethernet printer.
+                final savedActive = _allPrintersCache.where((p) => p.isActive);
                 final testPrinterId =
-                    _selectedReceiptPrinterId ?? _selectedKitchenPrinterId;
+                    _selectedReceiptPrinterId ??
+                    _selectedKitchenPrinterId ??
+                    (savedActive.isNotEmpty
+                        ? savedActive.first.id
+                        : (_allPrintersCache.isNotEmpty
+                              ? _allPrintersCache.first.id
+                              : null));
                 final testPrinterLabel = testPrinterId == null
                     ? null
                     : _printerNameById(testPrinterId).trim().isEmpty
@@ -4839,7 +5113,6 @@ class _KitchenPrintManagementPageState
               label: const Text('Test'),
             ),
           ),
-          const SizedBox(width: 6),
           // Guide icon button
           SizedBox(
             width: 32,
@@ -4858,7 +5131,6 @@ class _KitchenPrintManagementPageState
               ),
             ),
           ),
-          const SizedBox(width: 6),
           // Add printer button
           SizedBox(
             height: 32,
@@ -4878,6 +5150,9 @@ class _KitchenPrintManagementPageState
               ),
               icon: const Icon(Icons.add, size: 15),
               label: const Text('Yazıcı Ekle'),
+            ),
+          ),
+              ],
             ),
           ),
         ],
@@ -5093,7 +5368,7 @@ class _KitchenPrintManagementPageState
                 final isSaved = _productSavedMap[product.id] == true;
                 final saveError = _productSaveErrorMap[product.id];
                 final draftStation =
-                    _productStationDraft[product.id] ?? product.stationId;
+                    _draftStationFor(product);
                 final draftEnabled =
                     _productRoutingDraft[product.id] ??
                     product.printerRoutingEnabled;
@@ -6065,6 +6340,18 @@ class _KitchenPrintManagementPageState
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
+              if (snapshot.hasError) {
+                // A failed read is not "no records".
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      'Baskı kayıtları yüklenemedi: ${snapshot.error}',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                );
+              }
               final jobs = snapshot.data ?? const <PrintJobModel>[];
               if (jobs.isEmpty) {
                 return const Center(child: Text('Print job kaydı yok.'));
@@ -6148,6 +6435,16 @@ class _KitchenPrintManagementPageState
       _printersStream = _createPrintersStream();
       _assignmentsFuture = _loadAssignmentsData();
     });
+    // Printer records changed (added, edited, removed): the status chip and the
+    // header cards must follow now, not at the next poll.
+    try {
+      unawaited(
+        Provider.of<DesktopPrintHub>(
+          context,
+          listen: false,
+        ).refreshReadinessInputs(),
+      );
+    } catch (_) {}
     _logPrinterSettings(
       'Printers',
       'refreshTriggered restaurantId=${widget.restaurantId} printerCount=${printerCount ?? -1} selectedPrinterId=${_logField(selectedPrinterId ?? '')} emptyBranch=$reason',

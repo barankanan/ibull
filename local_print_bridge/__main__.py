@@ -9,6 +9,7 @@ import sys
 import time
 
 from .config import BridgeSettings
+from .launchd_socket import requested_name
 from .server import serve
 from .runtime_paths import bridge_lock_path
 
@@ -176,7 +177,10 @@ def _serve_with_retries() -> None:
 
 def main() -> None:
     settings = BridgeSettings.from_env()
-    if _bridge_port_open(settings.host, settings.port):
+    # Started on demand by launchd: launchd itself holds the port, so an open
+    # port does not mean another bridge. The lock below still allows only one.
+    on_demand = bool(requested_name())
+    if not on_demand and _bridge_port_open(settings.host, settings.port):
         _exit_quietly()
     if not _acquire_windows_single_instance():
         if _bridge_port_open(settings.host, settings.port):

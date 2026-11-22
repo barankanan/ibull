@@ -356,6 +356,7 @@ void main() {
             'reachable': true,
             'port_open': true,
             'same_subnet': true,
+            'printer_verified': true,
           },
         ],
         'suggested_message': '1 yazıcı bulundu.',
@@ -369,7 +370,7 @@ void main() {
 
     expect(localService.scanCallCount, 1);
     expect(find.text('IP: 192.168.10.100 · Port: 9100'), findsOneWidget);
-    expect(find.text('Ulaşılabilir'), findsOneWidget);
+    expect(find.text('Yazıcı doğrulandı'), findsOneWidget);
     // Yeni kart UX: varsayılan ad + profil seçimi + hızlı ad şablonları.
     final deviceNameField = tester.widget<TextField>(
       find.byKey(const Key('ethernet_device_name_192.168.10.100')),

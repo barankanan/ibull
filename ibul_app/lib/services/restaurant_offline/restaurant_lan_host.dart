@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/secure_local_store.dart';
 import 'lan_authority_seal.dart';
+import 'lan_center_status.dart';
 import 'print_evidence.dart';
 import 'restaurant_local_cache_service.dart';
 import 'restaurant_local_order_queue_service.dart';
@@ -53,6 +54,31 @@ String combineStationPrintStatuses(List<String> statuses) {
   return 'uncertain';
 }
 
+/// Read-only, secret-free view of a paired device for the operator screen.
+class LanDeviceInfo {
+  const LanDeviceInfo({
+    required this.deviceId,
+    required this.staffId,
+    required this.pairedAt,
+    required this.revoked,
+    this.deviceName,
+    this.platform,
+    this.branchId,
+    this.lastSeenAt,
+    this.expiresAt,
+  });
+
+  final String deviceId;
+  final String staffId;
+  final DateTime pairedAt;
+  final bool revoked;
+  final String? deviceName;
+  final String? platform;
+  final String? branchId;
+  final DateTime? lastSeenAt;
+  final DateTime? expiresAt;
+}
+
 class RestaurantLanDevice {
   const RestaurantLanDevice({
     required this.deviceId,
@@ -66,6 +92,9 @@ class RestaurantLanDevice {
     this.expiresAt,
     this.authoritySeal,
     this.staffEpoch,
+    this.deviceName,
+    this.platform,
+    this.lastSeenAt,
   });
 
   final String deviceId;
@@ -90,6 +119,14 @@ class RestaurantLanDevice {
   /// re-activated, deleted, re-linked or gets a new password; a different
   /// value later means the old pairing is no longer trusted.
   final int? staffEpoch;
+
+  /// Display-only facts the phone reported when it paired (never grant
+  /// anything). Absent on records written before these fields existed.
+  final String? deviceName;
+  final String? platform;
+
+  /// Last authenticated request. Moves at most about once a minute.
+  final DateTime? lastSeenAt;
 
   /// Fields that grant offline access. `manageOrders` is implied: only a
   /// membership holding it is ever stored as verified.
@@ -116,6 +153,7 @@ class RestaurantLanDevice {
     String? staffBranchId,
     String? authoritySeal,
     int? staffEpoch,
+    DateTime? lastSeenAt,
     bool clearVerification = false,
   }) {
     return RestaurantLanDevice(
@@ -130,6 +168,9 @@ class RestaurantLanDevice {
       expiresAt: clearVerification ? null : expiresAt ?? this.expiresAt,
       authoritySeal: clearVerification ? null : authoritySeal ?? this.authoritySeal,
       staffEpoch: staffEpoch ?? this.staffEpoch,
+      deviceName: deviceName,
+      platform: platform,
+      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
     );
   }
 
@@ -145,6 +186,9 @@ class RestaurantLanDevice {
     if (expiresAt != null) 'expires_at': expiresAt!.toUtc().toIso8601String(),
     if (authoritySeal != null) 'authority_seal': authoritySeal,
     if (staffEpoch != null) 'staff_epoch': staffEpoch,
+    if (deviceName != null && deviceName!.isNotEmpty) 'device_name': deviceName,
+    if (platform != null && platform!.isNotEmpty) 'platform': platform,
+    if (lastSeenAt != null) 'last_seen_at': lastSeenAt!.toUtc().toIso8601String(),
   };
 
   factory RestaurantLanDevice.fromJson(Map<String, dynamic> json) {
@@ -161,6 +205,9 @@ class RestaurantLanDevice {
       expiresAt: DateTime.tryParse(json['expires_at']?.toString() ?? ''),
       authoritySeal: json['authority_seal']?.toString(),
       staffEpoch: json['staff_epoch'] is int ? json['staff_epoch'] as int : null,
+      deviceName: json['device_name']?.toString(),
+      platform: json['platform']?.toString(),
+      lastSeenAt: DateTime.tryParse(json['last_seen_at']?.toString() ?? ''),
     );
   }
 }
@@ -217,6 +264,7 @@ class RestaurantLanHost {
     this.certificateDirectory,
     this.machineId,
     this.printBridgeUri,
+    this.stationPrinter,
     this.staffStillAuthorized,
     LanEnrollmentStore? deviceStore,
     this.deviceGrantTtl = const Duration(hours: 12),
@@ -249,6 +297,13 @@ class RestaurantLanHost {
   final String? certificateDirectory;
   final String? machineId;
   final Uri? printBridgeUri;
+  /// Resolves the saved printer of one kitchen station on this computer
+  /// (station mapping, else the kitchen role printer). The answer is stored
+  /// with the print job so the ticket goes to that printer and a retry can
+  /// never move to another one. A map with `resolution_error` means no
+  /// printer is known for the station: nothing is sent for it.
+  /// Null keeps the bridge's own default target.
+  final Future<Map<String, dynamic>> Function(String stationId)? stationPrinter;
   final Map<String, int> lastStageMicros = <String, int>{};
   final Future<StaffProbe> Function(String staffId)? staffStillAuthorized;
   final LanEnrollmentStore _deviceStore;
@@ -283,6 +338,55 @@ class RestaurantLanHost {
   int get deviceCount =>
       _devices.values.where((device) => !device.revoked).length;
   List<RestaurantLanDevice> get devices => _devices.values.toList(growable: false);
+
+  /// Bumped whenever the device list changes (pair, revoke, last-seen).
+  final ValueNotifier<int> devicesRevision = ValueNotifier<int>(0);
+
+  /// Safe view: no keys, seals, epochs or pairing codes.
+  List<LanDeviceInfo> get deviceInfos => _devices.values
+      .map(
+        (d) => LanDeviceInfo(
+          deviceId: d.deviceId,
+          staffId: d.staffId,
+          pairedAt: d.pairedAt,
+          revoked: d.revoked,
+          deviceName: d.deviceName,
+          platform: d.platform,
+          branchId: (d.staffBranchId?.trim().isNotEmpty ?? false)
+              ? d.staffBranchId
+              : d.branchId,
+          lastSeenAt: d.lastSeenAt,
+          expiresAt: d.expiresAt,
+        ),
+      )
+      .toList(growable: false);
+
+  /// Same effect as `POST /lan/revoke`: marks the device revoked, persists,
+  /// and kills browser grants. Returns false for an unknown device.
+  Future<bool> revokeDevice(String deviceId) async {
+    final id = deviceId.trim();
+    final current = _devices[id];
+    if (current != null) {
+      _devices[id] = current.copy(revoked: true);
+      await _persistDevices();
+    }
+    for (final grant in _browserGrants.values) {
+      if (grant.deviceId == id) grant.revoked = true;
+    }
+    return current != null;
+  }
+
+  /// Moves `lastSeenAt` at most once per [lastSeenGranularity]; the existing
+  /// per-request persist then carries it, no extra disk write is added.
+  static const Duration lastSeenGranularity = Duration(minutes: 1);
+  void _touchDevice(String fingerprint) {
+    final device = _devices[fingerprint];
+    if (device == null) return;
+    final now = _clock();
+    final seen = device.lastSeenAt;
+    if (seen != null && now.difference(seen) < lastSeenGranularity) return;
+    _devices[fingerprint] = device.copy(lastSeenAt: now);
+  }
 
   Future<void> start({
     required SecurityContext securityContext,
@@ -569,14 +673,7 @@ class RestaurantLanHost {
         }
         final body = await _readBody(request);
         final deviceId = body['device_id']?.toString().trim() ?? '';
-        final current = _devices[deviceId];
-        if (current != null) {
-          _devices[deviceId] = current.copy(revoked: true);
-          await _persistDevices();
-        }
-        for (final grant in _browserGrants.values) {
-          if (grant.deviceId == deviceId) grant.revoked = true;
-        }
+        await revokeDevice(deviceId);
         await _send(request, 200, <String, Object?>{'ok': true});
         return;
       }
@@ -617,6 +714,7 @@ class RestaurantLanHost {
         return;
       }
       _inboundSeq[fingerprint] = seq;
+      _touchDevice(fingerprint);
       await _persistDevices();
       final deviceId = fingerprint;
       if ((path == '/lan/tables' || path == '/lan/products') && request.method == 'POST') {
@@ -661,6 +759,29 @@ class RestaurantLanHost {
               },
           ],
         });
+        return;
+      }
+      if (path == '/lan/center/status' && request.method == 'POST') {
+        final cache = await _cache.read(restaurantId);
+        final tables = _tablesForStaff(
+              tablesOverride ?? cache?.tables,
+              deviceId,
+            ) ??
+            const <Map<String, dynamic>>[];
+        final status = await buildLanCenterStatus(
+          machineId: machineId ?? '',
+          printBridgeUri: printBridgeUri,
+          tables: tables,
+          printers: cache?.printers ?? const <Map<String, dynamic>>[],
+          stations: cache?.stations ?? const <Map<String, dynamic>>[],
+          stationPrinters:
+              cache?.stationPrinters ?? const <Map<String, dynamic>>[],
+          orders: await _orders.list(restaurantId),
+          printJobs: await _printQueue?.list(restaurantId),
+          branchLimited:
+              (_devices[deviceId]?.staffBranchId?.trim() ?? '').isNotEmpty,
+        );
+        await _send(request, 200, <String, Object?>{'ok': true, ...status});
         return;
       }
       if (path == '/lan/printers/scan' && request.method == 'POST') {
@@ -1257,6 +1378,8 @@ class RestaurantLanHost {
   Future<({int status, Map<String, Object?> body})> _enrollDevice({
     required String csr,
     required String staffId,
+    String? deviceName,
+    String? platform,
   }) async {
     final signed = await _signCsr(csr);
     if (signed == null || _devices[signed.fingerprint]?.revoked == true) {
@@ -1273,6 +1396,8 @@ class RestaurantLanHost {
       pairedAt: _clock(),
       staffId: staffId,
       branchId: branchId,
+      deviceName: deviceName,
+      platform: platform,
     );
     _inboundSeq[signed.fingerprint] = 0;
     if (staffStillAuthorized != null) {
@@ -1392,6 +1517,7 @@ class RestaurantLanHost {
       staffId: staffId,
       staffName: label(body['staff_name']),
       deviceName: label(body['device_name']),
+      platform: label(body['platform']).toLowerCase(),
       csr: csr,
       commit: commit,
       hostNonce: newPairingSecret(_random),
@@ -1478,6 +1604,8 @@ class RestaurantLanHost {
     final enrolled = await _enrollDevice(
       csr: pending.csr,
       staffId: pending.staffId,
+      deviceName: pending.deviceName,
+      platform: pending.platform,
     );
     final certificate = enrolled.body['certificate']?.toString() ?? '';
     if (enrolled.status != 200 || certificate.isEmpty) {
@@ -1693,6 +1821,7 @@ class RestaurantLanHost {
           item['station_id'].toString().trim(),
     };
     for (final station in stations) {
+      final printer = await _stationPrinterSnapshot(station);
       await queue.enqueue(
         job: RestaurantLocalPrintJobRecord(
           localJobId: '${order.localOrderId}|$revision|$station|new_order',
@@ -1703,7 +1832,7 @@ class RestaurantLanHost {
           documentType: 'kitchen',
           role: 'mutfak',
           station: station,
-          printerSnapshot: const <String, dynamic>{},
+          printerSnapshot: printer,
           payloadSnapshot: <String, dynamic>{
             'local_order_id': order.localOrderId,
             'revision': revision,
@@ -1725,6 +1854,23 @@ class RestaurantLanHost {
           createdAt: _clock(),
         ),
       );
+    }
+  }
+
+  Future<Map<String, dynamic>> _stationPrinterSnapshot(String station) async {
+    final resolve = stationPrinter;
+    if (resolve == null) return const <String, dynamic>{};
+    try {
+      return Map<String, dynamic>.from(
+        await resolve(station).timeout(const Duration(seconds: 4)),
+      );
+    } catch (_) {
+      // The order is still saved. The ticket is recorded as definitely not
+      // sent instead of going to a printer nobody chose.
+      return const <String, dynamic>{
+        'resolution_error':
+            'İstasyon yazıcısı belirlenemedi. Fiş gönderilmedi.',
+      };
     }
   }
 
@@ -2162,6 +2308,7 @@ class RestaurantLanHost {
   }
 
   Future<void> _persistDevices() async {
+    devicesRevision.value++;
     await _deviceStore.writeJson(_deviceKey, <String, dynamic>{
       'devices': _devices.values
           .map((device) {
@@ -2183,6 +2330,7 @@ class LanPairingRequest {
     required this.staffId,
     required this.staffName,
     required this.deviceName,
+    this.platform = '',
     required this.csr,
     required this.commit,
     required this.hostNonce,
@@ -2198,6 +2346,7 @@ class LanPairingRequest {
   /// staff member is checked with the cloud on approval.
   final String staffName;
   final String deviceName;
+  final String platform;
   final String csr;
   final String commit;
   final String hostNonce;

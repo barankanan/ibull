@@ -24,6 +24,7 @@ import '../features/vehicle/models/vehicle_listing.dart';
 import '../features/vehicle/services/vehicle_service.dart';
 import '../features/vehicle/widgets/vehicle_card.dart';
 import '../widgets/restaurant_order/product_quick_view_dialog.dart';
+import '../utils/text_normalizer.dart';
 import '../widgets/account_sidebar.dart';
 import '../widgets/ibul_page_state.dart';
 import 'favorites/favorite_browse_card.dart';
@@ -1177,10 +1178,11 @@ class _FavoritesPageState extends State<FavoritesPage> {
   }
 
   Widget _buildListsView() {
-    final needle = _searchQuery.trim().toLowerCase();
+    final needle = TextNormalizer.normalize(_searchQuery);
     final displayLists = _appState.userLists.where((list) {
       if (needle.isEmpty) return true;
-      return (list['name']?.toString() ?? '').toLowerCase().contains(needle);
+      return TextNormalizer.normalize(list['name']?.toString())
+          .contains(needle);
     }).toList();
 
     if (displayLists.isEmpty) {
@@ -1379,9 +1381,17 @@ class _FavoritesPageState extends State<FavoritesPage> {
     }
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = constraints.maxWidth < 360 ? 1 : 2;
-        final tileWidth =
-            (constraints.maxWidth - 24 - (10 * (columns - 1))) / columns;
+        // Beğeniler grid'iyle aynı helper: sabit 2 kolon 600-799px
+        // genişlikte (küçük tablet) dev kart üretiyordu.
+        final available = constraints.maxWidth - 24;
+        final columns = ProductGridSizing.columnCountForWidth(
+          available,
+          spacing: 10,
+        );
+        final tileWidth = ProductGridSizing.cardWidthFor(
+          available,
+          spacing: 10,
+        );
         return GridView.builder(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(

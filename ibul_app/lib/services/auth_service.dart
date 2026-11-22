@@ -303,6 +303,47 @@ class AuthService {
     }
   }
 
+  /// Safe, user-facing text for failures that are not "wrong e-mail/password":
+  /// app configuration (rejected API key), network, server and our own
+  /// deliberate login-flow messages. Returns null for credential-style errors.
+  /// Never includes request bodies, keys or passwords.
+  static String? _describeNonCredentialFault(Object error) {
+    final type = error.runtimeType.toString();
+    final raw = error.toString().toLowerCase();
+    if (error is AuthApiException) {
+      final status = int.tryParse(error.statusCode ?? '');
+      if (raw.contains('invalid api key') || raw.contains('apikey')) {
+        return 'Uygulama yapılandırması hatalı (API anahtarı reddedildi). '
+            'Lütfen uygulamayı güncelleyin veya destekle iletişime geçin. [AUTH-CONFIG]';
+      }
+      if (status != null && status >= 500) {
+        return 'Sunucu şu anda yanıt veremiyor. Lütfen biraz sonra tekrar deneyin. [AUTH-SERVER]';
+      }
+      return null;
+    }
+    if (error is AuthRetryableFetchException ||
+        type == 'SocketException' ||
+        type == 'ClientException' ||
+        type == 'TimeoutException' ||
+        type == 'HandshakeException' ||
+        raw.contains('failed host lookup') ||
+        raw.contains('connection refused') ||
+        raw.contains('network is unreachable')) {
+      return 'Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edip tekrar deneyin. [AUTH-NETWORK]';
+    }
+    if (error is PostgrestException) {
+      return 'Giriş yapıldı ancak yetki bilgileri okunamadı '
+          '(sunucu kodu ${error.code ?? '-'}). İşletme sahibine bildirin. [AUTH-PROFILE]';
+    }
+    // Messages the login flow itself throws on purpose (inactive staff,
+    // unapproved seller, role rejected...) are already user-safe Turkish text.
+    if (type == '_Exception') {
+      final text = error.toString().replaceFirst('Exception: ', '').trim();
+      if (text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
   String describeSignInError(
     Object error, {
     bool adminMode = false,
@@ -312,6 +353,9 @@ class AuthService {
         error.toString().toLowerCase().contains('user_banned')) {
       return 'Bu personel hesabı pasif. İşletme sahibine başvurun.';
     }
+    // Faults that are not a wrong password must never read as one.
+    final fault = _describeNonCredentialFault(error);
+    if (fault != null) return fault;
     if (authArea == 'user' && !adminMode) {
       if (error is AuthApiException) {
         switch (error.code) {
@@ -841,29 +885,19 @@ class AuthService {
         .from('stores')
         .select('seller_id')
         .eq('seller_id', user.id)
-        .maybeSingle();
+        .maybeSingle()
+        .timeout(const Duration(seconds: 8));
     if (store != null && !managed) return const StaffMenuGate.owner();
     final row = await _supabase
         .from('store_sub_admins')
         .select('status, staff_role, permissions, job_title, visible_modules')
         .eq('auth_user_id', user.id)
-        .maybeSingle();
-    final status = row?['status']?.toString() ?? '';
-    if (row == null || status != 'active') {
-      return managed ? const StaffMenuGate.revoked() : const StaffMenuGate.owner();
-    }
-    final rawPermissions = row['permissions'];
-    final permissions = rawPermissions is List
-        ? rawPermissions.map((item) => item.toString()).toSet()
-        : <String>{};
-    final modules = row['visible_modules'];
-    return StaffMenuGate.staff(
-      role: row['staff_role']?.toString(),
-      permissions: permissions,
-      jobTitle: row['job_title']?.toString(),
-      visibleModules: modules is List
-          ? modules.map((item) => item.toString()).toSet()
-          : null,
+        .maybeSingle()
+        .timeout(const Duration(seconds: 8));
+    return resolveStaffMenuGate(
+      managedStaff: managed,
+      ownsStore: store != null,
+      membership: row == null ? null : Map<String, dynamic>.from(row),
     );
   }
 

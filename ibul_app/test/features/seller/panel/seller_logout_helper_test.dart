@@ -46,17 +46,19 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: Builder(
-            builder: (context) {
-              return ElevatedButton(
-                onPressed: () => guard.execute(context: context),
-                child: const Text('logout'),
-              );
-            },
-          ),
-          routes: {
-            HomeNavigation.routeName: homeRouteBuilder,
-          },
+          // HomeNavigation.routeName "/" olduğu için `home:` ile birlikte
+          // verilemez (MaterialApp assert). Panel ayrı bir başlangıç rotasıdır.
+          onGenerateInitialRoutes: (_) => [
+            MaterialPageRoute<void>(
+              builder: (context) {
+                return ElevatedButton(
+                  onPressed: () => guard.execute(context: context),
+                  child: const Text('logout'),
+                );
+              },
+            ),
+          ],
+          routes: {HomeNavigation.routeName: homeRouteBuilder},
         ),
       );
 
@@ -78,17 +80,19 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: Builder(
-            builder: (context) {
-              return ElevatedButton(
-                onPressed: () => guard.execute(context: context),
-                child: const Text('logout'),
-              );
-            },
-          ),
-          routes: {
-            HomeNavigation.routeName: homeRouteBuilder,
-          },
+          // HomeNavigation.routeName "/" olduğu için `home:` ile birlikte
+          // verilemez (MaterialApp assert). Panel ayrı bir başlangıç rotasıdır.
+          onGenerateInitialRoutes: (_) => [
+            MaterialPageRoute<void>(
+              builder: (context) {
+                return ElevatedButton(
+                  onPressed: () => guard.execute(context: context),
+                  child: const Text('logout'),
+                );
+              },
+            ),
+          ],
+          routes: {HomeNavigation.routeName: homeRouteBuilder},
         ),
       );
 
@@ -113,17 +117,19 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: Builder(
-            builder: (context) {
-              return ElevatedButton(
-                onPressed: () => guard.execute(context: context),
-                child: const Text('logout'),
-              );
-            },
-          ),
-          routes: {
-            HomeNavigation.routeName: homeRouteBuilder,
-          },
+          // HomeNavigation.routeName "/" olduğu için `home:` ile birlikte
+          // verilemez (MaterialApp assert). Panel ayrı bir başlangıç rotasıdır.
+          onGenerateInitialRoutes: (_) => [
+            MaterialPageRoute<void>(
+              builder: (context) {
+                return ElevatedButton(
+                  onPressed: () => guard.execute(context: context),
+                  child: const Text('logout'),
+                );
+              },
+            ),
+          ],
+          routes: {HomeNavigation.routeName: homeRouteBuilder},
         ),
       );
 
@@ -140,20 +146,23 @@ void main() {
       expect(find.text('home-0'), findsOneWidget);
     });
 
-    testWidgets(
-      'logout with customer session navigates to account tab',
-      (tester) async {
-        final guard = SellerLogoutGuard(
-          performExit: () async => const SellerExitResult(
-            restoredCustomerSession: true,
-            hasSupabaseSession: true,
-            customerSessionActive: true,
-          ),
-        );
+    testWidgets('logout with customer session navigates to account tab', (
+      tester,
+    ) async {
+      final guard = SellerLogoutGuard(
+        performExit: () async => const SellerExitResult(
+          restoredCustomerSession: true,
+          hasSupabaseSession: true,
+          customerSessionActive: true,
+        ),
+      );
 
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Builder(
+      await tester.pumpWidget(
+        MaterialApp(
+          // HomeNavigation.routeName "/" olduğu için `home:` ile birlikte
+          // verilemez (MaterialApp assert). Panel ayrı bir başlangıç rotasıdır.
+          onGenerateInitialRoutes: (_) => [
+            MaterialPageRoute<void>(
               builder: (context) {
                 return ElevatedButton(
                   onPressed: () => guard.execute(context: context),
@@ -161,17 +170,18 @@ void main() {
                 );
               },
             ),
-            routes: {
-              HomeNavigation.routeName: homeRouteBuilder,
-            },
-          ),
-        );
+          ],
+          routes: {HomeNavigation.routeName: homeRouteBuilder},
+        ),
+      );
 
-        await tester.tap(find.text('logout'));
-        await tester.pumpAndSettle();
-        expect(find.text('home-${SellerExitDestination.accountTabIndex}'), findsOneWidget);
-      },
-    );
+      await tester.tap(find.text('logout'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('home-${SellerExitDestination.accountTabIndex}'),
+        findsOneWidget,
+      );
+    });
 
     testWidgets('logout tap emits [SellerLogout] tap log', (tester) async {
       final logs = <String>[];
@@ -191,17 +201,19 @@ void main() {
 
         await tester.pumpWidget(
           MaterialApp(
-            home: Builder(
-              builder: (context) {
-                return ElevatedButton(
-                  onPressed: () => guard.execute(context: context),
-                  child: const Text('logout'),
-                );
-              },
-            ),
-            routes: {
-              HomeNavigation.routeName: homeRouteBuilder,
-            },
+            // HomeNavigation.routeName "/" olduğu için `home:` ile birlikte
+            // verilemez (MaterialApp assert). Panel ayrı bir başlangıç rotasıdır.
+            onGenerateInitialRoutes: (_) => [
+              MaterialPageRoute<void>(
+                builder: (context) {
+                  return ElevatedButton(
+                    onPressed: () => guard.execute(context: context),
+                    child: const Text('logout'),
+                  );
+                },
+              ),
+            ],
+            routes: {HomeNavigation.routeName: homeRouteBuilder},
           ),
         );
 
@@ -214,21 +226,24 @@ void main() {
       }
     });
 
-    testWidgets(
-      'hanging stopLiveWork times out and logout still completes',
-      (tester) async {
-        final guard = SellerLogoutGuard(
-          performExit: () async => const SellerExitResult(
-            restoredCustomerSession: false,
-            hasSupabaseSession: false,
-            customerSessionActive: false,
-          ),
-        );
-        final neverCompletes = Completer<void>();
+    testWidgets('hanging stopLiveWork times out and logout still completes', (
+      tester,
+    ) async {
+      final guard = SellerLogoutGuard(
+        performExit: () async => const SellerExitResult(
+          restoredCustomerSession: false,
+          hasSupabaseSession: false,
+          customerSessionActive: false,
+        ),
+      );
+      final neverCompletes = Completer<void>();
 
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Builder(
+      await tester.pumpWidget(
+        MaterialApp(
+          // HomeNavigation.routeName "/" olduğu için `home:` ile birlikte
+          // verilemez (MaterialApp assert). Panel ayrı bir başlangıç rotasıdır.
+          onGenerateInitialRoutes: (_) => [
+            MaterialPageRoute<void>(
               builder: (context) {
                 return ElevatedButton(
                   onPressed: () => guard.execute(
@@ -239,22 +254,20 @@ void main() {
                 );
               },
             ),
-            routes: {
-              HomeNavigation.routeName: homeRouteBuilder,
-            },
-          ),
-        );
+          ],
+          routes: {HomeNavigation.routeName: homeRouteBuilder},
+        ),
+      );
 
-        await tester.tap(find.text('logout'));
-        await tester.pump();
-        // stopLiveWork askıda: timeout süresi kadar bekle, donma olmamalı.
-        await tester.pump(
-          SellerLogoutGuard.stopLiveWorkTimeout + const Duration(seconds: 1),
-        );
-        await tester.pumpAndSettle();
-        expect(find.text('home-0'), findsOneWidget);
-      },
-    );
+      await tester.tap(find.text('logout'));
+      await tester.pump();
+      // stopLiveWork askıda: timeout süresi kadar bekle, donma olmamalı.
+      await tester.pump(
+        SellerLogoutGuard.stopLiveWorkTimeout + const Duration(seconds: 1),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('home-0'), findsOneWidget);
+    });
 
     testWidgets(
       'logout without customer session does not navigate to seller-login',
@@ -269,14 +282,18 @@ void main() {
 
         await tester.pumpWidget(
           MaterialApp(
-            home: Builder(
-              builder: (context) {
-                return ElevatedButton(
-                  onPressed: () => guard.execute(context: context),
-                  child: const Text('logout'),
-                );
-              },
-            ),
+            // HomeNavigation.routeName "/" olduğu için `home:` ile birlikte
+            // verilemez (MaterialApp assert). Panel ayrı bir başlangıç rotasıdır.
+            onGenerateInitialRoutes: (_) => [
+              MaterialPageRoute<void>(
+                builder: (context) {
+                  return ElevatedButton(
+                    onPressed: () => guard.execute(context: context),
+                    child: const Text('logout'),
+                  );
+                },
+              ),
+            ],
             routes: {
               HomeNavigation.routeName: homeRouteBuilder,
               SellerExitDestination.sellerLoginRoute: (_) =>
@@ -294,26 +311,26 @@ void main() {
   });
 
   group('Çıkış Yap wiring (kaynak doğrulama)', () {
-    test('tüm seller shell\'leri onLogoutTap → _handleSellerLogoutTap bağlar',
-        () {
-      final source =
-          File('lib/screens/seller_panel_page.dart').readAsStringSync();
-      // Desktop sidebar + tablet drawer doğrudan handler alır.
-      expect(
-        'onLogoutTap: _handleSellerLogoutTap'.allMatches(source).length,
-        2,
-        reason: 'Desktop ve tablet shell logout wiring eksik',
-      );
-      // Mobile drawer: önce drawer kapanır, sonra logout.
-      expect(source.contains('unawaited(_handleSellerLogoutTap())'), isTrue);
-      // Eski donan akış geri gelmesin.
-      expect(source.contains('_exitSellerPanel'), isFalse);
-      // Handler guard üzerinden çalışır.
-      expect(
-        source.contains('_sellerLogoutGuard.execute('),
-        isTrue,
-      );
-    });
+    test(
+      'tüm seller shell\'leri onLogoutTap → _handleSellerLogoutTap bağlar',
+      () {
+        final source = File(
+          'lib/screens/seller_panel_page.dart',
+        ).readAsStringSync();
+        // Desktop sidebar + tablet drawer doğrudan handler alır.
+        expect(
+          'onLogoutTap: _handleSellerLogoutTap'.allMatches(source).length,
+          2,
+          reason: 'Desktop ve tablet shell logout wiring eksik',
+        );
+        // Mobile drawer: önce drawer kapanır, sonra logout.
+        expect(source.contains('unawaited(_handleSellerLogoutTap())'), isTrue);
+        // Eski donan akış geri gelmesin.
+        expect(source.contains('_exitSellerPanel'), isFalse);
+        // Handler guard üzerinden çalışır.
+        expect(source.contains('_sellerLogoutGuard.execute('), isTrue);
+      },
+    );
 
     test('kök uygulama /home route\'unu HomeRouteArgs ile çözer', () {
       final table = File('lib/app/app_route_table.dart').readAsStringSync();

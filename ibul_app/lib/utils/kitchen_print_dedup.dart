@@ -45,6 +45,7 @@ String buildKitchenLogicalPrintKey({
   required String stationName,
   required int revision,
   required List<Map<String, dynamic>> items,
+  String orderKey = '',
 }) {
   final resolvedStationId = stationId.trim();
   final resolvedStationName = stationName.trim().toLowerCase();
@@ -58,7 +59,28 @@ String buildKitchenLogicalPrintKey({
     stationKey,
     revision.toString(),
     itemsHash,
+    // The order's own identity. Without it two real orders with the same
+    // products on the same table shared one key and the second ticket was
+    // suppressed as a duplicate. A key with no order identity (old payloads)
+    // keeps the previous form.
+    if (orderKey.trim().isNotEmpty) orderKey.trim(),
   ].join('|')}';
+}
+
+/// The order identity used in the logical print key: the client's
+/// `local_order_id` when the order has one, else the saved order id, plus the
+/// revision key of an add/cancel ticket. The server stamps the same pair on
+/// every job payload, so every print path derives the same value.
+String kitchenOrderKeyForPrint({
+  Object? localOrderId,
+  Object? orderId,
+  Object? revisionKey,
+}) {
+  final local = _readText(localOrderId);
+  final base = local.isNotEmpty ? local : _readText(orderId);
+  if (base.isEmpty) return '';
+  final revision = _readText(revisionKey);
+  return revision.isEmpty ? base : '$base#$revision';
 }
 
 String buildKitchenLogicalPrintKeyFromPayload({
@@ -93,6 +115,11 @@ String buildKitchenLogicalPrintKeyFromPayload({
     ),
     revision: revision,
     items: items,
+    orderKey: kitchenOrderKeyForPrint(
+      localOrderId: payload['local_order_id'] ?? job?['local_order_id'],
+      orderId: payload['order_id'] ?? job?['order_id'],
+      revisionKey: payload['revision_key'] ?? job?['revision_key'],
+    ),
   );
 }
 
@@ -227,12 +254,14 @@ String kitchenPrintIdempotencyKeyFromJob({
   );
 }
 
-/// Text beside the Garson label. Job title wins. An empty title uses the name.
+/// Text beside the Garson label: the person's own name ("Garson: Ahmet").
+/// The job title is only a fallback when no name is known, so another
+/// person's title or the owner's name is never shown in its place.
 /// Callers must not put this string into an idempotency or queue key.
 String kitchenTicketGarsonLabel({String? waiterTitle, String? waiterName}) {
-  final title = waiterTitle?.trim() ?? '';
-  if (title.isNotEmpty) return title;
-  return waiterName?.trim() ?? '';
+  final name = waiterName?.trim() ?? '';
+  if (name.isNotEmpty) return name;
+  return waiterTitle?.trim() ?? '';
 }
 
 ({
@@ -266,12 +295,21 @@ String kitchenTicketGarsonLabel({String? waiterTitle, String? waiterName}) {
 
 /// Physical bytes may start only when the service is open and this revision
 /// was not already sent or left uncertain. A later pause write is not the gate.
+///
+/// [physicalGateAllowed] is the last bridge-observed master permission
+/// (`PhysicalPrintGate.allowed`). It only blocks when it is known to be off:
+/// `null` (never observed, e.g. a tablet or just after launch) leaves the
+/// decision to the cloud flag and the bridge, so LAN printing is not disabled
+/// where no observer runs. The cloud flag alone defaults to open when it is
+/// stale or unreachable, which is exactly the offline LAN case.
 bool kitchenJobMayStartPhysicalPrint({
   required bool printSystemEnabled,
   required bool suppressPhysicalPrint,
   String? localPrintStatus,
+  bool? physicalGateAllowed,
 }) {
   if (!printSystemEnabled || suppressPhysicalPrint) return false;
+  if (physicalGateAllowed == false) return false;
   switch ((localPrintStatus ?? '').trim()) {
     case 'printed':
     case 'forwarded':
@@ -359,4 +397,17 @@ Future<KitchenFastDispatchReport> runKitchenFastDispatch({
     closedWithoutPrintJobIds: closed,
     claimWaveMs: claimWaveMs,
   );
+}
+
+/// Header fields for a kitchen ticket that is printed before the server has
+/// answered. [tableName] is the label the waiter sees on the table card. An
+/// empty label adds nothing, so the builder's "Masa N" fallback still applies.
+Map<String, dynamic> kitchenTableLabelFields(String? tableName) {
+  final label = (tableName ?? '').trim();
+  if (label.isEmpty) return const <String, dynamic>{};
+  return <String, dynamic>{
+    'table_name': label,
+    'display_table_label': label,
+    'table_display_name': label,
+  };
 }

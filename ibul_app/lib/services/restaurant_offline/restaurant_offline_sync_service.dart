@@ -384,7 +384,20 @@ class RestaurantOfflineSyncService {
 const Duration orderSyncRetryAfterDefault = Duration.zero;
 const Duration orderSyncRetryAfter = Duration(seconds: 30);
 
+/// Buluta HİÇBİR yolla (otomatik, toplu, elle) gönderilmeyecek yerel sipariş kimlikleri.
+/// Kayıt silinmez ve değiştirilmez; yerelde görünür kalır.
+///
+/// `local-order-1793736854400492-1173607028`: 2026-11-03, masa 19, 320 TL, baskısı
+/// belirsiz; oturumsuz gönderimde `PGRST301` almış ve bulutta karşılığı yok. Kayıt
+/// Anahtar Zinciri kopyasından geri geldiği için yerel dosyadan ayırmak işe yaramıyor;
+/// bu yüzden kimlik kodda sabit. Yaşa dayalı genel bir engel YOK: uzun süre çevrimdışı
+/// kalmış geçerli siparişler gönderilir (sunucu aynı yerel kimliği ikinci kez yazmaz).
+const Set<String> quarantinedLocalOrderIds = <String>{
+  'local-order-1793736854400492-1173607028',
+};
+
 /// Bu turda gönderilecek siparişler.
+/// - Karantinadaki kimlikler hiç seçilmez.
 /// - Hiç denenmemişler (`pendingSync`/`localOnly`) önce, en eski oluşturulan önce.
 /// - Sonra hata almışlar, EN ESKİ denenen önce; bekleme süresi dolmamışlar atlanır.
 /// Böylece sürekli hata veren eski siparişler kuyruğun başını tutup yenileri aç bırakmaz.
@@ -393,7 +406,11 @@ List<RestaurantLocalOrderRecord> selectOrdersForSync(
   required DateTime now,
   int limit = 10,
   Duration retryAfter = orderSyncRetryAfter,
+  Set<String> quarantined = quarantinedLocalOrderIds,
 }) {
+  pending = pending
+      .where((o) => !quarantined.contains(o.localOrderId))
+      .toList(growable: false);
   final fresh =
       pending
           .where(

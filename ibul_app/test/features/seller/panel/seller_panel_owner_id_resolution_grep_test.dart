@@ -16,9 +16,12 @@ void main() {
 
   test('seller panel resolves owner id from backend before auth fallback', () {
     final source = sellerPanelFile.readAsStringSync();
+    // Biçimlendirici çağrıyı satıra bölebilir; boşluktan bağımsız eşleştir.
     expect(
       source,
-      contains('_storeService.resolveStoreOwnerIdForCurrentUser()'),
+      contains(
+        RegExp(r'_storeService\s*\.resolveStoreOwnerIdForCurrentUser\(\)'),
+      ),
     );
     expect(source, contains("source: '_loadStoreProfile'"));
     expect(source, contains("source: '_loadDashboardClosedHistory'"));
@@ -33,5 +36,11 @@ void main() {
     );
     expect(source, contains(".from('store_sub_admins')"));
     expect(source, contains('getStoreProfileForSellerId'));
+  });
+
+  test('a failed owner lookup is unknown, never the signed-in user', () {
+    final source = storeServiceFile.readAsStringSync();
+    expect(source, contains('return lookupFailed ? null : userId;'));
+    expect(RegExp(r'lookupFailed = true;').allMatches(source).length, 2);
   });
 }

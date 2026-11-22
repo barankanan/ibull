@@ -429,6 +429,61 @@ void main() {
     expect(host.deviceCount, 1);
   });
 
+  test('center status is read-only, authorised and honest about the bridge', () async {
+    final bridge = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => bridge.close(force: true));
+    bridge.listen((request) {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{'service': 'ibul-local-print-bridge'}),
+      );
+      request.response.close();
+    });
+    final bridgeUri = Uri.parse('http://127.0.0.1:${bridge.port}');
+    final host = _host(
+      material,
+      restaurantId: 'lan-status',
+      printBridgeUri: bridgeUri,
+      tablesOverride: const <Map<String, dynamic>>[
+        <String, dynamic>{'table_number': 1},
+        <String, dynamic>{'table_number': 2},
+      ],
+    );
+    await _listen(host, material);
+    addTearDown(host.stop);
+    final a = await _pair(host, material, waiterA.directory, 'staff-a');
+    final b = await _pair(host, material, waiterB.directory, 'staff-b');
+
+    final open = await a.postAuthorized('/lan/center/status', <String, Object?>{});
+    expect(open['status'], 200);
+    expect(open['ok'], isTrue);
+    expect((open['print_center'] as Map)['reachable'], isTrue);
+    expect((open['overview'] as Map)['tables_total'], 2);
+    expect(open.containsKey('generated_at'), isTrue);
+    expect(open.containsKey('machine_id'), isTrue);
+    expect(open.toString().toLowerCase(), isNot(contains('revenue')));
+
+    // The bridge goes away: the answer says so instead of guessing.
+    await bridge.close(force: true);
+    final down = await b.postAuthorized('/lan/center/status', <String, Object?>{});
+    expect(down['status'], 200);
+    expect((down['print_center'] as Map)['reachable'], isFalse);
+
+    // A revoked device gets nothing.
+    await _owner(host, material).post('/lan/revoke', <String, Object?>{
+      'device_id': host.devices
+          .firstWhere((device) => device.staffId == 'staff-a')
+          .deviceId,
+    });
+    final revoked = await a.postAuthorized('/lan/center/status', <String, Object?>{});
+    expect(revoked['status'], 401);
+    expect(revoked.containsKey('print_center'), isFalse);
+    // The operator certificate is not a paired device.
+    final unpaired = await _owner(host, material).post('/lan/center/status', <String, Object?>{});
+    expect(unpaired['status'], 401);
+    expect(unpaired.containsKey('print_center'), isFalse);
+  });
+
   test('an unreachable probe does not admit staff who were never verified', () async {
     final host = _host(
       material,
@@ -830,7 +885,8 @@ void main() {
       await request.response.close();
     });
 
-    final now = DateTime.utc(2026, 11, 13, 18);
+    // Güncel bir kayıt: iki günden eski kayıtlar otomatik eşitlemeye girmez.
+    final now = DateTime.now().toUtc();
     await orders.enqueue(
       order: RestaurantLocalOrderRecord(
         localOrderId: 'local-one',
@@ -1567,6 +1623,70 @@ void main() {
       expect(calls, 1);
     });
   });
+
+  group('Paired device list', () {
+    test('old records without name, platform or last seen still load', () async {
+      final json = <String, dynamic>{
+        'device_id': 'cd' * 32,
+        'paired_at': DateTime.utc(2026).toIso8601String(),
+        'staff_id': 'old',
+      };
+      final old = RestaurantLanDevice.fromJson(json);
+      expect(old.deviceName, isNull);
+      expect(old.platform, isNull);
+      expect(old.lastSeenAt, isNull);
+      expect(old.toJson().containsKey('last_seen_at'), isFalse);
+      final round = RestaurantLanDevice.fromJson(
+        old.copy(lastSeenAt: DateTime.utc(2026, 2)).toJson(),
+      );
+      expect(round.lastSeenAt, DateTime.utc(2026, 2));
+      final store = MemoryLanEnrollmentStore();
+      await store.writeJson('lan_device_enrollment_v1_lan-old', <String, dynamic>{
+        'devices': <Map<String, dynamic>>[json],
+      });
+      final host = _host(material, restaurantId: 'lan-old', deviceStore: store);
+      await _listen(host, material);
+      addTearDown(host.stop);
+      expect(host.deviceInfos.single.staffId, 'old');
+      expect(host.deviceInfos.single.deviceName, isNull);
+    });
+
+    test('last seen moves once a minute and revoke closes the device', () async {
+      var now = DateTime.utc(2026, 3, 1, 10);
+      final store = MemoryLanEnrollmentStore();
+      final host = _host(
+        material,
+        restaurantId: 'lan-seen',
+        deviceStore: store,
+        clock: () => now,
+      );
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final session = await _pair(host, material, waiterA.directory, 'staff-seen');
+      expect(host.deviceInfos.single.lastSeenAt, isNull);
+      await session.postAuthorized('/lan/center/status', <String, Object?>{});
+      final first = host.deviceInfos.single.lastSeenAt;
+      expect(first, now);
+      now = now.add(const Duration(seconds: 30));
+      await session.postAuthorized('/lan/center/status', <String, Object?>{});
+      expect(host.deviceInfos.single.lastSeenAt, first);
+      now = now.add(const Duration(seconds: 40));
+      await session.postAuthorized('/lan/center/status', <String, Object?>{});
+      expect(host.deviceInfos.single.lastSeenAt, now);
+
+      final id = host.deviceInfos.single.deviceId;
+      expect(await host.revokeDevice('unknown-device'), isFalse);
+      expect(await host.revokeDevice(id), isTrue);
+      expect(host.deviceCount, 0);
+      expect(host.deviceInfos.single.revoked, isTrue);
+      final after = await session.postAuthorized('/lan/center/status', <String, Object?>{});
+      expect(after['status'], 401);
+      final stored = jsonEncode(
+        await store.readJson('lan_device_enrollment_v1_lan-seen'),
+      );
+      expect(stored, contains('"revoked":true'));
+    });
+  });
 }
 
 class _RememberTransport implements RestaurantLanOrderTransport {
@@ -1592,9 +1712,11 @@ RestaurantLanHost _host(
   bool enablePhysicalPrint = false,
   LanPhysicalPrint? onPhysicalPrint,
   RestaurantLocalPrintQueueService? printQueue,
+  Uri? printBridgeUri,
 }) {
   return RestaurantLanHost(
     restaurantId: restaurantId,
+    printBridgeUri: printBridgeUri,
     branchId: branchId,
     orders: orders,
     printQueue: printQueue,

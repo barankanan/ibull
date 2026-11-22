@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../services/restaurant_offline/restaurant_local_cache_service.dart';
 import '../../../../services/restaurant_offline/restaurant_local_order_queue_service.dart';
+import '../../../../services/restaurant_offline/waiter_lan_link.dart';
 import '../helpers/offline_overview.dart';
 import '../helpers/offline_page_policy.dart';
 
@@ -169,9 +170,16 @@ class _Row extends StatelessWidget {
 
 /// Çevrimdışı Genel Bakış. Kaynaklar ayrı kartlarda; tahsilat rakamı GÖSTERİLMEZ.
 class OfflineOverviewView extends StatelessWidget {
-  const OfflineOverviewView({super.key, required this.data});
+  const OfflineOverviewView({
+    super.key,
+    required this.data,
+    this.fromCenter = false,
+  });
 
   final OfflineOverviewData data;
+
+  /// Rakamlar ana bilgisayardan geldi; bulut ve baskı kartları gösterilmez.
+  final bool fromCenter;
 
   @override
   Widget build(BuildContext context) {
@@ -183,15 +191,19 @@ class OfflineOverviewView extends StatelessWidget {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 4),
-        const Text(
-          'Bu sayfa bu cihazdaki yerel kayıtlardan hesaplanır. İnternet gelince bulutla eşitlenir.',
-          style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+        Text(
+          fromCenter
+              ? 'Kaynak: Ana bilgisayardan. Rakamlar ana bilgisayardaki yerel kayıtlardır.'
+              : 'Bu sayfa bu cihazdaki yerel kayıtlardan hesaplanır. İnternet gelince bulutla eşitlenir.',
+          key: const Key('offline_overview_source'),
+          style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
         ),
         const SizedBox(height: 12),
         _Card(
           title: 'Masalar',
-          note:
-              'Masa listesi: son bulut eşitlemesi ${offlineClockLabel(data.lastCloudSnapshotAt)}',
+          note: fromCenter
+              ? 'Ana bilgisayardan'
+              : 'Masa listesi: son bulut eşitlemesi ${offlineClockLabel(data.lastCloudSnapshotAt)}',
           children: data.tablesKnown
               ? [
                   _Row('Toplam masa', '${data.totalTables}'),
@@ -204,6 +216,7 @@ class OfflineOverviewView extends StatelessWidget {
                   ),
                 ],
         ),
+        if (!fromCenter)
         _Card(
           title: 'Bulutla senkronize (son anlık görüntü)',
           note:
@@ -214,12 +227,14 @@ class OfflineOverviewView extends StatelessWidget {
           title: 'Yerel olarak kaydedilmiş',
           children: [
             _Row('Yerel kayıtlı sipariş', '${data.localOrders}'),
-            _Row('Mutfağa iletildi', '${data.localKitchenSent}'),
-            _Row('Baskı bekliyor', '${data.localPrintWaiting}'),
-            _Row(
-              'Baskı sonucu doğrulanamadı / başarısız',
-              '${data.localPrintUnverified}',
-            ),
+            if (!fromCenter) ...[
+              _Row('Mutfağa iletildi', '${data.localKitchenSent}'),
+              _Row('Baskı bekliyor', '${data.localPrintWaiting}'),
+              _Row(
+                'Baskı sonucu doğrulanamadı / başarısız',
+                '${data.localPrintUnverified}',
+              ),
+            ],
           ],
         ),
         _Card(
@@ -238,10 +253,11 @@ class OfflineOverviewView extends StatelessWidget {
               'Yerel geçici toplam (senkronizasyon bekliyor)',
               _tl(data.localProvisionalTotal),
             ),
-            _Row(
-              'Açık adisyon (son eşitlemeye göre)',
-              _tl(data.cloudOpenBillTotal),
-            ),
+            if (!fromCenter)
+              _Row(
+                'Açık adisyon (son eşitlemeye göre)',
+                _tl(data.cloudOpenBillTotal),
+              ),
             const SizedBox(height: 4),
             const Text(
               'Tahsil edilmiş gelir internet olmadan gösterilmez.',
@@ -262,9 +278,15 @@ class OfflineOverviewLoader extends StatefulWidget {
     required this.restaurantId,
     this.cacheService,
     this.orderQueue,
+    this.link,
+    this.centerStatus,
   });
 
   final String restaurantId;
+  final WaiterLanLink? link;
+
+  /// Test seam; varsayılan [WaiterLanLink.centerStatus].
+  final Future<Map<String, dynamic>> Function()? centerStatus;
   final RestaurantLocalCacheService? cacheService;
   final RestaurantLocalOrderQueueService? orderQueue;
 
@@ -274,6 +296,7 @@ class OfflineOverviewLoader extends StatefulWidget {
 
 class _OfflineOverviewLoaderState extends State<OfflineOverviewLoader> {
   OfflineOverviewData? _data;
+  var _fromCenter = false;
   String? _error;
   var _loading = true;
   Timer? _timer;
@@ -298,6 +321,17 @@ class _OfflineOverviewLoaderState extends State<OfflineOverviewLoader> {
     final id = widget.restaurantId.trim();
     try {
       if (id.isEmpty) throw StateError('İşletme kimliği bulunamadı.');
+      final fromCenter = await _centerOverview(id);
+      if (fromCenter != null) {
+        if (!mounted) return;
+        setState(() {
+          _data = fromCenter;
+          _fromCenter = true;
+          _error = null;
+          _loading = false;
+        });
+        return;
+      }
       final cache = widget.cacheService ?? RestaurantLocalCacheService();
       final queue = widget.orderQueue ?? RestaurantLocalOrderQueueService();
       final results = await Future.wait<Object?>([
@@ -317,6 +351,7 @@ class _OfflineOverviewLoaderState extends State<OfflineOverviewLoader> {
       if (!mounted) return;
       setState(() {
         _data = data;
+        _fromCenter = false;
         _error = null;
         _loading = false;
       });
@@ -329,10 +364,51 @@ class _OfflineOverviewLoaderState extends State<OfflineOverviewLoader> {
     }
   }
 
+  /// Eşleşmiş ve erişilebilir merkez varsa rakamlar oradan; her hatada null
+  /// döner ve cihaz-yerel davranış aynen sürer.
+  Future<OfflineOverviewData?> _centerOverview(String id) async {
+    final link = widget.link ?? WaiterLanLink.instance;
+    final fetch = widget.centerStatus ?? link.centerStatus;
+    if (widget.centerStatus == null &&
+        !(link.paired && link.centerReachable && link.restaurantId == id)) {
+      return null;
+    }
+    try {
+      final response = await fetch().timeout(const Duration(seconds: 8));
+      final raw = response['overview'];
+      final sync = response['sync'];
+      if (raw is! Map || sync is! Map) return null;
+      int n(Object? v) => int.tryParse('${v ?? 0}') ?? 0;
+      final total = n(raw['tables_total']);
+      final occupied = n(raw['tables_with_local_orders']);
+      return OfflineOverviewData(
+        totalTables: total,
+        occupiedTables: occupied,
+        freeTables: total > occupied ? total - occupied : 0,
+        cloudOpenOrders: 0,
+        localOrders: n(raw['local_orders']),
+        localKitchenSent: 0,
+        localPrintWaiting: 0,
+        localPrintUnverified: 0,
+        pendingSync: n(sync['pending']),
+        syncFailed: n(sync['failed']) + n(sync['conflict']),
+        localProvisionalTotal:
+            double.tryParse('${raw['local_provisional_total'] ?? 0}') ?? 0,
+        cloudOpenBillTotal: 0,
+        lastCloudSnapshotAt: DateTime.tryParse('${response['generated_at']}'),
+        tablesKnown: total > 0,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final data = _data;
-    if (data != null) return OfflineOverviewView(data: data);
+    if (data != null) {
+      return OfflineOverviewView(data: data, fromCenter: _fromCenter);
+    }
     if (_loading) return const Center(child: CircularProgressIndicator());
     return Center(
       child: Padding(

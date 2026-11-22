@@ -2,7 +2,156 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/core/map_store_filter_helpers.dart';
 
 void main() {
+  group('resolveMapStoreOpenNow', () {
+    final noon = DateTime(2026, 11, 18, 12);
+    final lateNight = DateTime(2026, 11, 18, 23, 30);
+
+    test('seller-closed store is closed regardless of hours', () {
+      expect(
+        resolveMapStoreOpenNow(
+          isStoreOpen: false,
+          workingHours: '24 Saat',
+          now: noon,
+        ),
+        isFalse,
+      );
+    });
+
+    test('uses working hours range against the current time', () {
+      expect(
+        resolveMapStoreOpenNow(
+          isStoreOpen: true,
+          workingHours: '09:00 - 18:00',
+          now: noon,
+        ),
+        isTrue,
+      );
+      expect(
+        resolveMapStoreOpenNow(
+          isStoreOpen: true,
+          workingHours: '09:00 - 18:00',
+          now: lateNight,
+        ),
+        isFalse,
+      );
+      // Gece yarısını aşan aralık.
+      expect(
+        resolveMapStoreOpenNow(
+          isStoreOpen: null,
+          workingHours: '18:00 - 02:00',
+          now: lateNight,
+        ),
+        isTrue,
+      );
+    });
+
+    test('24 saat is always open', () {
+      expect(
+        resolveMapStoreOpenNow(
+          isStoreOpen: true,
+          workingHours: '24 Saat',
+          now: lateNight,
+        ),
+        isTrue,
+      );
+      expect(
+        resolveMapStoreOpenNow(
+          isStoreOpen: null,
+          workingHours: '7/24',
+          now: lateNight,
+        ),
+        isTrue,
+      );
+    });
+
+    test('missing or unparseable data stays unknown', () {
+      expect(
+        resolveMapStoreOpenNow(isStoreOpen: null, workingHours: null),
+        isNull,
+      );
+      expect(
+        resolveMapStoreOpenNow(
+          isStoreOpen: null,
+          workingHours: 'Hafta içi',
+          now: noon,
+        ),
+        isNull,
+      );
+      expect(
+        resolveMapStoreOpenNow(isStoreOpen: true, workingHours: ''),
+        isTrue,
+      );
+    });
+  });
+
+  group('open-now filter', () {
+    // Eski davranış: indekse göre her 5. mağaza gizleniyordu (i % 5 == 0).
+    List<int> run({required List<bool?> open, required bool filterOpenNow}) =>
+        filterMapStoreIndices(
+          businessCount: open.length,
+          businessNameAt: (i) => 'Mağaza $i',
+          categoryAt: (_) => 'market',
+          distanceKmAt: (_) => 1.0,
+          searchQuery: '',
+          filterCategories: const [],
+          filterOpenNow: filterOpenNow,
+          filterDistanceKm: 10,
+          hasUserLocation: false,
+          isOpenNowAt: (i) => open[i],
+        );
+
+    test('hides only stores known to be closed', () {
+      final open = <bool?>[true, false, null, true, false, true];
+      expect(run(open: open, filterOpenNow: true), [0, 2, 3, 5]);
+    });
+
+    test('does not hide stores by index', () {
+      final open = List<bool?>.filled(11, true);
+      expect(run(open: open, filterOpenNow: true), hasLength(11));
+    });
+
+    test('filter off keeps closed stores', () {
+      expect(run(open: const [false, false], filterOpenNow: false), [0, 1]);
+    });
+
+    test('empty result under open-now filter reports a filter message', () {
+      expect(
+        resolveMapFilteredEmptyMessage(
+          rawCount: 3,
+          markerCount: 3,
+          filteredCount: 0,
+          searchQuery: '',
+          filterCategories: const [],
+          hasUserLocation: false,
+          filterDistanceKm: 10,
+          filterOpenNow: true,
+        ),
+        'Filtreye uygun mağaza bulunamadı.',
+      );
+    });
+  });
+
   group('filterMapStoreIndices', () {
+    test('search matches Turkish dotted/dotless I regardless of case', () {
+      const trNames = <String>['İstanbul Kebap', 'ISITICI Dünyası', 'Çiçekçi'];
+      List<int> search(String query) => filterMapStoreIndices(
+            businessCount: trNames.length,
+            businessNameAt: (i) => trNames[i],
+            categoryAt: (_) => 'market',
+            distanceKmAt: (_) => 1.0,
+            searchQuery: query,
+            filterCategories: const [],
+            filterOpenNow: false,
+            filterDistanceKm: 10,
+            hasUserLocation: false,
+          );
+      expect(search('istanbul'), [0]);
+      expect(search('İSTANBUL'), [0]);
+      expect(search('ısıtıcı'), [1]);
+      expect(search('cicek'), [2]);
+      expect(search('  kebap '), [0]);
+    });
+
     const names = <String>['Mağaza A', 'Mağaza B', 'Uzak Mağaza'];
     const categories = <String>['restoran', 'market', 'restoran'];
     const distances = <double?>[1.0, 5.0, 25.0];

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/services/restaurant_offline/lan_client_key.dart';
+import 'package:ibul_app/services/restaurant_offline/lan_tls.dart';
 
 void main() {
   test('phone key request is accepted by openssl and hides the private key', () async {
@@ -18,5 +19,13 @@ void main() {
     ]);
     expect(verified.exitCode, 0, reason: '${verified.stderr}');
     expect('${verified.stdout}${verified.stderr}', contains('verify OK'));
+  });
+
+  test('iOS never starts a chmod process for the device key', () {
+    bool needs({required bool isWindows, required bool isIOS}) =>
+        LanTlsMaterial.restrictNeedsChmod(isWindows: isWindows, isIOS: isIOS);
+    expect(needs(isWindows: false, isIOS: true), isFalse);
+    expect(needs(isWindows: true, isIOS: false), isFalse);
+    expect(needs(isWindows: false, isIOS: false), isTrue);
   });
 }

@@ -120,7 +120,8 @@ void main() {
       messages.add(OfflineStartDecision(verdict).message);
     }
     expect(messages, hasLength(OfflineStartVerdict.values.length));
-    expect(offlineOperationModuleNames, {'garson', 'system'});
+    // İnternetsiz üç sayfa: Genel Bakış, Garson, Sistem.
+    expect(offlineOperationModuleNames, {'dashboard', 'garson', 'system'});
   });
 
   test('staff lose offline access after 12 hours, the owner after 72', () {

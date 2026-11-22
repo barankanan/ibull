@@ -41,6 +41,7 @@ class _TableHistoryScreenState extends State<TableHistoryScreen> {
   DateTimeRange? _customRange;
 
   List<TableOrderHistoryRecord> _records = const [];
+  String _searchQuery = '';
   bool _isLoading = false;
   String? _error;
 
@@ -255,6 +256,7 @@ class _TableHistoryScreenState extends State<TableHistoryScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildFilterBar(),
+          _buildSearchField(),
           Expanded(child: _buildContent()),
         ],
       ),
@@ -296,6 +298,23 @@ class _TableHistoryScreenState extends State<TableHistoryScreen> {
               icon: Icons.date_range_rounded,
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchField() {
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+      child: TextField(
+        onChanged: (value) => setState(() => _searchQuery = value),
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          isDense: true,
+          prefixIcon: const Icon(Icons.search_rounded, size: 18),
+          hintText: 'Masa, garson veya ürün ara',
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
         ),
       ),
     );
@@ -353,11 +372,34 @@ class _TableHistoryScreenState extends State<TableHistoryScreen> {
       );
     }
 
+    final visible = filterTableHistoryRecords<TableOrderHistoryRecord>(
+      _records,
+      _searchQuery,
+      toMap: (record) => record.toMap(),
+    );
+    if (visible.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            _hasMore
+                ? 'Yüklenen kayıtlarda eşleşme yok. Daha eski kayıtlar için dönemi değiştirin.'
+                : 'Aramayla eşleşen geçmiş masa yok.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFF94A3B8),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: [
         PastTablesGroupedSections(
-          records: _records,
+          records: visible,
           cardBuilder: _buildHistoryCard,
         ),
         if (_hasMore) ...[

@@ -37,7 +37,13 @@ enum PrintBridgeAgent {
   }
 
   private static func liveRegistrationAllowed() -> Bool {
-    ProcessInfo.processInfo.environment["IBUL_ALLOW_LIVE_PRINT_AGENT"] == "1"
+    // A release build opts in through its Info.plist (build setting
+    // IBUL_ALLOW_LIVE_PRINT_AGENT = YES); every other build stays refused.
+    if ProcessInfo.processInfo.environment["IBUL_ALLOW_LIVE_PRINT_AGENT"] == "1" {
+      return true
+    }
+    let flag = Bundle.main.object(forInfoDictionaryKey: "IbulAllowLivePrintAgent") as? String
+    return flag?.uppercased() == "YES"
   }
 
   private static func refuseLive(_ plistName: String) -> [String: Any]? {
@@ -185,7 +191,7 @@ enum PrintBridgeAgent {
     case .enabled:
       return "Yazıcı servisi sisteme kayıtlı."
     case .requiresApproval:
-      return "Yazıcı servisinin açılışta çalışması için Sistem Ayarları’nda izin vermeniz gerekiyor. İzin verilmeden servis başlatılmaz."
+      return "Yazıcı servisinin çalışması için Sistem Ayarları’nda izin vermeniz gerekiyor. İzin verilmeden servis başlatılmaz."
     case .notRegistered:
       return "Yazıcı servisi henüz sisteme kayıtlı değil."
     case .notFound:

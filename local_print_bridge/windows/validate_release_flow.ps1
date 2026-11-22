@@ -57,7 +57,8 @@ Assert-True (Test-Path $bridgeLogPath) "Bridge log dosyasi bulunamadi: $bridgeLo
 Write-Host "[5/9] Otomatik baslatma kaydi kontrolu..."
 $runPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $runValue = (Get-ItemProperty -Path $runPath -Name "IbulLocalPrintBridge" -ErrorAction SilentlyContinue).IbulLocalPrintBridge
-Assert-True (![string]::IsNullOrWhiteSpace($runValue)) "Autostart kaydi bulunamadi"
+# Servis Windows acilisinda baslamaz; Ibul Satici acilinca baslar.
+Assert-True ([string]::IsNullOrWhiteSpace($runValue)) "Autostart kaydi kalmis: servis acilista baslamamali"
 
 Write-Host "[6/9] Prensip kontrolu: /printers endpoint"
 $printersUri = "http://$BridgeHost`:$BridgePort/printers"

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/models/desktop_printer_setup_models.dart';
 import 'package:ibul_app/models/printer_model.dart';
@@ -145,14 +146,35 @@ void main() {
       service: _FakeLocalPrintService(),
     );
 
+    // Clipboard platform channel has no default handler in widget tests;
+    // without it Clipboard.setData never completes and the snackbar never shows.
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
     await goToStep(tester, 'Sistem Kontrolü');
     await tester.tap(find.text('Logları Kopyala').first);
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
 
     expect(
       find.text('Bridge durumu ve son yazdırma logları panoya kopyalandı.'),
       findsOneWidget,
     );
+    expect(copied, contains('recent_print_logs'));
   });
 
   testWidgets('Printers empty shows not found message', (tester) async {

@@ -229,10 +229,8 @@ void main() {
         expect(resolution.payload['host'], '192.168.1.100');
         expect(resolution.payload['port'], 9100);
         expect(resolution.payload['paper_width_mm'], 80);
-        expect(
-          resolution.payload['printer_profile'],
-          'generic_80mm_escpos',
-        );
+        // Ethernet profiles are canonicalized to DB-safe ids (pos80 = 80mm/576px).
+        expect(resolution.payload['printer_profile'], 'pos80');
         expect(resolution.payload['render_mode'], 'image');
         expect(resolution.payload['raster_width_px'], 576);
       },

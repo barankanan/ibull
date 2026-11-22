@@ -201,6 +201,10 @@ List<SellerProduct> sellerProductsFromOfflineSnapshot(
       .map((row) {
         final map = Map<String, dynamic>.from(row);
         final id = map['id']?.toString() ?? '';
+        // Snapshots written before the stock was cached carry no stock.
+        // A missing value must not read as "sold out": offline the stock
+        // cannot be checked anyway, so the product stays orderable.
+        if (map['stock'] == null) map['stock'] = 999;
         return SellerProduct.fromMap(map, id);
       })
       .where((product) => product.id.trim().isNotEmpty)

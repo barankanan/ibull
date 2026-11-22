@@ -30,6 +30,7 @@
 		33CC11132044BFA00003C045 /* MainFlutterWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC11122044BFA00003C045 /* MainFlutterWindow.swift */; };
 		7ED46740F4CF3340276754FC /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5647D745EF5F15B4A239323A /* Pods_Runner.framework */; };
 		A7C3E1B34F6091D0A11B2202 /* PrintBridgeAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C3E1B44F6091D0A11B2203 /* PrintBridgeAgent.swift */; };
+		A7C3E1B64F6091D0A11B2205 /* LanBonjour.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C3E1B54F6091D0A11B2204 /* LanBonjour.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -92,6 +93,7 @@
 		9FFE63697F09BC77C8DE622C /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
 		A0FF1E570000000000000001 /* AppInfo-Offlinetest.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "AppInfo-Offlinetest.xcconfig"; sourceTree = "<group>"; };
 		A7C3E1B44F6091D0A11B2203 /* PrintBridgeAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintBridgeAgent.swift; sourceTree = "<group>"; };
+		A7C3E1B54F6091D0A11B2204 /* LanBonjour.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanBonjour.swift; sourceTree = "<group>"; };
 		AD36BCA8649B7240B78987F9 /* Pods-Runner.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"; sourceTree = "<group>"; };
 		B1BF91CCCA0E8B372F078B72 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
 		C5A100000000000000000001 /* Customer.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Customer.xcconfig; sourceTree = "<group>"; };
@@ -191,6 +193,7 @@
 			children = (
 				33CC10F02044A3C60003C045 /* AppDelegate.swift */,
 				A7C3E1B44F6091D0A11B2203 /* PrintBridgeAgent.swift */,
+				A7C3E1B54F6091D0A11B2204 /* LanBonjour.swift */,
 				33CC11122044BFA00003C045 /* MainFlutterWindow.swift */,
 				33E51913231747F40026EE4D /* DebugProfile.entitlements */,
 				33E51914231749380026EE4D /* Release.entitlements */,
@@ -456,7 +459,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"$SRCROOT/../scripts/embed_print_bridge_macos.sh\"\n";
+			shellScript = "\"$SRCROOT/../scripts/embed_print_bridge_macos.sh\" && sh \"$SRCROOT/../scripts/macos_seller_display_name.sh\"\n";
 		};
 		C5A100000000000000000051 /* Guard macOS app entry */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -527,6 +530,7 @@
 			files = (
 				33CC11132044BFA00003C045 /* MainFlutterWindow.swift in Sources */,
 				A7C3E1B34F6091D0A11B2202 /* PrintBridgeAgent.swift in Sources */,
+				A7C3E1B64F6091D0A11B2205 /* LanBonjour.swift in Sources */,
 				33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */,
 				335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */,
 			);
@@ -658,7 +662,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 33E5194F232828860026EE4D /* AppInfo.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = SellerAppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/DebugProfile.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
@@ -792,7 +796,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 33E5194F232828860026EE4D /* AppInfo.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = SellerAppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/DebugProfile.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
@@ -814,7 +818,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 33E5194F232828860026EE4D /* AppInfo.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = SellerAppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/Release.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
@@ -876,7 +880,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = A0FF1E570000000000000001 /* AppInfo-Offlinetest.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = SellerAppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/DebugProfile.entitlements;
 				CODE_SIGN_IDENTITY = "-";

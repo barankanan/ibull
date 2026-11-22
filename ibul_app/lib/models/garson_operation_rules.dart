@@ -261,9 +261,16 @@ abstract final class KitchenPrintPolicy {
   /// sheet (i.e., it has already been sent to the kitchen and can be
   /// re-dispatched without a diff).
   ///
-  /// Equivalent to [GarsonOperationRules.canResend] for a single order.
-  static bool canReprint(String? status) =>
-      GarsonOperationRules.forStatus(status).canResend;
+  /// Follows [GarsonOperationRules.canResend], except for a served order:
+  /// its edits still go to the kitchen as diff tickets (additions/removals),
+  /// but a full manual reprint would make the kitchen prepare food that has
+  /// already been delivered.
+  static bool canReprint(String? status) {
+    if (GarsonOrderStatus.normalise(status) == GarsonOrderStatus.served) {
+      return false;
+    }
+    return GarsonOperationRules.forStatus(status).canResend;
+  }
 
   // ── Print note constants ──────────────────────────────────────────────────
   /// Note appended to "add items" diff print jobs.

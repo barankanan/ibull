@@ -30,7 +30,10 @@ on conflict (name) do update set ok = excluded.ok;
 create table if not exists public.store_branches (
   id uuid primary key,
   store_id uuid not null,
-  status text not null
+  status text not null,
+  name text,
+  is_primary boolean not null default false,
+  created_at timestamptz default now()
 );
 create table if not exists public.store_sub_admins (
   id uuid primary key default gen_random_uuid(),

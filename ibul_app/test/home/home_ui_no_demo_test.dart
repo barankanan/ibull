@@ -82,7 +82,9 @@ void main() {
     test('home_screen_core has non-empty body sections when revealed', () {
       final core = File('lib/screens/home_screen_core.dart').readAsStringSync();
       expect(core, contains('_buildHomeSections'));
-      expect(core, contains('IbulOpportunityShortcutsSection'));
+      // Web kısayol şeridi 9cc3c71 ile ana sayfadan bilinçli kaldırıldı;
+      // mobil kısayollar IbulMobileHomeChrome/FeatureMenu içinde.
+      expect(core, contains('HomeNearbyDiscoverySection'));
       expect(core, contains('IbulMobileHomeChrome'));
       expect(core, contains('IbulHeroCampaignRow'));
       expect(core, contains('DeferredHomeFullRailSection'));

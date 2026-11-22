@@ -77,4 +77,69 @@ void main() {
     expect(gate.revoked, isTrue);
     expect(gate.permissions, isEmpty);
   });
+
+  group('resolveStaffMenuGate', () {
+    Map<String, dynamic> row(String status) => <String, dynamic>{
+      'status': status,
+      'staff_role': 'seller',
+      'permissions': <String>['orders.view'],
+      'job_title': 'Müdür',
+    };
+
+    test('deactivated membership is revoked even without the managed flag', () {
+      for (final status in <String>['inactive', 'passive', 'pasif', '']) {
+        final gate = resolveStaffMenuGate(
+          managedStaff: false,
+          ownsStore: false,
+          membership: row(status),
+        );
+        expect(gate.revoked, isTrue, reason: 'status=$status');
+      }
+    });
+
+    test('deactivated membership is revoked with the managed flag too', () {
+      expect(
+        resolveStaffMenuGate(
+          managedStaff: true,
+          ownsStore: false,
+          membership: row('inactive'),
+        ).revoked,
+        isTrue,
+      );
+    });
+
+    test('active membership keeps its permissions and title', () {
+      final gate = resolveStaffMenuGate(
+        managedStaff: true,
+        ownsStore: false,
+        membership: row('active'),
+      );
+      expect(gate.revoked, isFalse);
+      expect(gate.restrict, isTrue);
+      expect(gate.permissions, contains('orders.view'));
+      expect(gate.jobTitle, 'Müdür');
+    });
+
+    test('owner without the managed flag is not restricted', () {
+      final gate = resolveStaffMenuGate(
+        managedStaff: false,
+        ownsStore: true,
+        membership: null,
+      );
+      expect(gate.restrict, isFalse);
+      expect(gate.revoked, isFalse);
+    });
+
+    test('managed account with no membership row is revoked', () {
+      expect(
+        resolveStaffMenuGate(
+          managedStaff: true,
+          ownsStore: false,
+          membership: null,
+        ).revoked,
+        isTrue,
+      );
+    });
+  });
 }
+

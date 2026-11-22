@@ -9,9 +9,9 @@ PAYLOAD="$STAGE/payload/Library/Application Support/IbulPrintBridgeIsolatedTest"
 SCRIPTS="$STAGE/scripts"
 mkdir -p "$PAYLOAD" "$SCRIPTS"
 
-HELPER="$ROOT/build/macos/Build/Products/Release/IbulSellerDesktop.app/Contents/MacOS/IbulPrintBridge"
+HELPER="$ROOT/build/macos/Build/Products/Release/IbulSellerDesktop.app/Contents/Resources/PrintBridge/IbulPrintBridge"
 if [ ! -x "$HELPER" ]; then
-  HELPER="$ROOT/build/macos/Build/Products/Debug/IbulSellerDesktop.app/Contents/MacOS/IbulPrintBridge"
+  HELPER="$ROOT/build/macos/Build/Products/Debug/IbulSellerDesktop.app/Contents/Resources/PrintBridge/IbulPrintBridge"
 fi
 if [ ! -x "$HELPER" ]; then
   echo "IbulPrintBridge is not in the built Seller app." >&2

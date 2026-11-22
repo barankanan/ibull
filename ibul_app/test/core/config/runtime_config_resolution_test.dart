@@ -389,6 +389,51 @@ void main() {
       );
     });
 
+    test('izole test köprüsü yalnız 18771 olabilir; 3001 ve diğer portlar reddedilir', () {
+      Uri bridge(int port) => AppRuntimeConfig.localPrintBridgeUri(
+        isolatedDesktop: true,
+        isolatedBridgePort: port,
+      );
+      expect(bridge(18771).toString(), 'http://127.0.0.1:18771');
+      // Tanımsız (0), canlı köprü ve rastgele portlar erişilemeyen adrese düşer.
+      for (final port in <int>[0, 3001, 18772, 18773, 9100, 80]) {
+        expect(bridge(port).port, 9, reason: 'port $port');
+      }
+      // Kayıtlı 3001 adresi izole modda test köprüsüne, yoksa ölü adrese gider.
+      expect(
+        AppRuntimeConfig.coercePrintBridgeUri(
+          Uri.parse('http://127.0.0.1:3001/print'),
+          isolatedDesktop: true,
+          isolatedBridgePort: 18771,
+        ).port,
+        18771,
+      );
+      expect(
+        AppRuntimeConfig.coercePrintBridgeUri(
+          Uri.parse('http://localhost:3001/print'),
+          isolatedDesktop: true,
+          isolatedBridgePort: 3001,
+        ).port,
+        9,
+      );
+      // Üretim yapılandırması etkilenmez.
+      expect(
+        AppRuntimeConfig.localPrintBridgeUri(
+          isolatedDesktop: false,
+          isolatedBridgePort: 18771,
+        ).port,
+        3001,
+      );
+      expect(
+        AppRuntimeConfig.coercePrintBridgeUri(
+          Uri.parse('http://127.0.0.1:3001/print'),
+          isolatedDesktop: false,
+          isolatedBridgePort: 18771,
+        ).port,
+        3001,
+      );
+    });
+
     test('izole LaunchAgent production kimliğini taşımaz ve açılışta başlamaz', () {
       final file = File(
         '../macos/Runner/Library/LaunchAgents/com.ibul.localprint.isolated-test.plist',
@@ -412,6 +457,125 @@ void main() {
       expect(
         live.readAsStringSync().contains('<string>com.ibul.sellerdesktop</string>'),
         isTrue,
+      );
+    });
+
+    test('yazıcı servisi açılışta değil, ilk istekte başlar (macOS ve Windows)', () {
+      for (final name in <String>[
+        'com.ibul.localprint.plist',
+        'com.ibul.localprint.isolated-test.plist',
+      ]) {
+        final text = File('../macos/Runner/Library/LaunchAgents/$name')
+            .readAsStringSync();
+        expect(
+          RegExp(r'<key>RunAtLoad</key>\s*<false/>').hasMatch(text),
+          isTrue,
+          reason: name,
+        );
+        // launchd treats SuccessfulExit as "run at load".
+        expect(text.contains('SuccessfulExit'), isFalse, reason: name);
+        expect(text.contains('<key>Sockets</key>'), isTrue, reason: name);
+        expect(text.contains('PRINT_BRIDGE_LAUNCHD_SOCKET'), isTrue, reason: name);
+      }
+      final setup = File('../windows/installer/IbulSellerSetup.iss')
+          .readAsStringSync();
+      expect(setup.contains('RegWriteStringValue'), isFalse);
+      expect(setup.contains('Flags: deletevalue'), isTrue);
+      expect(setup.contains('profile=private'), isTrue);
+      expect(
+        File('../windows/runner/main.cpp')
+            .readAsStringSync()
+            .contains('IbulSellerDesktop.SingleInstance'),
+        isTrue,
+      );
+    });
+  });
+
+  group('controlled test bridge', () {
+    test('a print-disabled build pointed at 18771 never resolves to 3001', () {
+      final uri = AppRuntimeConfig.localPrintBridgeUri(
+        isolatedDesktop: false,
+        printStartDisabled: true,
+        isolatedBridgePort: 18771,
+      );
+      expect(uri.port, 18771);
+      expect(
+        AppRuntimeConfig.coercePrintBridgeUri(
+          Uri.parse('http://127.0.0.1:3001'),
+          isolatedDesktop: false,
+          printStartDisabled: true,
+          isolatedBridgePort: 18771,
+        ).port,
+        18771,
+      );
+    });
+
+    test('printing disabled never reaches 3001; printing enabled keeps it', () {
+      expect(
+        AppRuntimeConfig.localPrintBridgeUri(
+          isolatedDesktop: false,
+          printStartDisabled: true,
+          isolatedBridgePort: 4000,
+        ).toString(),
+        AppRuntimeConfig.isolatedProbeUrl,
+      );
+      expect(
+        AppRuntimeConfig.localPrintBridgeUri(
+          isolatedDesktop: false,
+          printStartDisabled: false,
+          isolatedBridgePort: 18771,
+        ).port,
+        3001,
+      );
+      expect(
+        AppRuntimeConfig.controlledTestBridge(
+          printStartDisabled: false,
+          isolatedBridgePort: 18771,
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('print-disabled production build never reaches the live bridge', () {
+    test('localPrintBridgeUri goes to the dead probe, not port 3001', () {
+      final uri = AppRuntimeConfig.localPrintBridgeUri(
+        isolatedDesktop: false,
+        printStartDisabled: true,
+        isolatedBridgePort: 0,
+      );
+      expect(uri.toString(), AppRuntimeConfig.isolatedProbeUrl);
+    });
+
+    test('coercePrintBridgeUri rewrites 3001 but leaves other hosts', () {
+      expect(
+        AppRuntimeConfig.coercePrintBridgeUri(
+          Uri.parse('http://127.0.0.1:3001'),
+          isolatedDesktop: false,
+          printStartDisabled: true,
+          isolatedBridgePort: 0,
+        ).toString(),
+        AppRuntimeConfig.isolatedProbeUrl,
+      );
+      expect(
+        AppRuntimeConfig.coercePrintBridgeUri(
+          Uri.parse('http://192.168.1.5:3001'),
+          isolatedDesktop: false,
+          printStartDisabled: true,
+          isolatedBridgePort: 0,
+        ).host,
+        '192.168.1.5',
+      );
+    });
+
+    test('print enabled keeps the live bridge', () {
+      expect(
+        AppRuntimeConfig.localPrintBridgeUri(
+          isolatedDesktop: false,
+          printStartDisabled: false,
+          isolatedBridgePort: 0,
+        ).port,
+        3001,
       );
     });
   });

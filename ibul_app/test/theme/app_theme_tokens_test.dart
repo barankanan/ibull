@@ -79,10 +79,16 @@ void main() {
       'lib/app/full_app.dart',
     ]) {
       final source = File(path).readAsStringSync();
-      expect(source, contains('kIbulLocale'));
-      expect(source, contains('kIbulSupportedLocales'));
+      // Locale kilidi ortak IbulMaterialApp kabuğunda; ürün uygulamaları
+      // kendi MaterialApp'ini kurmadan bu kabuğu kullanmalı.
+      expect(source, contains('IbulMaterialApp('));
+      expect(source, isNot(contains('MaterialApp.router(')));
       expect(source, isNot(contains("Locale('en')")));
     }
+    final shell = File('lib/app/ibul_material_app.dart').readAsStringSync();
+    expect(shell, contains('locale: kIbulLocale'));
+    expect(shell, contains('supportedLocales: kIbulSupportedLocales'));
+    expect(shell, isNot(contains("Locale('en')")));
   });
 
   testWidgets('IbulPageState empty and error render shared copy', (tester) async {

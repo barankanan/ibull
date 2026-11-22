@@ -175,6 +175,21 @@ class KitchenTicketHeaderResolver {
     }
   }
 
+  /// Forgets one product's station (the operator set it to "Atanmadı").
+  static void removeProductStationMapping({
+    required String restaurantId,
+    required String productId,
+    String productName = '',
+  }) {
+    final id = restaurantId.trim();
+    if (id.isEmpty) return;
+    _productMappingsByRestaurant[id]?.remove(productId.trim());
+    final nameKey = normalizeProductNameKey(productName);
+    if (nameKey.isNotEmpty) {
+      _productMappingsByNormalizedNameByRestaurant[id]?.remove(nameKey);
+    }
+  }
+
   /// Bellek önbelleğindeki normalize ürün adı → istasyon eşlemelerini birleştirir.
   static void mergeProductNameMappings(
     String restaurantId,

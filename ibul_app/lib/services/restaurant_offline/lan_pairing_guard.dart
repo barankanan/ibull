@@ -1,37 +1,54 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
+
 /// One order authority per restaurant on this computer.
+///
+/// The claim is an operating-system file lock held for as long as the process
+/// lives, not a pid that must be probed with `kill -0`: a sandboxed app cannot
+/// start `kill`, and a lock disappears by itself when a crashed process dies,
+/// so a stale file never blocks the next start.
 class LanAuthorityLock {
   LanAuthorityLock(this.file);
 
-  static final Set<String> _held = <String>{};
+  static final Map<String, RandomAccessFile> _held = <String, RandomAccessFile>{};
 
   final File file;
 
   Future<bool> acquire() async {
-    if (_held.contains(file.path)) return false;
-    if (file.existsSync()) {
-      final owner = int.tryParse(file.readAsStringSync().trim());
-      if (owner != null && owner != pid && _alive(owner)) return false;
-    }
+    if (_held.containsKey(file.path)) return false;
     file.parent.createSync(recursive: true);
-    file.writeAsStringSync('$pid');
-    _held.add(file.path);
+    RandomAccessFile? handle;
+    try {
+      handle = file.openSync(mode: FileMode.append);
+      handle.lockSync(FileLock.exclusive);
+    } on FileSystemException {
+      handle?.closeSync();
+      return false;
+    }
+    try {
+      handle.truncateSync(0);
+      handle.writeStringSync('$pid');
+      handle.flushSync();
+    } catch (_) {}
+    _held[file.path] = handle;
     return true;
   }
 
   Future<void> release() async {
-    _held.remove(file.path);
-    if (!file.existsSync()) return;
-    final owner = int.tryParse(file.readAsStringSync().trim());
-    if (owner == pid) file.deleteSync();
-  }
-
-  bool _alive(int owner) {
-    if (Platform.isWindows) return true;
-    final result = Process.runSync('kill', <String>['-0', '$owner']);
-    return result.exitCode == 0;
+    final handle = _held.remove(file.path);
+    if (handle == null) return;
+    try {
+      handle.unlockSync();
+    } catch (_) {}
+    try {
+      handle.closeSync();
+    } catch (_) {}
+    try {
+      if (file.existsSync()) file.deleteSync();
+    } catch (_) {}
   }
 }
 
@@ -83,6 +100,40 @@ bool pairingSecretMatches(String expected, String presented) {
     difference |= expected.codeUnitAt(index) ^ presented.codeUnitAt(index);
   }
   return difference == 0;
+}
+
+/// Commitment to a nonce that is revealed later (host-approved pairing).
+String lanPairingCommit(String nonce) {
+  return sha256.convert(utf8.encode(nonce.trim())).toString();
+}
+
+/// The six digits both screens show during host-approved pairing.
+///
+/// It binds the server certificate the device actually reached, the device's
+/// certificate request and one fresh nonce from each side. The device commits
+/// to its nonce before it sees the host's, and the host answers before the
+/// device reveals, so a relay in the middle cannot steer both screens to the
+/// same digits. Equal digits mean the phone and this computer talk to each
+/// other directly.
+String lanPairingMatchCode({
+  required String serverFingerprint,
+  required String csr,
+  required String deviceNonce,
+  required String hostNonce,
+}) {
+  final fingerprint = serverFingerprint.replaceAll(':', '').trim().toLowerCase();
+  final request = sha256.convert(utf8.encode(csr.trim())).toString();
+  final digest = sha256.convert(
+    utf8.encode(
+      <String>[fingerprint, request, deviceNonce.trim(), hostNonce.trim()]
+          .join('|'),
+    ),
+  );
+  var value = 0;
+  for (final byte in digest.bytes.take(6)) {
+    value = (value * 256 + byte) % 1000000;
+  }
+  return value.toString().padLeft(6, '0');
 }
 
 /// SHA-1 device ids from older enrollments are 40 hex characters.

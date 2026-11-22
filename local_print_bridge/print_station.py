@@ -19,6 +19,7 @@ from .config import BridgeSettings, EscPosProfile, write_env_file
 from .kitchen import KitchenRenderer
 from .log_store import PrintLogStore
 from .models import KitchenPayload, ReceiptItem, ReceiptPayload, ReceiptTotals
+from .network_transport import write_may_have_started
 from .queue_manager import PrintQueueManager
 from .raster import (
     KitchenBitmapRenderer,
@@ -71,6 +72,9 @@ class PrintStationRuntimeConfig:
     heartbeat_interval_ms: int
     max_retry_count: int
     print_system_enabled: bool
+    # Jobs created before this moment (ISO 8601) belong to an earlier session:
+    # they are held for the operator, never printed by themselves.
+    jobs_not_before: str = ""
 
     @property
     def ready(self) -> bool:
@@ -121,7 +125,38 @@ def load_print_station_runtime_config() -> PrintStationRuntimeConfig:
         ),
         max_retry_count=_int("PRINT_STATION_MAX_RETRY_COUNT", 5, 0),
         print_system_enabled=_bool("PRINT_SYSTEM_ENABLED"),
+        jobs_not_before=_text("PRINT_STATION_JOBS_NOT_BEFORE"),
     )
+
+
+HELD_OLD_JOB_NOTE = "Yazıcı merkezi kapalıyken bekledi. Yazdırmak için kuyruktan başlatın."
+
+
+def _parse_instant(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def job_is_from_before(job: dict[str, Any], not_before: str) -> bool:
+    """True when the job was created before the center was started.
+
+    Without a limit nothing is old. A job whose time cannot be read while a
+    limit is set counts as old: holding it costs one tap, printing it by
+    mistake cannot be undone.
+    """
+    limit = _parse_instant(not_before)
+    if limit is None:
+        return False
+    created = _parse_instant(job.get("created_at"))
+    return created is None or created < limit
 
 
 class PrintStationConsumer:
@@ -325,7 +360,23 @@ class PrintStationConsumer:
         for job in jobs:
             if self._stop_event.is_set():
                 return
+            if job_is_from_before(job, config.jobs_not_before):
+                self._hold_old_job(config, job)
+                continue
             self._process_one_job(config, job)
+
+    def _hold_old_job(self, config: PrintStationRuntimeConfig, job: dict[str, Any]) -> None:
+        job_id = str(job.get("id") or "").strip()
+        if not job_id:
+            return
+        try:
+            self._update_job(
+                config,
+                job_id,
+                {"status": "paused_by_operator", "last_error": HELD_OLD_JOB_NOTE},
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("holding old job %s failed: %s", job_id, exc)
 
     def _sync_heartbeat(self, config: PrintStationRuntimeConfig) -> None:
         payload = {
@@ -452,45 +503,6 @@ class PrintStationConsumer:
                     payload=payload,
                     selected_printer=selected_printer,
                 )
-            completed_at = _utc_now_iso()
-            self._record_dispatched_job(job_id, idempotency_key)
-            self._update_job(
-                config,
-                job_id,
-                {
-                    "status": "completed",
-                    "printed_at": completed_at,
-                    "completed_at": completed_at,
-                    "printer_write_started_at": bridge_result.get(
-                        "printer_write_started_at",
-                    ),
-                    "printer_write_completed_at": bridge_result.get(
-                        "printer_write_completed_at",
-                    ),
-                    "last_error": None,
-                },
-            )
-            self._postgrest_upsert(
-                config,
-                "restaurant_print_station_configs",
-                {
-                    "restaurant_id": config.restaurant_id,
-                    "bridge_enabled": True,
-                    "bridge_status": "online",
-                    "last_seen_at": _utc_now_iso(),
-                    "last_job_received_at": dispatch_started_at,
-                    "last_job_completed_at": completed_at,
-                    "last_error": None,
-                    "updated_at": completed_at,
-                },
-            )
-            self._update_snapshot(
-                completedCount=int(self.snapshot().get("completedCount") or 0) + 1,
-                lastCompletedAt=completed_at,
-                lastError=None,
-                status="idle",
-            )
-            LOGGER.info("print-station job success: job_id=%s", job_id)
         except Exception as exc:  # noqa: BLE001
             retry_count = int(job.get("retry_count") or 0) + 1
             error_text = str(exc)
@@ -525,6 +537,93 @@ class PrintStationConsumer:
                 retry_count,
                 error_text,
             )
+            return
+
+        # The printer accepted the ticket. From here on nothing may put the job
+        # back to 'pending': a bookkeeping failure must never cause a reprint.
+        self._record_dispatched_job(job_id, idempotency_key)
+        self._finalize_printed_job(
+            config,
+            job_id,
+            bridge_result=bridge_result,
+            dispatch_started_at=dispatch_started_at,
+        )
+
+    def _finalize_printed_job(
+        self,
+        config: PrintStationRuntimeConfig,
+        job_id: str,
+        *,
+        bridge_result: dict[str, Any],
+        dispatch_started_at: str,
+    ) -> None:
+        if not isinstance(bridge_result, dict):
+            bridge_result = {}
+        completed_at = _utc_now_iso()
+        completed_update: dict[str, Any] = {
+            "status": "completed",
+            "printed_at": completed_at,
+            "completed_at": completed_at,
+            "printer_write_started_at": bridge_result.get("printer_write_started_at"),
+            "printer_write_completed_at": bridge_result.get(
+                "printer_write_completed_at",
+            ),
+            "last_error": None,
+        }
+        status_error = ""
+        try:
+            self._update_job(config, job_id, completed_update)
+        except Exception as exc:  # noqa: BLE001
+            status_error = (
+                f"Baskı yapıldı ancak DB güncellemesi başarısız oldu: {exc}"
+            )
+            LOGGER.error(
+                "print-station status update failed after print: job_id=%s error=%s",
+                job_id,
+                exc,
+            )
+            try:
+                self._update_job(
+                    config,
+                    job_id,
+                    {**completed_update, "last_error": status_error},
+                )
+            except Exception as retry_exc:  # noqa: BLE001
+                # Left as 'printing' on the server; never reset to 'pending'.
+                LOGGER.error(
+                    "print-station status retry failed after print: "
+                    "job_id=%s error=%s",
+                    job_id,
+                    retry_exc,
+                )
+        try:
+            self._postgrest_upsert(
+                config,
+                "restaurant_print_station_configs",
+                {
+                    "restaurant_id": config.restaurant_id,
+                    "bridge_enabled": True,
+                    "bridge_status": "online",
+                    "last_seen_at": _utc_now_iso(),
+                    "last_job_received_at": dispatch_started_at,
+                    "last_job_completed_at": completed_at,
+                    "last_error": status_error or None,
+                    "updated_at": completed_at,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning(
+                "print-station heartbeat after print failed: job_id=%s error=%s",
+                job_id,
+                exc,
+            )
+        self._update_snapshot(
+            completedCount=int(self.snapshot().get("completedCount") or 0) + 1,
+            lastCompletedAt=completed_at,
+            lastError=status_error or None,
+            status="idle",
+        )
+        LOGGER.info("print-station job success: job_id=%s", job_id)
 
     def _claim_job(
         self,
@@ -780,6 +879,9 @@ class PrintStationConsumer:
         return f"{backend}:{queue_name}", queue_name, backend
 
     def _is_transient_transport_error(self, exc: Exception) -> bool:
+        # Bytes may already be on the printer: resending prints a duplicate.
+        if write_may_have_started(exc):
+            return False
         text = str(exc).lower()
         return any(
             marker in text

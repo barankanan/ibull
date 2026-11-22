@@ -3,19 +3,33 @@ import 'package:flutter/material.dart';
 import '../../../../core/constants.dart';
 import '../theme/seller_panel_theme.dart';
 
+/// Menu item state. Only "open" and "locked because the cloud is down".
+/// Pages the user has no permission for are NOT represented here: they are
+/// hidden from the menu entirely. Never mix "no permission" with
+/// "needs internet".
+enum SellerMenuItemState { open, lockedOffline }
+
 class SellerPanelMenuEntry {
   const SellerPanelMenuEntry({
     required this.icon,
     required this.label,
     required this.isActive,
     required this.onTap,
+    this.state = SellerMenuItemState.open,
   });
 
   final IconData icon;
   final String label;
   final bool isActive;
   final VoidCallback onTap;
+  final SellerMenuItemState state;
 }
+
+/// Text on the dark sidebar: white at 0.85 for locked titles (AA >= 4.5:1).
+const Color kSellerMenuSidebarColor = Color(0xFF111827);
+const Color kSellerMenuLockedTextColor = Color(0xD9FFFFFF);
+const Color kSellerMenuLockedIconColor = Color(0xB3FFFFFF);
+const String kSellerMenuLockedHint = 'İnternet gerekli';
 
 class SellerPanelShell extends StatelessWidget {
   const SellerPanelShell({
@@ -275,45 +289,104 @@ class SellerPanelSidebarItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final iconColor = item.isActive ? AppColors.primary : Colors.white70;
+    final locked = item.state == SellerMenuItemState.lockedOffline;
+    final selected = item.isActive && !locked;
+    final iconColor = selected
+        ? AppColors.primary
+        : (locked ? kSellerMenuLockedIconColor : Colors.white);
+    final textColor = selected
+        ? AppColors.primary
+        : (locked ? kSellerMenuLockedTextColor : Colors.white);
+    final icon = Icon(item.icon, size: 18, color: iconColor);
+    final leading = locked && collapsed
+        ? Stack(
+            clipBehavior: Clip.none,
+            children: [
+              icon,
+              const Positioned(
+                right: -5,
+                bottom: -4,
+                child: Icon(
+                  Icons.lock_outline_rounded,
+                  size: 10,
+                  color: kSellerMenuLockedTextColor,
+                ),
+              ),
+            ],
+          )
+        : icon;
+    final Widget content = collapsed
+        ? Center(child: leading)
+        : Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            child: Row(
+              children: [
+                leading,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: textColor,
+                          fontWeight: selected
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                        ),
+                      ),
+                      if (locked)
+                        const Text(
+                          kSellerMenuLockedHint,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: kSellerMenuLockedTextColor,
+                            fontSize: 11.5,
+                            height: 1.2,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                if (locked) ...[
+                  const SizedBox(width: 6),
+                  const Icon(
+                    Icons.lock_outline_rounded,
+                    size: 16,
+                    color: kSellerMenuLockedTextColor,
+                  ),
+                ],
+              ],
+            ),
+          );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 1.5),
       child: Material(
-        color: item.isActive ? Colors.white : Colors.transparent,
+        color: selected ? Colors.white : Colors.transparent,
         borderRadius: BorderRadius.circular(7),
         child: InkWell(
           borderRadius: BorderRadius.circular(7),
           onTap: item.onTap,
-          child: SizedBox(
-            height: 36,
+          mouseCursor: locked ? SystemMouseCursors.basic : null,
+          hoverColor: locked ? Colors.transparent : null,
+          highlightColor: locked ? Colors.transparent : null,
+          splashColor: locked ? Colors.transparent : null,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 44),
             child: collapsed
                 ? Tooltip(
-                    message: item.label,
+                    message: locked
+                        ? '${item.label}: $kSellerMenuLockedHint'
+                        : item.label,
                     preferBelow: false,
-                    child: Center(
-                      child: Icon(item.icon, size: 17, color: iconColor),
-                    ),
+                    child: SizedBox(height: 44, child: content),
                   )
-                : Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Row(
-                      children: [
-                        Icon(item.icon, size: 17, color: iconColor),
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: Text(
-                            item.label,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: iconColor,
-                              fontWeight: item.isActive
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                : content,
           ),
         ),
       ),

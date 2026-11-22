@@ -4,6 +4,10 @@ import 'package:ibul_app/services/bridge_manager.dart';
 
 void main() {
   test('shouldStartBridgeProcess is false on web', () async {
+    // Yalnızca web'de koşulsuz false. Masaüstünde bu çağrı gerçek bir yerel
+    // köprü sağlık yoklaması (127.0.0.1:3001) yapar; birim testi buna
+    // dokunmaz.
+    if (!kIsWeb) return;
     final shouldStart = await BridgeManager.shouldStartBridgeProcess();
     expect(shouldStart, isFalse);
   });

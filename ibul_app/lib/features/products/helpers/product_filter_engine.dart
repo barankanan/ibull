@@ -2,6 +2,7 @@ import '../../../models/category_attribute_filter_group.dart';
 import '../../../models/product_model.dart';
 import '../../../models/product_pricing.dart';
 import '../../../services/category_attribute_service.dart';
+import '../../../utils/text_normalizer.dart';
 import '../models/product_filter_models.dart';
 import 'product_filter_attribute_extractor.dart';
 import 'category_filter_config.dart';
@@ -216,11 +217,15 @@ class ProductFilterEngine {
     Map<String, ProductFilterMeta>? metaByProductId,
     String? searchQuery,
   }) {
-    final query = (searchQuery ?? '').trim().toLowerCase();
+    // Türkçe duyarsız eşleşme: `toLowerCase()` "I"yı "ı"ya çevirmez ve "İ"yi
+    // birleşik noktalı "i̇" yapar; bu yüzden "ısıtıcı" / "İPHONE" gibi sorgular
+    // sonuçsuz kalıyordu.
+    final query = TextNormalizer.normalize(searchQuery);
     return products.where((product) {
       if (query.isNotEmpty) {
-        final matchesSearch = product.name.toLowerCase().contains(query) ||
-            product.brand.toLowerCase().contains(query);
+        final matchesSearch =
+            TextNormalizer.normalize(product.name).contains(query) ||
+                TextNormalizer.normalize(product.brand).contains(query);
         if (!matchesSearch) return false;
       }
 

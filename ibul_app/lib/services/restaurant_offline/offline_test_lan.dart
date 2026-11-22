@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/secure_local_store.dart';
 import '../staff_login_policy.dart';
 import 'lan_cert_material.dart';
 import 'lan_interface.dart';
@@ -13,6 +14,51 @@ import 'restaurant_local_order_queue_service.dart';
 import 'restaurant_local_print_queue_service.dart';
 
 const offlineTestRestaurantId = 'offline-test-restaurant';
+
+/// Seller-entry hook. It does nothing unless the build was made with
+/// `--dart-define=IBUL_OFFLINE_TEST=true`, so a normal seller build never
+/// reaches the host. In test mode the launch gate runs first: a wrong bundle
+/// id, Keychain account, production Supabase address, LAN directory under the
+/// seller folder, or port 3001 stops the host before it starts. A failing
+/// start is logged and never takes the app down.
+///
+/// The arguments exist so the gate and the decision can be tested without a
+/// real app bundle; the defaults read the running app.
+Future<OfflineTestLaunch?> maybeStartOfflineTestLanHost({
+  required String supabaseUrl,
+  required String printBridgePort,
+  bool testMode = const bool.fromEnvironment('IBUL_OFFLINE_TEST'),
+  String? bundleId,
+  String? keychainAccount,
+  String? lanHome,
+  Future<void> Function() start = startOfflineTestLanHost,
+}) async {
+  if (!testMode) return null;
+  final launch = evaluateOfflineTestLaunch(
+    testMode: true,
+    bundleId: bundleId ??
+        (Platform.isMacOS
+            ? readMacBundleIdentifier(Platform.resolvedExecutable)
+            : ''),
+    keychainAccount: keychainAccount ?? SecureLocalStore.macOsAccountName,
+    supabaseUrl: supabaseUrl,
+    lanHome: lanHome ?? (Platform.environment['IBUL_LAN_HOME'] ?? ''),
+    printBridgePort: printBridgePort,
+  );
+  if (!launch.allowed) {
+    debugPrint(
+      '[OfflineTest] LAN host başlatılmadı: ${launch.failures.join(' | ')}',
+    );
+    return launch;
+  }
+  try {
+    await start();
+  } catch (error, stackTrace) {
+    debugPrint('[OfflineTest] LAN host açılamadı: $error');
+    debugPrintStack(stackTrace: stackTrace);
+  }
+  return launch;
+}
 
 /// Starts the existing host for the offline-test app only.
 /// Ports 18772 and 3001 are refused.

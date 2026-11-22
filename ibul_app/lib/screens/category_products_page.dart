@@ -25,6 +25,7 @@ import '../widgets/staggered_reveal.dart';
 import '../widgets/custom_header.dart';
 import '../widgets/address_bar.dart';
 import '../utils/category_product_filter.dart';
+import '../utils/text_normalizer.dart';
 import 'home_lazy_routes.dart';
 
 class CategoryProductsPage extends StatefulWidget {
@@ -587,11 +588,12 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
           if (_searchQuery.isEmpty) {
             _filteredProducts = _getDisplayProducts();
           } else {
-            final normalized = _searchQuery.toLowerCase();
+            // Türkçe duyarsız: "iskender" sorgusu "İskender" ile eşleşmeli.
+            final normalized = TextNormalizer.normalize(_searchQuery);
             final baseProducts = _getDisplayProducts();
             _filteredProducts = baseProducts.where((p) {
-              return p.name.toLowerCase().contains(normalized) ||
-                  p.brand.toLowerCase().contains(normalized);
+              return TextNormalizer.normalize(p.name).contains(normalized) ||
+                  TextNormalizer.normalize(p.brand).contains(normalized);
             }).toList();
           }
         });

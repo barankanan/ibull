@@ -336,3 +336,51 @@ class TableOrderHistoryUtils {
     return double.tryParse(value.toString().replaceAll(',', '.')) ?? 0;
   }
 }
+
+/// Search over already loaded past-table records. It matches the table label
+/// or number, the waiter and the product names of the bill. History rows do
+/// not store a customer name or phone, so those cannot be searched here.
+List<T> filterTableHistoryRecords<T>(
+  List<T> records,
+  String query, {
+  required Map<String, dynamic> Function(T record) toMap,
+}) {
+  final needle = _foldForHistorySearch(query);
+  if (needle.isEmpty) return records;
+  return records
+      .where((record) {
+        final row = toMap(record);
+        final haystack = StringBuffer()
+          ..write(TableOrderHistoryUtils.tableLabel(row))
+          ..write(' ')
+          ..write(row['table_number'] ?? '')
+          ..write(' masa ')
+          ..write(row['table_number'] ?? '')
+          ..write(' ')
+          ..write(row['waiter_name'] ?? '');
+        final items = row['items'];
+        if (items is List) {
+          for (final item in items) {
+            if (item is Map) {
+              haystack
+                ..write(' ')
+                ..write(item['name'] ?? item['product_name'] ?? '');
+            }
+          }
+        }
+        return _foldForHistorySearch(haystack.toString()).contains(needle);
+      })
+      .toList(growable: false);
+}
+
+String _foldForHistorySearch(String value) {
+  const from = 'İIıŞşĞğÜüÖöÇç';
+  const to = 'iiissgguuoocc';
+  final buffer = StringBuffer();
+  for (final rune in value.trim().runes) {
+    final ch = String.fromCharCode(rune);
+    final index = from.indexOf(ch);
+    buffer.write(index >= 0 ? to[index] : ch.toLowerCase());
+  }
+  return buffer.toString().replaceAll(RegExp(r'\s+'), ' ');
+}

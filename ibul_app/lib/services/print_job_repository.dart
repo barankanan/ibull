@@ -70,7 +70,9 @@ class PrintJobRepository {
     String printJobId, {
     bool operatorConfirmed = false,
   }) async {
-    if (!operatorConfirmed) return false;
+    if (!operatorConfirmed) {
+      throw StateError('Fişi kontrol edip manuel yeniden baskıyı onaylayın.');
+    }
     if (_retryingJobIds.contains(printJobId)) {
       return false;
     }
@@ -78,7 +80,7 @@ class PrintJobRepository {
     try {
       final current = await _client
           .from('print_jobs')
-          .select('retry_count, status')
+          .select('retry_count, status, payload')
           .eq('id', printJobId)
           .maybeSingle();
       final status = current?['status']?.toString().trim().toLowerCase() ?? '';
@@ -90,17 +92,27 @@ class PrintJobRepository {
         return false;
       }
 
-      await _client
+      final updated = await _client
           .from('print_jobs')
           .update({
             'status': 'pending',
             'retry_count': retryCount + 1,
             'last_error': null,
             'printed_at': null,
+            'payload': {
+              ...Map<String, dynamic>.from(current?['payload'] as Map? ?? {}),
+              'manual_reprint_token':
+                  '$printJobId-${DateTime.now().microsecondsSinceEpoch}',
+              'operator_reprint_confirmed_at':
+                  DateTime.now().toUtc().toIso8601String(),
+              'requires_operator_review': false,
+            },
           })
           .eq('id', printJobId)
-          .eq('status', 'failed');
-      return true;
+          .eq('status', 'failed')
+          .eq('retry_count', retryCount)
+          .select('id');
+      return updated.length == 1;
     } finally {
       _retryingJobIds.remove(printJobId);
     }

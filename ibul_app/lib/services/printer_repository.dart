@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart' show debugPrint, debugPrintStack;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/printer_model.dart';
@@ -48,6 +51,7 @@ class PrinterRepository implements PrinterRepositoryPort {
             error: error,
             stackTrace: stackTrace,
           );
+          Error.throwWithStackTrace(error, stackTrace);
         });
   }
 
@@ -73,8 +77,20 @@ class PrinterRepository implements PrinterRepositoryPort {
         'source=fetchPrinters sellerId=$restaurantId storeId=- '
             'backendPath=$backendPath printerCount=${printers.length}',
       );
+      await rememberLastGoodRows(_printersCacheKind, restaurantId, rows);
       return printers;
     } catch (error, stackTrace) {
+      // Without the cloud the kitchen ticket still needs its printer: the
+      // list last read from the server is used. Any other failure (denied,
+      // bad request) is not papered over.
+      final cached = await lastGoodRowsWhenUnreachable(
+        _printersCacheKind,
+        restaurantId,
+        error,
+      );
+      if (cached != null) {
+        return cached.map(PrinterModel.fromMap).toList(growable: false);
+      }
       _logPrinterSettings(
         'Error',
         'source=fetchPrinters sellerId=$restaurantId storeId=- backendPath=$backendPath',
@@ -473,6 +489,10 @@ class PrinterRepository implements PrinterRepositoryPort {
         error: error,
         stackTrace: stackTrace,
       );
+      if (isCloudUnreachableError(error)) {
+        final cached = await _lastGoodPrinterById(printerId);
+        if (cached != null) return cached;
+      }
       return null;
     }
   }
@@ -553,6 +573,84 @@ class PrinterRepository implements PrinterRepositoryPort {
         .eq('id', printerId);
   }
 
+  static const String _printersCacheKind = 'printers';
+  static const String _stationPrintersCacheKind = 'station_printers';
+  static const String stationConfigCacheKind = 'station_config';
+
+  static String lastGoodRowsKey(String kind, String restaurantId) =>
+      'printer_repository_last_good_v1_${kind}_${restaurantId.trim()}';
+
+  /// A printer from any restaurant's last successful list on this device.
+  static Future<PrinterModel?> _lastGoodPrinterById(String printerId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final prefix = lastGoodRowsKey(_printersCacheKind, '');
+      for (final key in prefs.getKeys()) {
+        if (!key.startsWith(prefix)) continue;
+        final decoded = jsonDecode(prefs.getString(key) ?? '[]');
+        if (decoded is! List) continue;
+        for (final row in decoded.whereType<Map>()) {
+          if (row['id']?.toString() == printerId) {
+            return PrinterModel.fromMap(Map<String, dynamic>.from(row));
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// True for failures that mean "the server could not be reached", as
+  /// opposed to an answer from the server.
+  static bool isCloudUnreachableError(Object error) {
+    if (error is PostgrestException) return false;
+    final text = error.toString().toLowerCase();
+    return text.contains('socketexception') ||
+        text.contains('connection refused') ||
+        text.contains('connection closed') ||
+        text.contains('failed host lookup') ||
+        text.contains('network is unreachable') ||
+        text.contains('timeoutexception') ||
+        text.contains('timed out');
+  }
+
+  /// Keeps the rows of the last successful read on this device.
+  static Future<void> rememberLastGoodRows(
+    String kind,
+    String restaurantId,
+    Object? rows,
+  ) async {
+    if (rows is! List || restaurantId.trim().isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(lastGoodRowsKey(kind, restaurantId), jsonEncode(rows));
+    } catch (_) {
+      // The cache is a convenience; a failed write must not fail the read.
+    }
+  }
+
+  /// The last successfully read rows, only when [error] is a reachability
+  /// failure and such rows exist. Null means "rethrow the error".
+  static Future<List<Map<String, dynamic>>?> lastGoodRowsWhenUnreachable(
+    String kind,
+    String restaurantId,
+    Object error,
+  ) async {
+    if (!isCloudUnreachableError(error)) return null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(lastGoodRowsKey(kind, restaurantId));
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return null;
+      return decoded
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Future<List<StationPrinterModel>> fetchStationPrinterMappings(
     String restaurantId,
@@ -592,8 +690,23 @@ class PrinterRepository implements PrinterRepositoryPort {
         'source=fetchStationPrinterMappings sellerId=$restaurantId storeId=- '
             'backendPath=$backendPath mappingCount=${mappings.length}',
       );
+      await rememberLastGoodRows(_stationPrintersCacheKind, restaurantId, rows);
       return mappings;
     } catch (error, stackTrace) {
+      final cached = await lastGoodRowsWhenUnreachable(
+        _stationPrintersCacheKind,
+        restaurantId,
+        error,
+      );
+      if (cached != null) {
+        return cached.map(StationPrinterModel.fromMap).toList(growable: false);
+      }
+      // Unreachable and never read on this device: no station links are
+      // known, so the ticket goes to the printer that holds the kitchen
+      // role. Failing here left an offline order without any ticket.
+      if (isCloudUnreachableError(error)) {
+        return const <StationPrinterModel>[];
+      }
       _logPrinterSettings(
         'Error',
         'source=fetchStationPrinterMappings sellerId=$restaurantId storeId=- backendPath=$backendPath',
@@ -626,18 +739,20 @@ class PrinterRepository implements PrinterRepositoryPort {
       throw StateError('station_id ve printer_id zorunludur.');
     }
     try {
-      if (isPrimary) {
-        await _client
-            .from('station_printers')
-            .update({'is_primary': false})
-            .eq('station_id', normalizedStationId);
-      }
-
+      // Write the new assignment first. Demoting the others first left the
+      // station with no primary printer when the write then failed.
       await _client.from('station_printers').upsert({
         'station_id': normalizedStationId,
         'printer_id': normalizedPrinterId,
         'is_primary': isPrimary,
       }, onConflict: 'station_id,printer_id');
+      if (isPrimary) {
+        await _client
+            .from('station_printers')
+            .update({'is_primary': false})
+            .eq('station_id', normalizedStationId)
+            .neq('printer_id', normalizedPrinterId);
+      }
       debugPrint(
         '[PrinterRoleSave] success '
         'seller_id=${restaurantId ?? '-'} station_id=$normalizedStationId '
@@ -706,11 +821,22 @@ class PrinterRepository implements PrinterRepositoryPort {
       }
     }
 
-    final config = await _client
-        .from('restaurant_print_station_configs')
-        .select('kitchen_printer_id, kitchen_printer_name, role_mappings')
-        .eq('restaurant_id', normalizedRestaurantId)
-        .maybeSingle();
+    Object? config;
+    try {
+      config = await _client
+          .from('restaurant_print_station_configs')
+          .select('kitchen_printer_id, kitchen_printer_name, role_mappings')
+          .eq('restaurant_id', normalizedRestaurantId)
+          .maybeSingle();
+    } catch (error) {
+      final cached = await lastGoodRowsWhenUnreachable(
+        stationConfigCacheKind,
+        normalizedRestaurantId,
+        error,
+      );
+      if (cached == null) rethrow;
+      config = cached.isEmpty ? null : cached.first;
+    }
     if (config == null) {
       return null;
     }

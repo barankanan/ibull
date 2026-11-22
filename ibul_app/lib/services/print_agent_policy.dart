@@ -6,11 +6,20 @@ class PrintAgentPolicy {
   static const livePlistName = 'com.ibul.localprint.plist';
   static const isolatedPlistName = 'com.ibul.localprint.isolated-test.plist';
 
-  static String? plistForEnvironment(Map<String, String> env) {
-    if (env['IBUL_ISOLATED_PRINT_TEST'] == '1') {
+  /// Set only by a release build (`--dart-define=IBUL_ALLOW_LIVE_PRINT_AGENT=true`
+  /// together with the Xcode setting of the same name).
+  static const bool liveAllowedByBuild =
+      bool.fromEnvironment('IBUL_ALLOW_LIVE_PRINT_AGENT');
+
+  static String? plistForEnvironment(
+    Map<String, String> env, {
+    bool liveBuild = liveAllowedByBuild,
+    bool isolatedBuild = false,
+  }) {
+    if (env['IBUL_ISOLATED_PRINT_TEST'] == '1' || isolatedBuild) {
       return isolatedPlistName;
     }
-    if (env['IBUL_ALLOW_LIVE_PRINT_AGENT'] == '1') {
+    if (env['IBUL_ALLOW_LIVE_PRINT_AGENT'] == '1' || liveBuild) {
       return livePlistName;
     }
     return null;
@@ -25,7 +34,7 @@ class PrintAgentPolicy {
         return 'Yazıcı servisi sisteme kayıtlı.';
       case 'requiresApproval':
       case 'launch_denied':
-        return 'Yazıcı servisinin açılışta çalışması için Sistem Ayarları’nda izin vermeniz gerekiyor. İzin verilmeden servis başlatılmaz.';
+        return 'Yazıcı servisinin çalışması için Sistem Ayarları’nda izin vermeniz gerekiyor. İzin verilmeden servis başlatılmaz.';
       case 'invalid_signature':
         return 'Yazıcı servisi kaydı tamamlanamadı. Uygulamanın geçerli bir imzası yok.';
       case 'live_label_blocked':

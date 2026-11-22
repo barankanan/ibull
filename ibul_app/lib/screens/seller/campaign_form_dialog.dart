@@ -3,6 +3,7 @@ import '../../core/constants.dart';
 import '../../models/seller_product.dart';
 import '../../services/campaign_service.dart';
 import '../../services/store_service.dart';
+import '../../utils/text_normalizer.dart';
 
 /// Satıcı panelinden kampanya/kupon oluşturma veya düzenleme formu.
 class CampaignFormDialog extends StatefulWidget {
@@ -233,10 +234,11 @@ class _CampaignFormDialogState extends State<CampaignFormDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final q = TextNormalizer.normalize(_productSearchController.text);
     final filteredProducts = widget.products.where((p) {
-      final q = _productSearchController.text.toLowerCase();
       if (q.isEmpty) return true;
-      return p.name.toLowerCase().contains(q) || p.brand.toLowerCase().contains(q);
+      return TextNormalizer.normalize(p.name).contains(q) ||
+          TextNormalizer.normalize(p.brand).contains(q);
     }).toList();
 
     return Dialog(

@@ -32,6 +32,8 @@ cd local_print_bridge && python -m pytest
 
 See `PROJECT_MAP.md` for full architecture. Cursor rule: `.cursor/rules/garson-async-state-contracts.mdc`.
 
+**Harita kuralı:** Her geliştirme görevinden önce `PROJECT_MAP.md` hızlı başlangıç bölümünü ve ilgili özellik haritasını kontrol et. Değişen mimari, kritik sözleşme ve dosya konumlarını görev sonunda aynı haritaya işle.
+
 ## Rules
 
 - Do what has been asked; nothing more, nothing less

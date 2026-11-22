@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/models/desktop_printer_setup_models.dart';
 import 'package:ibul_app/models/print_job_model.dart';
@@ -16,6 +17,7 @@ import 'package:ibul_app/services/printer_repository.dart';
 import 'package:ibul_app/services/station_repository.dart';
 import 'package:ibul_app/services/store_service.dart';
 import 'dart:async';
+import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -53,7 +55,7 @@ void main() {
         orchestrator: orchestrator,
       );
 
-      expect(find.text('Otomatik Baskı'), findsOneWidget);
+      expect(find.text('Yazıcı Servisi'), findsOneWidget);
       expect(tester.widget<Switch>(_printSystemSwitch).value, isFalse);
     },
   );
@@ -78,7 +80,7 @@ void main() {
 
       expect(stationService.toggleCalls, isNotEmpty);
       expect(stationService.toggleCalls.last, isTrue);
-      expect(find.text('Baskı sistemi açıldı'), findsOneWidget);
+      expect(find.text('Yazıcı servisi açıldı'), findsOneWidget);
     },
   );
 
@@ -132,7 +134,12 @@ void main() {
 
       expect(stationService.toggleCalls, isNotEmpty);
       expect(stationService.toggleCalls.last, isFalse);
-      expect(find.text('Baskı sistemi kapatıldı'), findsOneWidget);
+      expect(
+        find.text(
+          'Yazıcı servisi kapalı. Yeni fiziksel baskı gönderilmez. Yazıcıya daha önce iletilmiş baytlar geri alınamaz.',
+        ),
+        findsOneWidget,
+      );
     },
   );
 
@@ -221,9 +228,13 @@ void main() {
       );
 
       // Default tab is Print Station.
-      expect(find.text('Yerel yazıcı bulundu ama kayıtlı değil'), findsOneWidget);
-      expect(find.text('Yazıcıyı Kaydet'), findsOneWidget);
-      expect(find.text('Kaydet ve İkisi İçin Kullan'), findsOneWidget);
+      // One quiet call card: a single primary "Kaydet" and the role choices
+      // behind "Rol ata" instead of four competing buttons.
+      expect(find.text('Yazıcı bulundu, henüz kayıtlı değil'), findsOneWidget);
+      expect(find.text('Kaydet'), findsOneWidget);
+      expect(find.text('Rol ata'), findsOneWidget);
+      expect(find.text('Yazıcıyı Kaydet'), findsNothing);
+      expect(find.text('Kaydet ve İkisi İçin Kullan'), findsNothing);
     },
   );
 
@@ -251,6 +262,79 @@ void main() {
       expect(find.text('Onar ve eşleştir'), findsOneWidget);
     },
   );
+
+  // flutter_test draws every glyph one em wide (Ahem), which overstates
+  // overflows. Real Roboto widths make the narrow-phone checks meaningful.
+  Future<bool> loadRoboto() async {
+    final root = Platform.environment['FLUTTER_ROOT'] ?? '';
+    final dir = '$root/bin/cache/artifacts/material_fonts';
+    final files = <String>[
+      '$dir/Roboto-Regular.ttf',
+      '$dir/Roboto-Medium.ttf',
+      '$dir/Roboto-Bold.ttf',
+    ];
+    if (root.isEmpty || !files.every((f) => File(f).existsSync())) return false;
+    final loader = FontLoader('Roboto');
+    for (final f in files) {
+      loader.addFont(Future.value(ByteData.sublistView(File(f).readAsBytesSync())));
+    }
+    await loader.load();
+    return true;
+  }
+
+  for (final tab in const <String>[
+    'Yazıcı Merkezi',
+    'Alanlar',
+    'Yazıcılar',
+    'Eşleştirme',
+    'Ürün Eşleme',
+    'Gelen Siparişler',
+    'Print Log',
+  ]) {
+    testWidgets('Yazici Ayarlari "$tab" sekmesi dar telefon ekraninda tasmaz', (
+      tester,
+    ) async {
+      if (!await loadRoboto()) return;
+      final stationService = _FakeKitchenPrintStationService(
+        localEnabled: true,
+        remoteEnabled: true,
+      );
+      final orchestrator = _FakeKitchenPrintOrchestrator(stationService);
+      final overflows = <String>[];
+      final previousHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        final text = details.toDiagnosticsNode().toStringDeep();
+        if (!text.contains('overflowed')) {
+          previousHandler?.call(details);
+          return;
+        }
+        final widget = RegExp(r'relevant error-causing widget was:\s*\n\s*(.*)')
+            .firstMatch(text)
+            ?.group(1);
+        final chain = RegExp(r'creator:\s*(.*)')
+            .firstMatch(text)
+            ?.group(1)
+            ?.replaceAll(RegExp(r'\s+'), ' ');
+        final amount = RegExp(r'overflowed by ([0-9.]+) pixels').firstMatch(text)?.group(1);
+        final where = RegExp(r'kitchen_print_management_page\.dart:\d+')
+            .allMatches(text)
+            .map((m) => m.group(0))
+            .toSet()
+            .join(',');
+        overflows.add('$amount px @ ${widget ?? "?"} :: ${chain ?? "?"} [$where]');
+      };
+      addTearDown(() => FlutterError.onError = previousHandler);
+      await _pumpPage(
+        tester,
+        stationService: stationService,
+        orchestrator: orchestrator,
+        phoneWidth: true,
+      );
+      await tester.tap(find.text(tab).first);
+      await _settle(tester);
+      expect(overflows.toSet().toList(), isEmpty, reason: tab);
+    });
+  }
 }
 
 final Finder _printSystemSwitch = find.byKey(
@@ -269,8 +353,13 @@ Future<void> _pumpPage(
   required _FakeKitchenPrintStationService stationService,
   required _FakeKitchenPrintOrchestrator orchestrator,
   PrinterRepository? printerRepository,
+  bool phoneWidth = false,
 }) async {
-  tester.view.physicalSize = const Size(1600, 3200);
+  final probeWidth =
+      double.tryParse(Platform.environment['PHONE_W'] ?? '') ?? 390;
+  tester.view.physicalSize = phoneWidth
+      ? Size(probeWidth, 844)
+      : const Size(1600, 3200);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(() {
     tester.view.resetPhysicalSize();
@@ -278,6 +367,18 @@ Future<void> _pumpPage(
   });
   await tester.pumpWidget(
     MaterialApp(
+      theme: phoneWidth ? ThemeData(fontFamily: 'Roboto') : null,
+      builder: phoneWidth
+          ? (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(
+                  double.tryParse(Platform.environment['PHONE_SCALE'] ?? '') ??
+                      1.0,
+                ),
+              ),
+              child: child!,
+            )
+          : null,
       home: KitchenPrintManagementPage(
         restaurantId: 'restaurant-1',
         stationRepository: _FakeStationRepository(),

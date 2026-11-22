@@ -18,6 +18,18 @@ _PIL_IMPORT_ERROR: BaseException | None = None
 _PIL_LOADED = False
 
 
+class PillowMissingError(RuntimeError):
+    """The bridge's own Python cannot import Pillow.
+
+    This is a bridge setup problem, not a printer or network problem. The
+    response carries ``dependency_missing`` so the app can say so instead of
+    showing a generic print failure or "bridge not running".
+    """
+
+    error_code = "dependency_missing"
+    missing_dependency = "Pillow"
+
+
 def _load_pil(*, force: bool = False) -> None:
     global Image, ImageDraw, ImageFont, _PIL_IMPORT_ERROR, _PIL_LOADED
     if _PIL_LOADED and not force and _PIL_IMPORT_ERROR is None:
@@ -102,7 +114,7 @@ def _require_pillow() -> None:
     detail = status.get("import_error") or (
         str(_PIL_IMPORT_ERROR) if _PIL_IMPORT_ERROR is not None else "Pillow import failed"
     )
-    raise RuntimeError(
+    raise PillowMissingError(
         "Bitmap baski icin Pillow gerekir. "
         "local_print_bridge/requirements.txt icine Pillow eklendi; "
         "pip install -r local_print_bridge/requirements.txt calistirin. "

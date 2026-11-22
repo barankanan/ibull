@@ -9,20 +9,32 @@
 		<string>com.ibul.sellerdesktop.offlinetest</string>
 	</array>
 	<key>BundleProgram</key>
-	<string>Contents/MacOS/IbulPrintBridge</string>
+	<string>Contents/Resources/PrintBridge/IbulPrintBridge</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>ThrottleInterval</key>
 	<integer>30</integer>
 	<key>KeepAlive</key>
 	<dict>
-		<key>SuccessfulExit</key>
-		<false/>
 		<key>Crashed</key>
 		<true/>
 	</dict>
+	<key>Sockets</key>
+	<dict>
+		<key>Listeners</key>
+		<dict>
+			<key>SockNodeName</key>
+			<string>127.0.0.1</string>
+			<key>SockServiceName</key>
+			<string>18771</string>
+			<key>SockFamily</key>
+			<string>IPv4</string>
+		</dict>
+	</dict>
 	<key>EnvironmentVariables</key>
 	<dict>
+		<key>PRINT_BRIDGE_LAUNCHD_SOCKET</key>
+		<string>Listeners</string>
 		<key>PRINT_BRIDGE_HOST</key>
 		<string>127.0.0.1</string>
 		<key>PRINT_BRIDGE_PORT</key>

@@ -43,7 +43,9 @@ void main() {
     );
   });
 
-  test('sub-admin with no permissions still has the floor fallback', () {
+  test('sub-admin with no permissions gets no section, not the floor', () {
+    // The floor used to be a fallback here. An account the owner gave
+    // nothing to must not see Garson; only the waiter role keeps the floor.
     expect(
       modulesForStaff(
         modules: modules,
@@ -51,7 +53,7 @@ void main() {
         staffRole: 'sub_admin',
         permissions: const <String>{},
       ),
-      <SellerModule>[SellerModule.garson],
+      isEmpty,
     );
   });
 

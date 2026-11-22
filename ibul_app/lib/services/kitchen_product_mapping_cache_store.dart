@@ -274,10 +274,36 @@ class KitchenProductMappingCacheStore {
     }
   }
 
+  /// Removes one product from the memory cache, the resolver and the disk
+  /// copy. Without this a cleared mapping kept routing to its old station.
+  static Future<void> removeProduct({
+    required String restaurantId,
+    required String productId,
+    String productName = '',
+  }) async {
+    final id = restaurantId.trim();
+    final pid = productId.trim();
+    if (id.isEmpty || pid.isEmpty) return;
+    final knownName = _memoryProductNamesById[id]?.remove(pid) ?? productName;
+    _memoryByProductId[id]?.remove(pid);
+    for (final name in <String>{knownName, productName}) {
+      for (final nameKey in _productNameKeysFor(name)) {
+        _memoryByProductName[id]?.remove(nameKey);
+      }
+      KitchenTicketHeaderResolver.removeProductStationMapping(
+        restaurantId: id,
+        productId: pid,
+        productName: name,
+      );
+    }
+    await _persistRestaurantToDisk(id);
+  }
+
   static Future<void> _persistRestaurantToDisk(String restaurantId) async {
     final id = restaurantId.trim();
     final byId = _memoryByProductId[id];
-    if (byId == null || byId.isEmpty) return;
+    // An emptied map is written too, so a removed mapping does not come back.
+    if (byId == null) return;
     final namesById = _memoryProductNamesById[id] ?? const <String, String>{};
     final rows = <Map<String, String>>[];
     for (final entry in byId.entries) {

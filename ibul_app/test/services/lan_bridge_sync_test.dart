@@ -19,12 +19,27 @@ import 'package:shared_preferences/shared_preferences.dart';
 const seller = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const waiterId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
 const branchA = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+// A restaurant with tables but no branch at all.
+const lone = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
 const ocak = '11111111-1111-1111-1111-111111111111';
 const firin = '22222222-2222-2222-2222-222222222222';
 const kasap = '33333333-3333-3333-3333-333333333333';
-final jwtSecret = base64Url.encode(
-  List<int>.generate(32, (_) => Random.secure().nextInt(256)),
-); // test-only random per run, never a real secret
+// Test-only. The runner script passes the secret it gave the isolated
+// PostgREST; without it a random one is used, never a real secret.
+final jwtSecret = (Platform.environment['IBUL_JWT_SECRET'] ?? '').isNotEmpty
+    ? Platform.environment['IBUL_JWT_SECRET']!
+    : base64Url.encode(
+        List<int>.generate(32, (_) => Random.secure().nextInt(256)),
+      );
+
+/// Deno runs the Edge entry file as deployed. Where Deno is not installed the
+/// Node twins start the same verifier module instead.
+final String denoPath =
+    Platform.environment['IBUL_DENO'] ?? '/tmp/ibul-deno/bin/deno';
+bool get hasDeno => File(denoPath).existsSync();
+
+/// See the `clock` passed to the test host.
+Duration hostClockSkew = Duration.zero;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -349,6 +364,7 @@ void main() {
     final bridgeResponse = <int>[];
     final syncTimes = <int>[];
     for (var index = 0; index < 30; index++) {
+      hostClockSkew += const Duration(seconds: 3);
       final saved = await waiter.postAuthorized('/lan/orders', <String, Object?>{
         'local_order_id': 'sample-$index',
         'table_number': 1,
@@ -356,7 +372,7 @@ void main() {
         'branch_id': branchA,
         'items': <Map<String, Object?>>[_item('Çorba', ocak)],
       });
-      expect(saved['printed'], isFalse);
+      expect(saved['printed'], isFalse, reason: 'response=$saved');
       expect(saved['print_status'], 'forwarded');
       localSave.add(host.lastStageMicros['local_save'] ?? 0);
       printQueue.add(host.lastStageMicros['print_queue'] ?? 0);
@@ -1014,6 +1030,206 @@ void main() {
       '1',
     );
   });
+
+  test('a restaurant without branches registers its key and syncs printed evidence once', () async {
+    final postgrest = Platform.environment['IBUL_POSTGREST'] ?? '';
+    final psql = Platform.environment['IBUL_PSQL'] ?? '';
+    expect(postgrest, isNotEmpty, reason: 'IBUL_POSTGREST is required');
+    expect(psql, isNotEmpty, reason: 'IBUL_PSQL is required');
+    await _sql(
+      psql,
+      "insert into public.users values ('$lone') on conflict do nothing; "
+      "insert into public.stores values ('$lone', 'Subesiz Lokanta') on conflict do nothing; "
+      "insert into public.store_tables (seller_id, table_number, table_name, branch_id) "
+      "select '$lone', 1, 'Bahce 1', null where not exists "
+      "(select 1 from public.store_tables where seller_id = '$lone' and table_number = 1)",
+    );
+    final loneMaterial = await LanTlsMaterial.open(Directory('${temp.path}/lone'));
+    final identity = await LanTlsMaterial.evidenceIdentity(loneMaterial.directory);
+    final ownerToken = _jwt(lone, sessionId: 'lone-session');
+    final registration = <String, dynamic>{
+      'p_restaurant_id': lone,
+      'p_key_id': identity.id,
+      'p_modulus_hex': identity.modulusHex,
+      'p_server_fingerprint': loneMaterial.serverFingerprint,
+    };
+
+    // Another restaurant's owner cannot register a key for this one.
+    final foreign = await _rpcNamed(
+      postgrest,
+      'register_restaurant_lan_print_evidence_key',
+      registration,
+      token: _jwt(seller),
+    );
+    expect(foreign['status'], isNot(200));
+    expect(
+      await _sql(
+        psql,
+        "select count(*) from public.restaurant_lan_print_evidence_keys "
+        "where restaurant_id = '$lone' and key_id = '${identity.id}'",
+      ),
+      '0',
+    );
+
+    // Without a primary branch even the owner is refused; no branch is made up.
+    final noBranch = await _rpcNamed(
+      postgrest,
+      'register_restaurant_lan_print_evidence_key',
+      registration,
+      token: ownerToken,
+    );
+    if (await _sql(psql, "select public.restaurant_primary_branch_id('$lone') is null") == 't') {
+      expect(noBranch['status'], isNot(200));
+      await _sql(
+        psql,
+        "insert into public.store_branches (id, store_id, status, name, is_primary) values "
+        "('eeeeeeee-0000-0000-0000-000000000003', '$lone', 'active', 'Merkez', true) "
+        "on conflict (id) do nothing",
+      );
+    }
+
+    // The owner registers the public key under the store's primary branch.
+    final registered = await _rpcNamed(
+      postgrest,
+      'register_restaurant_lan_print_evidence_key',
+      registration,
+      token: ownerToken,
+    );
+    expect(registered['status'], 200, reason: '${registered['text']}');
+    final branch = (jsonDecode(registered['text'] as String) as String).trim();
+    expect(branch, isNotEmpty);
+    expect(
+      await _sql(psql, "select public.restaurant_primary_branch_id('$lone')::text"),
+      branch,
+    );
+
+    final verifier = await _startVerifier(postgrest);
+    addTearDown(() {
+      verifier.edge.kill();
+      verifier.gateway.kill();
+      verifier.rpcProxy.kill();
+    });
+    RestaurantLanHost hostFor(String branchId) => RestaurantLanHost(
+      restaurantId: lone,
+      branchId: branchId,
+      orders: orders,
+      printQueue: prints,
+      deviceStore: MemoryLanEnrollmentStore(),
+      operatorFingerprint: loneMaterial.operatorFingerprint,
+      certificateDirectory: loneMaterial.directory.path,
+    );
+    final items = <Map<String, dynamic>>[
+      <String, dynamic>{'product_id': 'Cay', 'name': 'Cay', 'quantity': 1, 'price': 25},
+    ];
+    Map<String, dynamic> body(String localOrderId, String evidence) =>
+        <String, dynamic>{
+          ...createTableOrderRpcParams(
+            restaurantId: lone,
+            tableNumber: 1,
+            items: items,
+            waiterName: 'Sahip',
+            jobType: 'new_order',
+            localOrderId: localOrderId,
+            localPrintEvidence: evidence,
+          ),
+          'branch_id': branch,
+        };
+
+    final printed = await hostFor(branch).evidenceForOrder(
+      localOrderId: 'lone-printed',
+      outcome: 'forwarded',
+      revision: '1',
+      eventId: 'lone-printed|1|forwarded',
+      items: items,
+    );
+    // The same printed order is sent three times: one order, no new ticket.
+    String? firstOrderId;
+    for (var attempt = 0; attempt < 4; attempt++) {
+      final call = await _verify(
+        verifier.uri,
+        body('lone-printed', printed!),
+        token: ownerToken,
+      );
+      expect(call['status'], 200, reason: '${call['text']}');
+      final answer = Map<String, dynamic>.from(jsonDecode(call['text'] as String) as Map);
+      if (attempt == 0) {
+        expect(answer['print_disposition'], 'forwarded');
+        firstOrderId = answer['order_id'] as String;
+      } else {
+        // A repeat is answered with the same order, marked as a replay.
+        expect(answer['print_disposition'], 'replay');
+        expect(answer['idempotent_replay'], isTrue);
+        expect(answer['order_id'], firstOrderId);
+      }
+    }
+    expect(
+      await _sql(psql, "select count(*) from public.orders where local_order_id = 'lone-printed'"),
+      '1',
+    );
+    expect(
+      await _sql(
+        psql,
+        "select count(*) from public.print_jobs j join public.orders o on o.id = j.order_id "
+        "where o.local_order_id = 'lone-printed' and j.status = 'pending'",
+      ),
+      '0',
+      reason: 'a ticket already printed on the floor must not be queued again',
+    );
+
+    // Evidence signed for a branch that is not this restaurant's is refused.
+    final wrongBranch = await hostFor(branchA).evidenceForOrder(
+      localOrderId: 'lone-wrong-branch',
+      outcome: 'forwarded',
+      revision: '1',
+      eventId: 'lone-wrong-branch|1|forwarded',
+      items: items,
+    );
+    expect(
+      (await _verify(verifier.uri, body('lone-wrong-branch', wrongBranch!), token: ownerToken))['text'],
+      contains('"print_disposition": "unverified"'),
+    );
+
+    // The evidence of one order cannot carry another order.
+    expect(
+      (await _verify(verifier.uri, body('lone-other-order', printed!), token: ownerToken))['text'],
+      contains('"print_disposition": "unverified"'),
+    );
+
+    // The first restaurant's center cannot vouch for this restaurant.
+    final foreignCenter = await host.evidenceForOrder(
+      localOrderId: 'lone-foreign-center',
+      outcome: 'forwarded',
+      revision: '1',
+      eventId: 'lone-foreign-center|1|forwarded',
+      items: items,
+    );
+    final foreignCall = await _verify(
+      verifier.uri,
+      body('lone-foreign-center', foreignCenter!),
+      token: ownerToken,
+    );
+    expect(foreignCall['text'], isNot(contains('"print_disposition": "forwarded"')));
+
+    // After the owner revokes the key its evidence is worth nothing.
+    final revoked = await _rpcNamed(
+      postgrest,
+      'revoke_restaurant_lan_print_evidence_key',
+      <String, dynamic>{'p_restaurant_id': lone, 'p_key_id': identity.id},
+      token: ownerToken,
+    );
+    expect(revoked['status'], 200, reason: '${revoked['text']}');
+    final afterRevoke = await hostFor(branch).evidenceForOrder(
+      localOrderId: 'lone-after-revoke',
+      outcome: 'forwarded',
+      revision: '1',
+      eventId: 'lone-after-revoke|1|forwarded',
+      items: items,
+    );
+    expect(
+      (await _verify(verifier.uri, body('lone-after-revoke', afterRevoke!), token: ownerToken))['text'],
+      contains('"print_disposition": "unverified"'),
+    );
+  });
 }
 
 Map<String, Object?> _item(String name, String station) {
@@ -1066,7 +1282,8 @@ Future<({Process gateway, Process edge, Process rpcProxy, Uri uri, Uri gatewayUr
       'POSTGREST_URL': rpcProxy.proxy.toString(),
       'IBUL_EVIDENCE_JWT_SECRET': jwtSecret,
       'SUPABASE_ANON_KEY': 'isolated-anon-key',
-      'IBUL_AUTH_SESSIONS': 'test-session:$seller,waiter-session:$waiterId,revoke-session:$seller',
+      'IBUL_AUTH_SESSIONS':
+          'test-session:$seller,waiter-session:$waiterId,revoke-session:$seller,lone-session:$lone',
     },
   );
   final gatewayLine = await gateway.stdout
@@ -1076,13 +1293,17 @@ Future<({Process gateway, Process edge, Process rpcProxy, Uri uri, Uri gatewayUr
       .timeout(const Duration(seconds: 8));
   final gatewayUri = 'http://127.0.0.1:${gatewayLine.split(' ').last}';
   final edge = await Process.start(
-    '/tmp/ibul-deno/bin/deno',
-    <String>[
-      'run',
-      '--allow-net',
-      '--allow-env',
-      'supabase/functions/verify-lan-print-evidence/index.ts',
-    ],
+    hasDeno ? denoPath : 'node',
+    hasDeno
+        ? <String>[
+            'run',
+            '--allow-net',
+            '--allow-env',
+            'supabase/functions/verify-lan-print-evidence/index.ts',
+          ]
+        : <String>[
+            'supabase/functions/verify-lan-print-evidence/node_server.mjs',
+          ],
     environment: <String, String>{
       ...Platform.environment,
       'SUPABASE_URL': gatewayUri,
@@ -1141,13 +1362,15 @@ Future<({Process process, Uri proxy, Uri control})> _startTcpProxy(Uri upstream)
 
 Future<({Process process, Uri uri})> _startRaceHarness(Uri gateway) async {
   final process = await Process.start(
-    '/tmp/ibul-deno/bin/deno',
-    <String>[
-      'run',
-      '--allow-net',
-      '--allow-env',
-      'supabase/tests/evidence_race_harness.ts',
-    ],
+    hasDeno ? denoPath : 'node',
+    hasDeno
+        ? <String>[
+            'run',
+            '--allow-net',
+            '--allow-env',
+            'supabase/tests/evidence_race_harness.ts',
+          ]
+        : <String>['supabase/tests/evidence_race_harness_node.mjs'],
     environment: <String, String>{
       ...Platform.environment,
       'SUPABASE_URL': gateway.toString(),
@@ -1247,6 +1470,10 @@ RestaurantLanHost _host(
     deviceStore: MemoryLanEnrollmentStore(),
     operatorFingerprint: material.operatorFingerprint,
     certificateDirectory: material.directory.path,
+    // The host admits 30 orders a minute from one address. The timing
+    // samples below send more than that, so the test moves the host clock
+    // forward between samples instead of touching the limit.
+    clock: () => DateTime.now().add(hostClockSkew),
     staffStillAuthorized: (_) async => const StaffProbe(StaffProbeKind.active),
     stationsOverride: const <Map<String, dynamic>>[
       <String, dynamic>{'id': ocak},
@@ -1326,6 +1553,26 @@ Future<Map<String, dynamic>> _rpc(String base, Map<String, dynamic> body) async 
       Uri.parse(base).replace(path: '/rpc/create_table_order_with_print_jobs'),
     );
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${_jwt(seller)}');
+    request.headers.contentType = ContentType.json;
+    request.add(utf8.encode(jsonEncode(body)));
+    final response = await request.close();
+    final text = await utf8.decoder.bind(response).join();
+    return <String, dynamic>{'status': response.statusCode, 'text': text};
+  } finally {
+    client.close(force: true);
+  }
+}
+
+Future<Map<String, dynamic>> _rpcNamed(
+  String base,
+  String name,
+  Map<String, dynamic> body, {
+  required String token,
+}) async {
+  final client = HttpClient();
+  try {
+    final request = await client.postUrl(Uri.parse(base).replace(path: '/rpc/$name'));
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     request.headers.contentType = ContentType.json;
     request.add(utf8.encode(jsonEncode(body)));
     final response = await request.close();
@@ -1484,6 +1731,15 @@ class FakePrintBridge {
     }
     if (request.uri.path != '/print/kitchen' || request.method != 'POST') {
       await _json(request, 404, <String, Object?>{'ok': false});
+      return;
+    }
+    // Like the real Python bridge: it reads Content-Length and refuses a
+    // chunked body ("Request body is required").
+    if (request.contentLength <= 0) {
+      await _json(request, 400, <String, Object?>{
+        'ok': false,
+        'error': 'Request body is required.',
+      });
       return;
     }
     final text = await utf8.decoder.bind(request).join();

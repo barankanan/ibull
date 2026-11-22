@@ -22,11 +22,13 @@ void main() {
   });
   test('failed save retains retry key and never dispatches a print job', () async {
     SharedPreferences.setMockInitialValues({});
-    final writes = <Uri>[];
+    // Tüm istekler: yapılandırma okumaları (ör. GET /printers) baskı gönderimi
+    // sayılmaz; yalnızca yazma yöntemleri baskı işi oluşturabilir.
+    final requests = <http.BaseRequest>[];
     final keys = <String>[];
     final client = SupabaseClient('https://example.supabase.co', 'test-key',
       httpClient: MockClient((request) async {
-        writes.add(request.url);
+        requests.add(request);
         if (request.url.path.endsWith('/rpc/create_table_order_with_print_jobs')) {
           keys.add(jsonDecode(request.body)['p_local_order_id'] as String);
           return http.Response(jsonEncode({'code': '42703', 'message': 'column "id" does not exist'}), 400,
@@ -50,7 +52,20 @@ void main() {
       ), throwsException);
     }
     expect(keys, ['same-retry-key', 'same-retry-key']);
-    expect(writes.where((uri) => uri.path.contains('/print') || uri.path.endsWith('/print_jobs')), isEmpty);
+    // Kayıt başarısızsa hiçbir baskı işi yazılmamalı: `print_jobs` tablosuna
+    // yazma veya sipariş RPC'si dışında baskı RPC'si yok.
+    final printWrites = requests.where((request) {
+      if (request.method == 'GET') return false;
+      final path = request.url.path;
+      if (path.endsWith('/rpc/create_table_order_with_print_jobs')) return false;
+      return path.contains('/print_jobs') ||
+          (path.contains('/rpc/') && path.contains('print'));
+    });
+    expect(printWrites, isEmpty);
+    expect(
+      requests.where((r) => r.url.path.endsWith('/rpc/create_table_order_with_print_jobs')),
+      hasLength(2),
+    );
     await service.disposeBroadcastSender();
     await client.dispose();
   });

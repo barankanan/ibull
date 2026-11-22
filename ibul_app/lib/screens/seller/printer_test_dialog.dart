@@ -16,6 +16,15 @@ import '../../services/printer_repository.dart';
 /// Dialog that sends a test receipt to the default printer and surfaces
 /// the real transport result (USB direct or CUPS).
 /// Open via [showDialog<void>(context: ..., builder: (_) => const PrinterTestDialog())].
+/// First printer that has a saved record, in list order. Null when the list
+/// only holds devices the bridge discovered.
+UnifiedPrinterModel? firstSavedTestPrinter(List<UnifiedPrinterModel> printers) {
+  for (final printer in printers) {
+    if ((printer.printerRecordId ?? '').trim().isNotEmpty) return printer;
+  }
+  return null;
+}
+
 class PrinterTestDialog extends StatefulWidget {
   const PrinterTestDialog({
     super.key,
@@ -210,6 +219,11 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
         available,
         _initialTargetPrinter?.id,
       );
+      // A saved printer outranks whatever the bridge happens to see first. The
+      // bridge's "working printer" is often a USB/CUPS device, and letting it
+      // win sent the test receipt past a saved Ethernet printer. If the saved
+      // printer is unreachable the test should say so, not print elsewhere.
+      target ??= firstSavedTestPrinter(available);
       target ??= snapshot.workingPrinter == null
           ? null
           : _matchPrinterByIdentifier(available, snapshot.workingPrinter!.id);
@@ -475,7 +489,8 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
               ? (result.message.trim().isNotEmpty
                     ? result.message
                     : 'Test işi yazıcı kuyruğuna gönderildi. Fiziksel baskıyı kontrol edin.')
-              : 'Test fişi gönderildi';
+              // A completed TCP write is not proof that paper came out.
+              : 'Test fişi yazıcıya iletildi. Fişin çıktığını yazıcıdan kontrol edin.';
           _successTransport = [
             if (transport.isNotEmpty) transport,
             if (jobId.isNotEmpty) 'job=$jobId',

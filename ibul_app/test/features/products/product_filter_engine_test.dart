@@ -187,6 +187,33 @@ void main() {
       expect(cleared.onlyDiscounted, isFalse);
       expect(cleared.sortOption, ProductSortOption.priceDesc);
     });
+
+    test('applyFilters search matches Turkish characters in any casing', () {
+      final products = [
+        _product(productId: 'a', name: 'ISITICI Fan', brand: 'Isısan'),
+        _product(productId: 'b', name: 'iPhone 15 Kılıf', brand: 'Apple'),
+        _product(productId: 'c', name: 'Süt 1 L', brand: 'Çiftlik'),
+        _product(productId: 'd', name: 'Galaxy S24', brand: 'Samsung'),
+      ];
+
+      List<String?> search(String query) => ProductFilterEngine.applyFilters(
+            products: products,
+            state: const ProductFilterState(),
+            searchQuery: query,
+          ).map((p) => p.productId).toList();
+
+      // Küçük "ı" ile yazılan sorgu büyük "I" içeren ürünü bulmalı.
+      expect(search('ısıtıcı'), ['a']);
+      // Büyük "İ" ile başlayan sorgu "iPhone" ile eşleşmeli.
+      expect(search('İPHONE'), ['b']);
+      expect(search('KILIF'), ['b']);
+      // Türkçe karaktersiz klavye ile yazılan sorgu.
+      expect(search('sut'), ['c']);
+      expect(search('çiftlik'), ['c']);
+      expect(search('  galaxy  '), ['d']);
+      expect(search('yok-boyle-urun'), isEmpty);
+      expect(search(''), ['a', 'b', 'c', 'd']);
+    });
   });
 
   group('ProductFilterAttributeExtractor', () {

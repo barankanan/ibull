@@ -4,6 +4,9 @@ import 'dart:io' show Platform, Process, ProcessResult;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
+import '../core/config/runtime_config.dart';
+import 'print_service_start_gate.dart';
+
 /// Status of the local print bridge.
 enum BridgeStatus {
   /// Not yet checked.
@@ -43,13 +46,24 @@ class BridgeLifecycleService {
   BridgeLifecycleService({
     Uri? bridgeUri,
     http.Client? client,
-  })  : _bridgeUri = bridgeUri ?? Uri.parse('http://127.0.0.1:3001'),
-        _client = client ?? http.Client();
+    bool? isolatedDesktop,
+    Future<void> Function()? startAgent,
+  })  : // The bridge address comes from the same place every other print path
+        // uses. It used to be fixed to 3001, so an isolated build probed the
+        // live bridge and never the test bridge it was meant to use.
+        _bridgeUri = bridgeUri ?? AppRuntimeConfig.localPrintBridgeUri(),
+        _client = client ?? http.Client(),
+        _isolated = isolatedDesktop ?? AppRuntimeConfig.isolatedDesktop,
+        _startAgent = startAgent;
 
   static const String _launchctlLabel = 'com.ibul.print-bridge';
 
   final Uri _bridgeUri;
   final http.Client _client;
+  final bool _isolated;
+  final Future<void> Function()? _startAgent;
+
+  Uri get bridgeUri => _bridgeUri;
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -66,10 +80,23 @@ class BridgeLifecycleService {
       return;
     }
 
+    // An isolated build never starts or restarts a LaunchAgent: that would
+    // act on the live bridge. It only reports what its own test bridge says.
+    if (_isolated) {
+      yield BridgeStatus.unavailable;
+      return;
+    }
+
+    // A restaurant's print service is started only by the operator's "Başlat".
+    if (PrintServiceStartGate.refusal() != null) {
+      yield BridgeStatus.unavailable;
+      return;
+    }
+
     // Attempt auto-start on macOS (requires LaunchAgent to be installed).
     if (!kIsWeb && Platform.isMacOS) {
       yield BridgeStatus.starting;
-      await _tryLaunchctlStart();
+      await (_startAgent ?? _tryLaunchctlStart)();
       // Poll for up to 8 s (16 × 500 ms).
       for (int i = 0; i < 16; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 500));

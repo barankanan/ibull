@@ -9,14 +9,28 @@ import 'package:ibul_app/services/restaurant_offline/restaurant_local_cache_serv
 import 'package:ibul_app/services/restaurant_offline/restaurant_local_order_queue_service.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_local_print_queue_service.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_offline_models.dart';
+import 'package:ibul_app/services/restaurant_offline/lan_staff_probe.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_center_control.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:ibul_app/services/restaurant_offline/waiter_lan_link.dart';
+
+import 'lan_center_status_card.dart';
+import 'lan_paired_devices_section.dart';
 import 'restaurant_lan_waiter_page.dart';
 
 /// Local restaurant status from the services that already own the data.
 class RestaurantLocalOpsPage extends StatefulWidget {
-  const RestaurantLocalOpsPage({super.key, required this.restaurantId});
+  const RestaurantLocalOpsPage({
+    super.key,
+    required this.restaurantId,
+    this.canManageDevices = false,
+    this.staffNames = const <String, String>{},
+  });
 
   final String restaurantId;
+  final bool canManageDevices;
+  final Map<String, String> staffNames;
 
   @override
   State<RestaurantLocalOpsPage> createState() => _RestaurantLocalOpsPageState();
@@ -45,6 +59,88 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
   void dispose() {
     _floorOrders?.cancel();
     super.dispose();
+  }
+
+  bool _centerBusy = false;
+  String? _centerNotice;
+  String? _pairingCode;
+
+  Future<Map<String, dynamic>?> _readMembership(String staffId) {
+    return lanStaffAuthorityReader(
+      (fn, params) => Supabase.instance.client.rpc(fn, params: params),
+      widget.restaurantId,
+    )(staffId);
+  }
+
+  Future<void> _startCenter() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Bu bilgisayar yerel merkez olsun mu?'),
+        content: const Text(
+          'Garson cihazları bu bilgisayara yerel ağdan bağlanır. Aynı restoranda '
+          'yalnızca tek bilgisayar merkez olmalıdır. Güvenlik duvarı bağlantıya '
+          'izin sorabilir. Bilgisayar uykuya geçerse bağlantı kesilir.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Vazgeç'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Merkez yap'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _centerBusy = true);
+    // Same rule as Sistem > Yazıcı Merkezi: only an authorised restaurant
+    // starts, and the print service comes up with the center.
+    final started = await RestaurantCenterControl.start(
+      restaurantId: widget.restaurantId,
+      readMembership: _readMembership,
+    );
+    final result = started.center;
+    if (!mounted) return;
+    setState(() {
+      _centerBusy = false;
+      _centerNotice = result != null && result.isRunning
+          ? 'Yerel merkez açık: ${result.address ?? ''}:${result.port}'
+          : started.message;
+    });
+  }
+
+  Future<void> _stopCenter() async {
+    setState(() => _centerBusy = true);
+    await RestaurantCenterControl.stop();
+    // Same as Durdur in Yazıcı Merkezi: printing closes with the center,
+    // after the ticket in progress.
+    await RestaurantCenterControl.closePrintServiceSafely();
+    if (!mounted) return;
+    setState(() {
+      _centerBusy = false;
+      _pairingCode = null;
+      _pairingLink = null;
+      _centerNotice = 'Yerel merkez kapatıldı.';
+    });
+  }
+
+  String? _pairingLink;
+
+  /// One link (QR and text) carries where this center is, which certificate
+  /// it presents and a fresh one-time code; the waiter device needs nothing
+  /// else. It replaces typing an address, a fingerprint and a code.
+  Future<void> _issueCode() async {
+    final host = RestaurantLanHostRegistry.current;
+    if (host == null || !host.listening) return;
+    final link = await host.issuePairingLink();
+    if (!mounted) return;
+    setState(() {
+      _pairingLink = link;
+      _pairingCode = link == null ? host.issuePairingCode().code : null;
+    });
   }
 
   Future<void> _reload() async {
@@ -118,12 +214,37 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // A phone never runs a print bridge: show the computer's center.
+          ListenableBuilder(
+            listenable: WaiterLanLink.instance,
+            builder: (context, _) =>
+                WaiterLanLink.instance.paired &&
+                    !deviceMayRunLocalPrintBridge(defaultTargetPlatform)
+                ? const LanCenterStatusCard()
+                : const SizedBox.shrink(),
+          ),
           _section('Yerel Operasyon Merkezi', <Widget>[
             _row('İnternet', connectivity.supabaseReachable ? 'ulaşılıyor' : 'yok'),
             _row('Yerel ağ', connectivity.hasNetwork ? 'var' : 'yok'),
             _row(
               'Yerel sunucu',
               host?.listening == true ? 'açık · port ${host!.port}' : 'kapalı',
+            ),
+            if (_centerNotice != null) Text(_centerNotice!),
+            Wrap(
+              spacing: 8,
+              children: [
+                if (host?.listening != true)
+                  TextButton(
+                    onPressed: _centerBusy ? null : _startCenter,
+                    child: const Text('Yerel merkezi başlat'),
+                  )
+                else
+                  TextButton(
+                    onPressed: _centerBusy ? null : _stopCenter,
+                    child: const Text('Yerel merkezi durdur'),
+                  ),
+              ],
             ),
           ]),
           _section('Garson Bağlantısı', <Widget>[
@@ -132,6 +253,29 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
               'Eşleştirme',
               host?.listening == true ? 'bu bilgisayardan kod üretilebilir' : 'sunucu kapalı',
             ),
+            if (host?.listening == true)
+              TextButton(
+                onPressed: _issueCode,
+                child: const Text('Garson cihazı bağla'),
+              ),
+            if (_pairingLink != null) ...[
+              const Text(
+                'Garson telefonu merkezi kendiliğinden bulamıyorsa bu bağlantı '
+                'kodunu kullanın: telefonda "Kodla bağla"ya yapıştırın. '
+                'İki dakika geçerlidir, bir kez kullanılır.',
+              ),
+              const SizedBox(height: 8),
+              SelectableText(
+                _pairingLink!,
+                key: const Key('lan_pairing_link'),
+                style: const TextStyle(fontSize: 12),
+              ),
+            ],
+            if (_pairingCode != null)
+              SelectableText(
+                'Kod: $_pairingCode  (2 dakika geçerli, tek kullanımlık)',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton(
@@ -148,6 +292,10 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
               ),
             ),
           ]),
+          LanPairedDevicesSection.forHost(
+            canManageDevices: widget.canManageDevices,
+            staffNames: widget.staffNames,
+          ),
           _section('Ethernet Yazıcı Yönetimi', <Widget>[
             if (ethernet.isEmpty)
               const Text('Kayıtlı Ethernet yazıcı yok.')

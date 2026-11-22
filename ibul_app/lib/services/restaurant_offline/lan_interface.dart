@@ -127,6 +127,33 @@ LanSavedAddressCheck checkSavedLanAddress({
   return const LanSavedAddressCheck(LanSavedAddressState.changed);
 }
 
+/// What the running hub should do when the machine's network changes.
+class LanRebindDecision {
+  const LanRebindDecision.keep() : target = null;
+  const LanRebindDecision.rebind(LanInterfaceChoice this.target);
+
+  final LanInterfaceChoice? target;
+  bool get shouldRebind => target != null;
+}
+
+/// [current] must already be the trusted list ([trustedLanInterfaces]), so
+/// loopback, link-local, VPN and public addresses never become a target.
+/// Keeps the hub while its bound address is still on this machine, or while
+/// no valid LAN address exists (never bind to something worse).
+LanRebindDecision decideLanRebind({
+  required String? boundAddress,
+  required List<LanInterfaceChoice> current,
+}) {
+  final bound = boundAddress?.trim() ?? '';
+  if (bound.isEmpty) return const LanRebindDecision.keep();
+  for (final choice in current) {
+    if (choice.address == bound) return const LanRebindDecision.keep();
+  }
+  final next = preferredTrustedLanInterface(current);
+  if (next == null) return const LanRebindDecision.keep();
+  return LanRebindDecision.rebind(next);
+}
+
 Future<String> lanMachineId(Directory directory) async {
   if (!directory.existsSync()) directory.createSync(recursive: true);
   final file = File('${directory.path}/machine.id');

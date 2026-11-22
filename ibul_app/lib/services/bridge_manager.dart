@@ -8,6 +8,9 @@ import 'package:http/http.dart' as http;
 
 import '../core/config/runtime_config.dart';
 import 'bridge_recovery_policy.dart';
+import 'print_agent_macos.dart';
+import 'print_agent_starter.dart';
+import 'print_service_start_gate.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BridgeSetupResult
@@ -128,6 +131,13 @@ class BridgeManager {
 
   static final http.Client _client = http.Client();
   static Future<BridgeStartResult>? _inFlightStart;
+
+  /// Test hook for the build-time print-start switch. Null uses the build.
+  @visibleForTesting
+  static bool? debugPrintStartDisabled;
+
+  @visibleForTesting
+  static MacPrintAgentStarter? debugMacAgentStarter;
 
   // ── Health ──────────────────────────────────────────────────────────────────
 
@@ -271,6 +281,47 @@ class BridgeManager {
     }
   }
 
+  /// Test builds only: starts the compiled-in throw-away bridge on the test
+  /// port and waits until it answers. The live bridge is never involved.
+  static Future<BridgeStartResult> _ensureManagedTestBridge() async {
+    if (await isAlive()) {
+      return BridgeStartResult.started(
+        message: 'Test köprüsü zaten çalışıyor.',
+        details: const <String, dynamic>{'alreadyRunning': true, 'managedTestBridge': true},
+      );
+    }
+    final watch = Stopwatch()..start();
+    try {
+      await Process.start(
+        '/bin/sh',
+        <String>[AppRuntimeConfig.testBridgeCommand],
+        mode: ProcessStartMode.detached,
+      );
+    } catch (error) {
+      return BridgeStartResult.failed(
+        message: 'Test köprüsü başlatılamadı: $error',
+        details: const <String, dynamic>{'managedTestBridge': true},
+      );
+    }
+    for (var i = 0; i < 60; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (await isAlive()) {
+        debugPrint('[BridgeManager] test bridge ready in ${watch.elapsedMilliseconds}ms');
+        return BridgeStartResult.started(
+          message: 'Test köprüsü başlatıldı.',
+          details: <String, dynamic>{
+            'managedTestBridge': true,
+            'startMs': watch.elapsedMilliseconds,
+          },
+        );
+      }
+    }
+    return BridgeStartResult.failed(
+      message: 'Test köprüsü yanıt vermedi.',
+      details: const <String, dynamic>{'managedTestBridge': true},
+    );
+  }
+
   static bool looksLikeAlreadyRunningSignal(Object? error) {
     final raw = '${error ?? ''}'.toLowerCase();
     return raw.contains('errno 48') ||
@@ -293,6 +344,18 @@ class BridgeManager {
   static Future<BridgeStartResult> _ensureReadyInternal({
     BridgeProgressCallback? onProgress,
   }) async {
+    // Every start path ends here (wizard, quick setup, test dialog, hub): a
+    // restaurant's print service starts only after the operator's "Başlat".
+    final refusal = PrintServiceStartGate.refusal();
+    if (refusal != null) {
+      return BridgeStartResult.failed(
+        message: refusal,
+        details: const <String, dynamic>{'startGateClosed': true},
+      );
+    }
+    if (AppRuntimeConfig.managedTestBridge()) {
+      return _ensureManagedTestBridge();
+    }
     if (AppRuntimeConfig.isolatedDesktop) {
       return BridgeStartResult.failed(
         message: 'İzole test production yazıcı köprüsünü başlatmaz.',
@@ -300,6 +363,34 @@ class BridgeManager {
           'isolatedDesktop': true,
           'productionBridgeBlocked': true,
         },
+      );
+    }
+    if (debugPrintStartDisabled ?? AppRuntimeConfig.printStartDisabled) {
+      // Nothing is ever started here. A hand-started test bridge that already
+      // answers may be used for an operator-started test print only.
+      if (AppRuntimeConfig.controlledTestBridge(
+        printStartDisabled: true,
+      )) {
+        if (await isAlive()) {
+          return BridgeStartResult.started(
+            message: 'Test köprüsü çalışıyor. Yalnızca elle başlatılan test baskısı gönderilir.',
+            details: const <String, dynamic>{
+              'alreadyRunning': true,
+              'controlledTestBridge': true,
+            },
+          );
+        }
+        return BridgeStartResult.failed(
+          message: AppRuntimeConfig.controlledTestBridgeDownMessage,
+          details: const <String, dynamic>{
+            'printStartDisabled': true,
+            'controlledTestBridge': true,
+          },
+        );
+      }
+      return BridgeStartResult.failed(
+        message: AppRuntimeConfig.printStartDisabledMessage,
+        details: const <String, dynamic>{'printStartDisabled': true},
       );
     }
     if (kIsWeb) {
@@ -331,6 +422,40 @@ class BridgeManager {
       );
       if (warmed != null) {
         return warmed;
+      }
+    }
+
+    // The sandboxed seller app starts its packaged bridge directly (below).
+    // The LaunchAgent route stays only for a build without that helper.
+    if (Platform.isMacOS && macOsPackagedHelper() == null) {
+      // A build without the packaged helper starts its bundled service through
+      // macOS itself (registered agent, started on demand, never at login).
+      onProgress?.call('Başlatılıyor...');
+      final agent = await (debugMacAgentStarter ??
+              MacPrintAgentStarter(
+                plistName: await PrintAgentMac.resolvePlist(),
+                isAlive: () =>
+                    isAlive(timeout: const Duration(milliseconds: 1500)),
+                approvalWait: const Duration(seconds: 120),
+                onProgress: onProgress,
+              ))
+          .ensure();
+      if (agent.outcome != MacPrintAgentOutcome.notConfigured) {
+        return agent.ok
+            ? BridgeStartResult.started(
+                message: 'Yazıcı servisi hazır.',
+                details: const <String, dynamic>{'targetType': 'mac_agent'},
+              )
+            : BridgeStartResult.failed(
+                message: agent.message.isEmpty
+                    ? 'Yazıcı servisi başlatılamadı.'
+                    : agent.message,
+                details: <String, dynamic>{
+                  'targetType': 'mac_agent',
+                  'needsApproval':
+                      agent.outcome == MacPrintAgentOutcome.needsApproval,
+                },
+              );
       }
     }
 
@@ -501,6 +626,14 @@ class BridgeManager {
     if (!Platform.isMacOS) {
       return const LaunchAgentResult(success: true, alreadyInstalled: false);
     }
+    // A login-time agent would start the service without the operator.
+    if (PrintServiceStartGate.restaurantRules) {
+      return const LaunchAgentResult(
+        success: false,
+        error:
+            'Restoran yazıcı servisi otomatik başlatılmaz. Sistem > Yazıcı Merkezi bölümünden başlatın.',
+      );
+    }
 
     final python = await _findPython();
     if (python == null) {
@@ -656,6 +789,7 @@ class BridgeManager {
         target.executable,
         target.arguments,
         workingDirectory: target.workingDirectory,
+        environment: target.environment,
         mode: ProcessStartMode.detached,
         runInShell: false,
       );
@@ -741,6 +875,21 @@ class BridgeManager {
     return candidates;
   }
 
+  /// The bridge shipped inside the macOS app (signed to inherit its sandbox).
+  @visibleForTesting
+  static String? macOsPackagedHelper() {
+    if (kIsWeb || !Platform.isMacOS) return null;
+    try {
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      final path = Directory('$exeDir/../Resources/PrintBridge/IbulPrintBridge')
+          .absolute
+          .path;
+      return File(path).existsSync() ? path : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<_BridgeResolveResult> _resolveBridgeTarget() async {
     if (Platform.isWindows) {
       for (final candidate in windowsInstalledBridgeExeCandidates()) {
@@ -756,6 +905,27 @@ class BridgeManager {
             ),
           );
         }
+      }
+    }
+
+    if (Platform.isMacOS) {
+      final helper = macOsPackagedHelper();
+      if (helper != null) {
+        return _BridgeResolveResult(
+          installed: true,
+          reason: 'macos_packaged_helper',
+          target: _BridgeStartTarget(
+            kind: 'packaged_helper',
+            executable: helper,
+            arguments: const <String>[],
+            workingDirectory: File(helper).parent.path,
+            environment: const <String, String>{
+              'PRINT_BRIDGE_HOST': '127.0.0.1',
+              'PRINT_BRIDGE_PORT': '3001',
+              'PRINT_STATION_ENABLED': 'false',
+            },
+          ),
+        );
       }
     }
 
@@ -861,8 +1031,10 @@ class _BridgeStartTarget {
     required this.executable,
     required this.arguments,
     required this.workingDirectory,
+    this.environment,
   });
 
+  final Map<String, String>? environment;
   final String kind;
   final String executable;
   final List<String> arguments;

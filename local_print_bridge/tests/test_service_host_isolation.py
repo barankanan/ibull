@@ -1,4 +1,6 @@
-"""Isolated supervisor checks. They never use TCP port 3001 or PID 747."""
+"""Isolated supervisor checks. They never touch a live bridge process: the
+protected stand-in is a throw-away stopped process, and port 3001 is only
+used to prove that it is refused without approval."""
 from __future__ import annotations
 
 import os
@@ -37,16 +39,21 @@ server.serve_forever()
 class IsolatedServiceHostTests(unittest.TestCase):
     def test_live_port_is_not_signaled_without_approval(self) -> None:
         os.environ.pop("IBUL_BRIDGE_RECOVERY_APPROVED", None)
-        with tempfile.TemporaryDirectory() as tmp:
-            os.environ["PRINT_BRIDGE_DATA_DIR"] = tmp
-            before = _stat_747()
-            run_host(port=3001, once=True)
-            after = _stat_747()
-            self.assertEqual(before, after)
-            self.assertTrue((Path(tmp) / "logs" / "recovery.log").is_file())
-            text = (Path(tmp) / "logs" / "recovery.log").read_text(encoding="utf-8")
-            self.assertIn("live_recovery_not_approved", text)
-            self.assertIn("replay_uncertain_jobs=false", text)
+        protected = _spawn_protected_stopped_process()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ["PRINT_BRIDGE_DATA_DIR"] = tmp
+                before = _stat(protected.pid)
+                run_host(port=3001, once=True)
+                after = _stat(protected.pid)
+                self.assertEqual(before, after)
+                self.assertEqual(after[:1], "T")
+                self.assertTrue((Path(tmp) / "logs" / "recovery.log").is_file())
+                text = (Path(tmp) / "logs" / "recovery.log").read_text(encoding="utf-8")
+                self.assertIn("live_recovery_not_approved", text)
+                self.assertIn("replay_uncertain_jobs=false", text)
+        finally:
+            _reap(protected)
 
     def test_stopped_dummy_is_detected_and_sqlite_is_kept(self) -> None:
         os.environ.pop("IBUL_BRIDGE_RECOVERY_APPROVED", None)
@@ -59,6 +66,9 @@ class IsolatedServiceHostTests(unittest.TestCase):
         port_line = dummy.stdout.readline().strip()
         port = int(port_line)
         self.assertNotEqual(port, 3001)
+        # Unrelated stopped process: the host must signal only the process that
+        # owns the port it supervises, never anything else.
+        protected = _spawn_protected_stopped_process()
         try:
             os.kill(dummy.pid, signal.SIGSTOP)
             self.assertEqual(_stat(dummy.pid)[:1], "T")
@@ -73,7 +83,7 @@ class IsolatedServiceHostTests(unittest.TestCase):
                 while time.time() < deadline and _stat(dummy.pid)[:1] == "T":
                     time.sleep(0.05)
                 self.assertNotEqual(_stat(dummy.pid)[:1], "T")
-                self.assertEqual(_stat_747()[:1], "T")
+                self.assertEqual(_stat(protected.pid)[:1], "T")
                 log_text = (root / "logs" / "recovery.log").read_text(encoding="utf-8")
                 self.assertIn("action=sigcont", log_text)
                 self.assertIn("replay_uncertain_jobs=false", log_text)
@@ -91,6 +101,7 @@ class IsolatedServiceHostTests(unittest.TestCase):
                 )
                 self.assertEqual(exhausted["action"], "give_up")
         finally:
+            _reap(protected)
             if dummy.poll() is None:
                 dummy.send_signal(signal.SIGCONT)
                 dummy.kill()
@@ -138,8 +149,21 @@ def _stat(pid: int) -> str:
     return (completed.stdout or "").strip()
 
 
-def _stat_747() -> str:
-    return _stat(747)
+def _spawn_protected_stopped_process() -> subprocess.Popen:
+    """Stand-in for an unrelated live process that the host must never signal."""
+    proc = subprocess.Popen(["python3", "-c", "import time; time.sleep(120)"])
+    os.kill(proc.pid, signal.SIGSTOP)
+    deadline = time.time() + 2
+    while time.time() < deadline and _stat(proc.pid)[:1] != "T":
+        time.sleep(0.02)
+    return proc
+
+
+def _reap(proc: subprocess.Popen) -> None:
+    if proc.poll() is None:
+        proc.send_signal(signal.SIGCONT)
+        proc.kill()
+        proc.wait(timeout=3)
 
 
 if __name__ == "__main__":

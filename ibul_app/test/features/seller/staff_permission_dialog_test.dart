@@ -20,8 +20,9 @@ SubAdmin _member() => SubAdmin(
     );
 
 Future<void> _open(WidgetTester tester, Size size) async {
-  await tester.binding.setSurfaceSize(size);
-  addTearDown(() => tester.binding.setSurfaceSize(null));
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
   await tester.pumpWidget(
     MaterialApp(
       home: Builder(
@@ -55,6 +56,21 @@ Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
   await tester.pumpAndSettle();
 }
 
+bool _wide(Size size) => size.width >= 1000;
+
+/// Geniş ekranda özet sağ panelde hazırdır; dar ekranda Önizleme alt sayfası açılır.
+Future<void> _showSummary(WidgetTester tester, Size size) async {
+  if (_wide(size)) return;
+  await tester.tap(find.text('Önizleme'));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _hideSummary(WidgetTester tester, Size size) async {
+  if (_wide(size)) return;
+  await tester.tap(find.byTooltip('Kapat').last);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   for (final size in const [Size(360, 740), Size(1280, 800)]) {
     testWidgets('personel yetki ekranı ${size.width.toInt()}px: başlık, özet, düzey, geri al', (
@@ -68,29 +84,34 @@ void main() {
       expect(tester.takeException(), isNull);
 
       // Canlı özet: sipariş var, masa kapatma yok
-      final summary = find.text('Masa kapatamaz');
-      await _scrollTo(tester, summary);
+      await _showSummary(tester, size);
+      expect(find.text('Masa kapatamaz'), findsOneWidget);
       expect(find.text('Sipariş gönderebilir'), findsOneWidget);
       expect(find.text('Personel şifresi değiştiremez'), findsOneWidget);
+      await _hideSummary(tester, size);
 
       // Garson sayfası -> Tam yönetim: özet Masa kapatabilir olur
       final garsonFull = find.byKey(const ValueKey('page-level-garson-full'));
       await _scrollTo(tester, garsonFull);
       await tester.tap(garsonFull);
       await tester.pumpAndSettle();
-      await _scrollTo(tester, find.text('Masa kapatabilir'));
+      await _showSummary(tester, size);
       expect(find.text('Masa kapatabilir'), findsOneWidget);
       expect(find.text('Masa aktarabilir'), findsOneWidget);
       expect(tester.takeException(), isNull);
+      await _hideSummary(tester, size);
 
-      // Geri al: özet ilk durumuna döner
-      await tester.tap(find.text('Geri al'));
+      // Geri Al: özet ilk durumuna döner
+      await tester.tap(find.text('Geri Al'));
       await tester.pumpAndSettle();
-      await _scrollTo(tester, find.text('Masa kapatamaz'));
+      await _showSummary(tester, size);
+      expect(find.text('Masa kapatamaz'), findsOneWidget);
       expect(find.text('Masa kapatabilir'), findsNothing);
+      await _hideSummary(tester, size);
 
-      // Önizleme
-      await tester.tap(find.text('Önizleme'));
+      // Önizleme: sunucuya gidecek yetkiler görünür
+      await _showSummary(tester, size);
+      if (_wide(size)) await tester.tap(find.text('Önizleme'));
       await tester.pumpAndSettle();
       expect(find.text('Sunucuya kaydedilecek yetkiler'), findsOneWidget);
       expect(find.textContaining('manageOrders'), findsWidgets);

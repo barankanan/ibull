@@ -61,8 +61,10 @@ class LanCenterBrowser {
       final raw = await _channel.invokeMethod<dynamic>('browse');
       return recordsFromDiscoveryMaps(raw);
     } on MissingPluginException {
+      debugPrint('[LanCenterBrowser] this build has no local network search');
       return const <LanCenterRecord>[];
-    } on PlatformException {
+    } on PlatformException catch (error) {
+      debugPrint('[LanCenterBrowser] search failed: ${error.code}');
       return const <LanCenterRecord>[];
     }
   }

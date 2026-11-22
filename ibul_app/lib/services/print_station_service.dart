@@ -6,9 +6,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/config/runtime_config.dart';
+import 'print_job_payload_identity.dart';
 import 'desktop_print_ports.dart';
 import 'local_print_service.dart';
 import 'printer_event_log_service.dart';
+import 'printer_repository.dart';
 
 class PrintStationService implements PrintStationServicePort {
   PrintStationService({
@@ -98,11 +100,29 @@ class PrintStationService implements PrintStationServicePort {
   @override
   Future<Map<String, dynamic>?> fetchStationConfig(String restaurantId) async {
     if (restaurantId.trim().isEmpty) return null;
-    final row = await _client
-        .from('restaurant_print_station_configs')
-        .select()
-        .eq('restaurant_id', restaurantId.trim())
-        .maybeSingle();
+    final Object? row;
+    try {
+      row = await _client
+          .from('restaurant_print_station_configs')
+          .select()
+          .eq('restaurant_id', restaurantId.trim())
+          .maybeSingle();
+    } catch (error) {
+      // Without the cloud the last configuration read on this device is
+      // used, so an offline order can still find its kitchen printer.
+      final cached = await PrinterRepository.lastGoodRowsWhenUnreachable(
+        PrinterRepository.stationConfigCacheKind,
+        restaurantId,
+        error,
+      );
+      if (cached == null) rethrow;
+      return cached.isEmpty ? null : cached.first;
+    }
+    await PrinterRepository.rememberLastGoodRows(
+      PrinterRepository.stationConfigCacheKind,
+      restaurantId,
+      row == null ? const <Object>[] : <Object>[row],
+    );
     if (row == null) return null;
     return Map<String, dynamic>.from(row as Map);
   }
@@ -297,6 +317,17 @@ class PrintStationService implements PrintStationServicePort {
     String? bridgeUsbVendorId,
     String? bridgeUsbProductId,
   }) async {
+    // A print-disabled build never hands a bridge the cloud queue credentials:
+    // a bridge that holds them claims and prints production jobs on its own.
+    if (AppRuntimeConfig.printStartDisabled) {
+      return <String, dynamic>{
+        'ok': false,
+        'error':
+            '${AppRuntimeConfig.printStartDisabledMessage} '
+            'Bu cihaz yazıcı merkezi yapılmadı.',
+        'printStartDisabled': true,
+      };
+    }
     final service = _service();
     try {
       return await service.configurePrintStation({
@@ -430,10 +461,7 @@ class PrintStationService implements PrintStationServicePort {
           // ignore revert failures
         }
       }
-      final message = error.toString().replaceFirst('Exception: ', '').trim();
-      throw Exception(
-        message.isEmpty ? 'Baskı sistemi güncellenemedi.' : message,
-      );
+      throw Exception(printSystemToggleErrorMessage(error));
     } finally {
       if (_localPrintService == null) {
         service.dispose();
@@ -462,6 +490,9 @@ class PrintStationService implements PrintStationServicePort {
         })
         .eq('restaurant_id', normalizedRestaurantId)
         .eq('id', normalizedJobId)
+        // Only a job the operator paused may be released; never a job that
+        // was already sent, printed or failed in the meantime.
+        .eq('status', 'paused_by_operator')
         .select();
     return response.isNotEmpty;
   }
@@ -547,7 +578,7 @@ class PrintStationService implements PrintStationServicePort {
         params: {
           'p_restaurant_id': restaurantId,
           'p_table_number': tableNumber,
-          'p_payload': payload,
+          'p_payload': payloadForUnboundPrinterJob(payload),
           'p_waiter_id': (waiterId == null || waiterId.trim().isEmpty)
               ? null
               : waiterId,
@@ -579,7 +610,7 @@ class PrintStationService implements PrintStationServicePort {
         params: {
           'p_restaurant_id': restaurantId,
           'p_table_number': tableNumber,
-          'p_payload': payload,
+          'p_payload': payloadForUnboundPrinterJob(payload),
           'p_waiter_id': (waiterId == null || waiterId.trim().isEmpty)
               ? null
               : waiterId,
@@ -615,7 +646,7 @@ class PrintStationService implements PrintStationServicePort {
         params: {
           'p_restaurant_id': restaurantId,
           'p_table_number': tableNumber,
-          'p_payload': payload,
+          'p_payload': payloadForUnboundPrinterJob(payload),
           'p_waiter_id': (waiterId == null || waiterId.trim().isEmpty)
               ? null
               : waiterId,
@@ -673,4 +704,30 @@ class PrintStationService implements PrintStationServicePort {
     }
     return error.message;
   }
+}
+
+/// What the operator reads when the print-service switch could not be changed.
+/// The switch writes the local bridge first, so a bridge that does not answer
+/// is the usual cause; it is named as such instead of a raw socket error.
+String printSystemToggleErrorMessage(
+  Object error, {
+  bool? printStartDisabled,
+  Uri? bridgeUri,
+}) {
+  if (error is LocalPrintServiceException &&
+      error.errorCode == 'bridge_unreachable') {
+    if (printStartDisabled ?? AppRuntimeConfig.printStartDisabled) {
+      return '${AppRuntimeConfig.printStartDisabledMessage} '
+          'Yazıcı servisi ayarı değiştirilmedi.';
+    }
+    final uri = bridgeUri ?? AppRuntimeConfig.localPrintBridgeUri();
+    return 'Yazıcı köprüsü çalışmıyor (${uri.host}:${uri.port}). '
+        'Yazıcı servisi ayarı değiştirilmedi. Önce köprüyü başlatın.';
+  }
+  if (error is LocalPrintServiceException) {
+    final message = error.message.trim();
+    return message.isEmpty ? 'Baskı sistemi güncellenemedi.' : message;
+  }
+  final message = error.toString().replaceFirst('Exception: ', '').trim();
+  return message.isEmpty ? 'Baskı sistemi güncellenemedi.' : message;
 }

@@ -448,10 +448,11 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
   List<Product> get _filteredProducts {
     if (_debouncedStoreSearchQuery.isEmpty) return _allProducts;
-    final query = _debouncedStoreSearchQuery.toLowerCase();
+    final query = TextNormalizer.normalize(_debouncedStoreSearchQuery);
+    if (query.isEmpty) return _allProducts;
     return _allProducts.where((product) {
-      return product.name.toLowerCase().contains(query) ||
-          product.brand.toLowerCase().contains(query);
+      return TextNormalizer.normalize(product.name).contains(query) ||
+          TextNormalizer.normalize(product.brand).contains(query);
     }).toList();
   }
 

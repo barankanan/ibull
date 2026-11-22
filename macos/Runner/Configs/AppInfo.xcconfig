@@ -7,6 +7,9 @@
 // The application's name. By default this is also the title of the Flutter window.
 PRODUCT_NAME = IbulSellerDesktop
 
+// Görünen ad (Info.plist CFBundleDisplayName). Customer.xcconfig kendi adıyla ezer.
+APP_DISPLAY_NAME = İBUL Satıcı
+
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = com.ibul.sellerdesktop
 
@@ -15,3 +18,12 @@ PRODUCT_COPYRIGHT = Copyright © 2026 Ibul. All rights reserved.
 
 // Xcode 15+ fails if Automatic signing rewrites DebugProfile.entitlements mid-build.
 CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES
+
+// The live print agent (com.ibul.localprint) may be registered only by a build
+// that sets this to YES on purpose. Development and test builds keep NO.
+IBUL_ALLOW_LIVE_PRINT_AGENT = NO
+// The shipped Release app carries its own print service and starts it when the
+// operator switches "Yazıcı Servisi" on. Without this the Release package had
+// no LaunchAgent and no way to start the bridge from the sandbox.
+// Debug and the isolated offlinetest configuration keep NO.
+IBUL_ALLOW_LIVE_PRINT_AGENT[config=Release] = YES

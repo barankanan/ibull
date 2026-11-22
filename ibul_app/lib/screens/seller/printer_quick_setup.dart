@@ -145,14 +145,8 @@ class _PrinterQuickSetupScreenState
         assignedRoles: [PrinterRole.receipt],
       );
 
-      // Install the macOS LaunchAgent so the bridge survives reboots.
-      if (!kIsWeb && !BridgeManager.isLaunchAgentInstalled()) {
-        final laResult = await BridgeManager.installLaunchAgent();
-        if (!laResult.success) {
-          debugPrintSetup(
-              'LaunchAgent install failed: ${laResult.error}');
-        }
-      }
+      // Nothing is installed to run at login: the seller app starts the
+      // printer service itself each time it opens.
 
       if (!mounted) return;
       Navigator.of(context).pop(saved);
@@ -196,10 +190,6 @@ class _PrinterQuickSetupScreenState
       });
     }
   }
-
-  static void debugPrintSetup(String msg) =>
-      // ignore: avoid_print
-      print('[PrinterQuickSetup] $msg');
 
   // ── Build ────────────────────────────────────────────────────────────────
 

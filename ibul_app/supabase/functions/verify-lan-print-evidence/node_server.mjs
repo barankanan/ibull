@@ -16,7 +16,8 @@ const server = createServer(async (req, res) => {
   res.end(payload);
 });
 
-server.listen(0, '127.0.0.1', () => {
+// PORT pins the port for a local run; tests leave it unset.
+server.listen(Number(process.env.PORT ?? '0'), '127.0.0.1', () => {
   const address = server.address();
   console.log(`EVIDENCE_VERIFIER_PORT ${address.port}`);
 });

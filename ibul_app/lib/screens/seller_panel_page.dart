@@ -11613,7 +11613,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Future<String?> _resolveStaffBranchIdForTables() async {
     if (_actorIsStoreOwner) return null;
     if (_staffBranchIdForTablesLoaded) return _staffBranchIdForTables;
-    final access = await Supabase.instance.client.rpc('get_my_staff_access');
+    final access = await Supabase.instance.client
+        .rpc('get_my_staff_access')
+        .timeout(StoreService.cloudLookupTimeout);
     _staffBranchIdForTables = staffBranchFromAccess(access);
     _staffBranchIdForTablesLoaded = true;
     return _staffBranchIdForTables;
@@ -11759,6 +11761,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           MaterialPageRoute(
                             builder: (_) => RestaurantLocalOpsPage(
                               restaurantId: _printerSettingsRestaurantId,
+                              canManageDevices: _actorMaySeePrinterSettings,
+                              staffNames: <String, String>{
+                                for (final m in _subAdmins)
+                                  if ((m.displayName ?? '').trim().isNotEmpty)
+                                    m.id: m.displayName!.trim(),
+                              },
                             ),
                           ),
                         );
@@ -17451,9 +17459,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         .map(
           (module) => _offlineBlocked(module)
               ? SellerPanelMenuEntry(
-                  icon: Icons.wifi_off_rounded,
-                  label: '${_moduleLabel(module)} · İnternet gerekir',
+                  icon: _moduleIcon(module),
+                  label: _moduleLabel(module),
                   isActive: false,
+                  state: SellerMenuItemState.lockedOffline,
                   onTap: () => _announceOfflineBlocked(module),
                 )
               : SellerPanelMenuEntry(
@@ -17838,14 +17847,34 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       unawaited(_refreshGarsonBoardAfterSync());
     }
     _lastConnectivitySyncing = syncing;
-    final mode = service.mode;
-    if (mode == _lastConnectivityMode) return;
-    _lastConnectivityMode = mode;
     final cloudBack = service.hasNetwork && service.supabaseReachable;
+    // The monitor reports every few seconds even when the mode is unchanged.
+    // The offline-start flag is lifted only by a successful profile load, so
+    // one failed attempt used to leave the panel on three pages for good;
+    // while the cloud answers the attempt is repeated at intervals.
+    final recovery = decideCloudRecovery(
+      cloudUp: cloudBack,
+      wasCloudUp: _lastCloudUp,
+      offlineStartActive: _offlineStartActive,
+      recoveryInFlight: _cloudRecoveryInFlight,
+      boardShowsCloudError: _garsonTableOrdersLoadError != null,
+      lastAttemptAt: _cloudRecoveryLastAttemptAt,
+      now: DateTime.now(),
+    );
+    _lastCloudUp = cloudBack;
+    if (recovery.retryProfile) {
+      unawaited(_recoverFromOfflineStart());
+    } else if (recovery.refreshBoards) {
+      unawaited(_refreshBoardsAfterCloudBack(source: 'cloud_back'));
+    }
+    final mode = service.mode;
+    if (mode == _lastConnectivityMode) {
+      if (recovery.rebuild) setState(() {});
+      return;
+    }
+    _lastConnectivityMode = mode;
     if (cloudBack && _offlineStartActive) {
-      // The server answers again: verify the account and load the real menu.
-      unawaited(_loadStoreProfile());
-      unawaited(_loadStaffMenuGate());
+      // Handled above by the repeated recovery attempt.
     } else if (cloudBack) {
       // The cloud dropped while the panel was open and is back: the owner
       // may have changed or withdrawn this account's permissions meanwhile.
@@ -17859,6 +17888,65 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         source: 'connectivity_mode_changed',
       );
       _seedGarsonAfterProgrammaticSwitch('connectivity_mode_changed');
+    }
+  }
+
+  bool _lastCloudUp = true;
+  bool _cloudRecoveryInFlight = false;
+  DateTime? _cloudRecoveryLastAttemptAt;
+
+  /// Leaves the offline start once the server answers: verifies the account,
+  /// loads the real menu and refreshes the boards. A failed attempt keeps the
+  /// working three-page panel on screen and is tried again by the monitor.
+  Future<void> _recoverFromOfflineStart() async {
+    if (_cloudRecoveryInFlight) return;
+    _cloudRecoveryInFlight = true;
+    _cloudRecoveryLastAttemptAt = DateTime.now();
+    try {
+      await _loadStoreProfile();
+      if (!mounted) return;
+      if (_offlineStartActive) {
+        // The load failed for now; do not swap the usable panel for an
+        // error page. The next monitor tick retries.
+        setState(() {
+          _hasLoadedStoreProfile = true;
+          _storeProfileLoadError = null;
+          _isLoading = false;
+        });
+        debugPrint('[OfflineStart] recovery attempt failed, will retry');
+        return;
+      }
+      await _loadStaffMenuGate();
+    } finally {
+      _cloudRecoveryInFlight = false;
+    }
+    if (!mounted || _offlineStartActive) return;
+    debugPrint('[OfflineStart] recovered, cloud menu restored');
+    setState(() {});
+    await _refreshBoardsAfterCloudBack(source: 'offline_start_recovered');
+  }
+
+  /// Reads Genel Bakış and Garson from the cloud again so a stale
+  /// "cloud unreachable" notice does not outlive the outage.
+  Future<void> _refreshBoardsAfterCloudBack({required String source}) async {
+    if (_cloudRecoveryInFlight) return;
+    _cloudRecoveryInFlight = true;
+    _cloudRecoveryLastAttemptAt = DateTime.now();
+    try {
+      await _hydrateLanFloorBoard();
+      if (!mounted || _offlineOperationActive) return;
+      if (_isGarsonVisible || _garsonTableOrdersLoadError != null) {
+        await _loadGarsonTableOrdersSnapshot(
+          source: source,
+          showError: false,
+          forceApply: true,
+        );
+      }
+      if (!mounted) return;
+      await _refreshDashboardData(source: source);
+      if (mounted) setState(() {});
+    } finally {
+      _cloudRecoveryInFlight = false;
     }
   }
 
@@ -25488,6 +25576,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             MaterialPageRoute(
                               builder: (_) => RestaurantLocalOpsPage(
                                 restaurantId: _printerSettingsRestaurantId,
+                                canManageDevices: _actorMaySeePrinterSettings,
+                                staffNames: <String, String>{
+                                  for (final m in _subAdmins)
+                                    if ((m.displayName ?? '').trim().isNotEmpty)
+                                      m.id: m.displayName!.trim(),
+                                },
                               ),
                             ),
                           );

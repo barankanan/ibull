@@ -11,6 +11,7 @@ import '../features/seller/domain/store_vertical.dart';
 import 'become_seller_page.dart';
 import '../features/seller/panel/helpers/seller_login_back_navigation.dart';
 import '../services/auth_service.dart';
+import '../services/staff_login_policy.dart';
 import 'seller/seller_forgot_password_page.dart';
 import 'seller_panel_page.dart';
 
@@ -158,6 +159,30 @@ class _SellerLoginPageState extends State<SellerLoginPage>
         }
 
         if (resolution.resolvedRole == LoginResolvedRole.waiter) {
+          // Every staff account carries role=waiter, so the membership row
+          // decides the entry: a deactivated member never gets a panel, and a
+          // sub-admin with more than the floor must not be pinned to Garson.
+          final StaffMenuGate gate;
+          try {
+            gate = await _authService.loadStaffMenuGate();
+          } catch (_) {
+            await _authService.signOutSeller();
+            throw Exception(
+              'Personel yetkileri doğrulanamadı. Bağlantıyı kontrol edip tekrar deneyin.',
+            );
+          }
+          if (gate.revoked) {
+            await _authService.signOutSeller();
+            AuthFlowLogger.sellerProfileFetchError(
+              message: 'staff_membership_inactive',
+            );
+            throw Exception(
+              'Hesabınız pasif. İşletme sahibi erişiminizi yeniden açmalı.',
+            );
+          }
+          final entry = staffGateIsGarsonOnly(gate)
+              ? SellerPanelEntryRole.waiter
+              : SellerPanelEntryRole.seller;
           AuthFlowLogger.sellerProfileFetchSuccess(sellerId: resolution.userId);
           await _authService.markSellerLoginSuccess(
             userId: resolution.userId ?? '',
@@ -165,12 +190,8 @@ class _SellerLoginPageState extends State<SellerLoginPage>
           );
           appState.clearCustomerSessionView();
           if (!mounted) return;
-          AuthFlowLogger.redirect(target: '/seller?role=waiter');
-          IbulRouter.go(
-            context,
-            '/seller',
-            extra: SellerPanelEntryRole.waiter,
-          );
+          AuthFlowLogger.redirect(target: '/seller?role=${entry.name}');
+          IbulRouter.go(context, '/seller', extra: entry);
           return;
         }
 

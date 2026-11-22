@@ -14,8 +14,15 @@ class PairedLanTransport implements RestaurantLanOrderTransport {
     return PairedLanTransport(client.postAuthorized);
   }
 
+  String? _lastPrintStatus;
+
+  /// Print status the order center reported for the last accepted order
+  /// ('forwarded', 'uncertain', 'failed', 'not_sent'), or null when unknown.
+  String? get lastPrintStatus => _lastPrintStatus;
+
   @override
   Future<bool> submit(RestaurantLocalOrderRecord order) async {
+    _lastPrintStatus = null;
     final response = await _send('/lan/orders', <String, Object?>{
       'local_order_id': order.localOrderId,
       'restaurant_id': order.restaurantId,
@@ -33,6 +40,8 @@ class PairedLanTransport implements RestaurantLanOrderTransport {
             'Cihaz eşleşmesi yok veya iptal edildi.',
       );
     }
+    final printStatus = response['print_status']?.toString().trim() ?? '';
+    _lastPrintStatus = printStatus.isEmpty ? null : printStatus;
     return response['saved'] == true;
   }
 }

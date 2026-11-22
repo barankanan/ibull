@@ -15,6 +15,7 @@
 // • Logout navigates back to the login screen
 // • Missing config shows a clear error screen before any network call
 import 'dart:async';
+import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -31,10 +32,26 @@ import 'package:ibul_app/screens/seller/restaurant_printer_setup_route.dart';
 import 'package:ibul_app/screens/seller_login_page.dart';
 import 'package:ibul_app/screens/seller_panel_page.dart';
 import 'package:ibul_app/services/auth_service.dart';
+import 'package:ibul_app/services/store_service.dart';
 import 'package:ibul_app/services/bridge_manager.dart';
 import 'package:ibul_app/services/desktop_print_hub.dart';
+import 'package:ibul_app/services/restaurant_offline/offline_panel_identity.dart';
+import 'package:ibul_app/services/restaurant_offline/offline_test_lan.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_connectivity_service.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_local_cache_service.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_offline_lifecycle.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_offline_sync_service.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_lan_host.dart';
+import 'package:ibul_app/services/restaurant_offline/seller_lan_center.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_center_access.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_center_control.dart';
+import 'package:ibul_app/services/print_service_start_gate.dart';
+import 'package:ibul_app/features/seller/domain/store_vertical.dart';
 import 'package:ibul_app/utils/desktop_printer_status_policy.dart';
 import 'package:ibul_app/widgets/desktop_print_status_bar.dart';
+import 'package:ibul_app/services/restaurant_offline/waiter_lan_link.dart';
+import 'package:ibul_app/widgets/lan_pairing_approval_dialog.dart';
+import 'package:ibul_app/widgets/waiter_lan_link_banner.dart';
 
 final GlobalKey<NavigatorState> sellerNavigatorKey =
     GlobalKey<NavigatorState>();
@@ -79,6 +96,8 @@ String _resolveDesktopRestaurantId(LoginRouteResolution resolution) {
 void main() async {
   final sw = Stopwatch()..start();
   WidgetsFlutterBinding.ensureInitialized();
+  // Restaurant print services stay off until the operator starts them.
+  PrintServiceStartGate.enforce();
 
   configureAppDiagnostics(
     startupMessage: 'İbul Satıcı — desktop startup',
@@ -110,6 +129,20 @@ void main() async {
     runApp(_ConfigErrorApp(missingKeys: null, bootError: e.toString()));
     return;
   }
+
+  // Offline-test build only (`IBUL_OFFLINE_TEST`): starts the isolated LAN host
+  // after the launch gate passes. A no-op in every normal seller build.
+  unawaited(
+    maybeStartOfflineTestLanHost(
+      supabaseUrl: AppRuntimeConfig.rawSupabaseUrl,
+      // Isolated desktop builds talk to the dead probe port; anything else
+      // would use the live bridge port, which the launch gate refuses.
+      printBridgePort: (AppRuntimeConfig.isolatedDesktop
+              ? Uri.parse(AppRuntimeConfig.isolatedProbeUrl).port
+              : AppRuntimeConfig.productionPrintBridgePort)
+          .toString(),
+    ),
+  );
 
   runApp(
     MultiProvider(
@@ -192,11 +225,121 @@ class _SellerSessionGateState extends State<_SellerSessionGate> {
   /// `true`  = valid seller session found → will push /seller
   /// `false` = no session → show login page
   bool? _hasSession;
+  StreamSubscription<AuthState>? _authSub;
+  /// Kept for the whole life of the app. It used to belong to this screen,
+  /// which is replaced right after sign-in, so quitting from the seller panel
+  /// never ran it and the print service outlived the app.
+  static AppLifecycleListener? _exitListener;
+
+  /// Closing the app: the center refuses new orders, lets the order being
+  /// saved and the ticket being printed finish, then closes. The next launch
+  /// starts with everything off.
+  static Future<AppExitResponse> _onExitRequested() async {
+    debugPrint('[SessionGate] exit requested: closing the printer center');
+    try {
+      _offlineLifecycle.stop();
+      final wasStarted = RestaurantCenterControl.startedThisSession;
+      await RestaurantCenterControl.stop().timeout(const Duration(seconds: 8));
+      if (wasStarted) {
+        // The next launch must find the print service closed too.
+        await RestaurantCenterControl.closePrintServiceSafely()
+            .timeout(const Duration(seconds: 40));
+      }
+    } catch (error) {
+      debugPrint('[SessionGate] center stop on exit failed: $error');
+    }
+    return AppExitResponse.exit;
+  }
 
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb) {
+      _exitListener ??= AppLifecycleListener(onExitRequested: _onExitRequested);
+    }
     _restoreSession();
+    _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (data.event == AuthChangeEvent.signedOut) {
+        _offlineLifecycle.stop();
+      } else if (data.event == AuthChangeEvent.signedIn && data.session != null) {
+        unawaited(_startOfflineLifecycle(data.session!.user));
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
+  }
+
+  /// Local center + waiting-order sync run from app start, not from the
+  /// Garson page. The restaurant comes from the sealed saved identity (or the
+  /// owner's own id when this computer already owns a center); a device with
+  /// neither starts nothing.
+  static final RestaurantOfflineLifecycle _offlineLifecycle =
+      RestaurantOfflineLifecycle(
+        connectivity: RestaurantConnectivityService.instance,
+        isCenterListening: (id) {
+          final host = RestaurantLanHostRegistry.current;
+          return host != null && host.listening && host.restaurantId == id;
+        },
+        pendingCount: (id) => RestaurantOfflineSyncService().pendingCount(id),
+        onReconnected: (id) async {
+          final host = RestaurantLanHostRegistry.current;
+          if (host != null && host.listening && host.restaurantId == id) {
+            await host.reverifyDevices();
+            // A center started while the cloud was away never registered its
+            // evidence key; do it now, before printed orders are sent.
+            await SellerLanCenter.ensureEvidenceKeyRegistered(restaurantId: id);
+          }
+          await RestaurantCenterControl.holdOwedOldJobs(id);
+        },
+        syncPending: (id) =>
+            RestaurantOfflineSyncService().syncPendingOrders(restaurantId: id),
+        // Nothing is reopened at launch, whatever an earlier session chose:
+        // the center starts only from Sistem > Yazıcı Merkezi > Başlat.
+        resumeCenter: (id) async => false,
+      );
+
+  static StreamSubscription<Object?>? _acceptedOrders;
+  static bool _watchesCenterStart = false;
+
+  /// Orders taken in an earlier session wait for the center: their ticket
+  /// record is signed by it. The center now opens only on "Başlat", so that
+  /// is the moment they are sent, not the next order or the next reconnect.
+  static void _onCenterStartedForSync() {
+    if (!PrintServiceStartGate.operatorStarted.value) return;
+    final id = _offlineLifecycle.restaurantId;
+    if (id != null) _offlineLifecycle.centerStarted(id);
+  }
+
+  Future<void> _startOfflineLifecycle(User user) async {
+    if (kIsWeb) return;
+    // An order the center took while the cloud is reachable goes up as soon
+    // as its ticket outcome is recorded.
+    _acceptedOrders ??= RestaurantLanHostRegistry.ordersSettled.stream.listen((_) {
+      final id = RestaurantLanHostRegistry.current?.restaurantId;
+      if (id != null) _offlineLifecycle.localOrderAccepted(id);
+    });
+    if (!_watchesCenterStart) {
+      _watchesCenterStart = true;
+      PrintServiceStartGate.operatorStarted.addListener(_onCenterStartedForSync);
+    }
+    try {
+      final checked = await OfflinePanelIdentityStore().readChecked(user.id);
+      String? restaurantId;
+      if (checked.integrity == OfflineIdentityIntegrity.ok &&
+          checked.identity != null) {
+        restaurantId = checked.identity!.ownerId;
+      } else if (await SellerLanCenter.isOwned(user.id)) {
+        restaurantId = user.id;
+      }
+      if (restaurantId == null || restaurantId.isEmpty) return;
+      await _offlineLifecycle.ensureStarted(restaurantId);
+    } catch (error) {
+      debugPrint('[SessionGate] offline lifecycle failed: $error');
+    }
   }
 
   Future<void> _restoreSession() async {
@@ -220,12 +363,14 @@ class _SellerSessionGateState extends State<_SellerSessionGate> {
       if (resolution.resolvedRole == LoginResolvedRole.seller &&
           resolution.isSellerApproved) {
         setState(() => _hasSession = true);
+        unawaited(_startOfflineLifecycle(session.user));
         sellerNavigatorKey.currentState?.pushReplacementNamed('/seller');
         return;
       }
 
       if (resolution.resolvedRole == LoginResolvedRole.waiter) {
         setState(() => _hasSession = true);
+        unawaited(_startOfflineLifecycle(session.user));
         sellerNavigatorKey.currentState?.pushReplacementNamed(
           '/seller',
           arguments: SellerPanelEntryRole.waiter,
@@ -234,11 +379,55 @@ class _SellerSessionGateState extends State<_SellerSessionGate> {
       }
     } catch (e) {
       debugPrint('[SessionGate] restore error: $e');
+      // The session is on this device but the cloud could not confirm the
+      // role. Sending the user to the login page here made the app unusable
+      // during an internet cut. A device that verified this account before
+      // may open the panel; the panel then applies the saved permissions.
+    }
+
+    // Reached when the cloud failed or gave no usable role.
+    if (await _mayOpenOffline(session.user)) {
+      if (!mounted) return;
+      setState(() => _hasSession = true);
+      unawaited(_startOfflineLifecycle(session.user));
+      sellerNavigatorKey.currentState?.pushReplacementNamed('/seller');
+      return;
     }
 
     if (mounted) {
       Provider.of<DesktopPrintHub>(context, listen: false).stop();
       setState(() => _hasSession = false);
+    }
+  }
+
+  Future<bool> _mayOpenOffline(User user) async {
+    try {
+      final connectivity = RestaurantConnectivityService.instance;
+      await connectivity.refresh(priorCloudFailure: true);
+      if (connectivity.hasNetwork && connectivity.supabaseReachable) {
+        // The cloud answers: the failure was not an outage.
+        return false;
+      }
+      // Only a record sealed on this device is believed; an edited or
+      // copied record comes back without an identity.
+      final checked = await OfflinePanelIdentityStore().readChecked(user.id);
+      final saved = checked.identity;
+      final snapshot = saved == null
+          ? null
+          : await RestaurantLocalCacheService().read(saved.ownerId);
+      final decision = decideOfflineStart(
+        currentAuthUserId: user.id,
+        saved: saved,
+        savedIntegrity: checked.integrity,
+        hasLocalSnapshot: snapshot != null,
+        managedStaff: user.appMetadata['managed_restaurant_staff'] == true,
+        now: DateTime.now(),
+      );
+      debugPrint('[SessionGate] offline verdict=${decision.verdict.name}');
+      return decision.allowed;
+    } catch (error) {
+      debugPrint('[SessionGate] offline check failed: $error');
+      return false;
     }
   }
 
@@ -287,6 +476,7 @@ class _DesktopSellerRouteShell extends StatefulWidget {
 
 class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
   bool _bootstrapped = false;
+  bool _bridgeExpected = false;
   String? _bootError;
 
   bool _isBridgeReady(DesktopPrintHub hub) =>
@@ -299,7 +489,8 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
       }
       return;
     }
-    if (!_bootstrapped || _bootError != null) return;
+    // A print service the operator has not started is not a fault.
+    if (!_bootstrapped || _bootError != null || !_bridgeExpected) return;
     setState(() {
       _bootError = switch (hub.bridgeStatus) {
         BridgeStatus.offline =>
@@ -310,13 +501,110 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
     });
   }
 
+  String _hubRestaurantId = '';
+
+  /// The hub claims print jobs only between "Başlat" and "Durdur".
+  void _onCenterStartedChanged() {
+    final id = _hubRestaurantId;
+    if (!mounted || id.isEmpty) return;
+    unawaited(Provider.of<DesktopPrintHub>(context, listen: false).start(id));
+  }
+
+  /// A phone or tablet is a waiter's device: it never runs the print service
+  /// or the local center, it only sends orders to them.
+  static bool get _handheld =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.android);
+
+  late final DesktopPrintHub _hub;
+
+  /// Seller screens alive right now. Sign-in replaces one screen with
+  /// another, and the old one is disposed after the new one has started:
+  /// the waiter link is closed only when the last screen goes.
+  static int _liveShells = 0;
+  StreamSubscription<LanPairingRequest>? _pairingRequests;
+  Future<void> _approvalQueue = Future<void>.value();
+
   @override
   void initState() {
     super.initState();
+    _hub = Provider.of<DesktopPrintHub>(context, listen: false);
+    _liveShells += 1;
+    PrintServiceStartGate.operatorStarted.addListener(_onCenterStartedChanged);
+    if (!_handheld) {
+      // A waiter device asks to connect: the operator of this computer
+      // compares the code and approves, one request at a time.
+      _pairingRequests = RestaurantLanHostRegistry.pairingRequests.stream
+          .listen((request) {
+            _approvalQueue = _approvalQueue.then((_) async {
+              final target = sellerNavigatorKey.currentContext;
+              if (target == null || !target.mounted) return;
+              await showLanPairingApprovalDialog(target, request);
+            });
+          });
+    }
     unawaited(_bootstrapDesktopPrinting());
   }
 
+  /// Attaches a signed-in staff member's phone to the restaurant's own
+  /// computer. The person is the authenticated account and the restaurant is
+  /// the business that account works for; nothing is typed. The record this
+  /// device sealed at an earlier verified sign-in is read first, so the link
+  /// comes up without waiting for the cloud when the internet is away.
+  Future<void> _bootstrapHandheld() async {
+    if (mounted) {
+      setState(() {
+        _bootstrapped = true;
+        _bootError = null;
+      });
+    }
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    final staff = user.appMetadata['managed_restaurant_staff'] == true ||
+        widget.entryRole == SellerPanelEntryRole.waiter;
+    // The center accepts members of the restaurant, not the owner account.
+    if (!staff) return;
+    var restaurantId = '';
+    try {
+      final checked = await OfflinePanelIdentityStore().readChecked(user.id);
+      if (checked.integrity == OfflineIdentityIntegrity.ok &&
+          checked.identity != null) {
+        restaurantId = checked.identity!.ownerId.trim();
+      }
+    } catch (error) {
+      debugPrint('[WaiterLink] saved identity unreadable: $error');
+    }
+    if (restaurantId.isEmpty) {
+      try {
+        restaurantId =
+            (await StoreService().resolveStoreOwnerIdForCurrentUser())?.trim() ??
+            '';
+      } catch (error) {
+        debugPrint('[WaiterLink] restaurant lookup failed: $error');
+      }
+    }
+    if (!mounted || restaurantId.isEmpty || restaurantId == user.id) return;
+    final name = <String?>[
+      user.userMetadata?['display_name']?.toString(),
+      user.email,
+    ].map((value) => value?.trim() ?? '').firstWhere(
+      (value) => value.isNotEmpty,
+      orElse: () => '',
+    );
+    debugPrint('[WaiterLink] start for restaurant staff');
+    await WaiterLanLink.instance.start(
+      restaurantId: restaurantId,
+      staffId: user.id,
+      staffName: name,
+    );
+  }
+
   Future<void> _bootstrapDesktopPrinting() async {
+    if (_handheld) {
+      await _bootstrapHandheld();
+      return;
+    }
     try {
       final resolution = await AuthService().resolveLoginRoute(
         diagnosticContext: 'desktop_route_bootstrap',
@@ -325,7 +613,25 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
       if (!mounted) return;
       final restaurantId = _resolveDesktopRestaurantId(resolution);
       final hub = Provider.of<DesktopPrintHub>(context, listen: false);
-      final bridge = await BridgeManager.ensureReady();
+      // Opening the seller screen does not start a restaurant's print
+      // service: that is the operator's "Başlat" in Sistem > Yazıcı Merkezi.
+      // Other businesses keep the start-up they always had.
+      final vertical = resolveStoreVertical(
+        storeRecordCategory(
+          resolution.storeProfile ?? const <String, dynamic>{},
+        ),
+      );
+      _bridgeExpected = bridgeStartsWithSellerScreen(vertical);
+      PrintServiceStartGate.noteBusiness(restaurantRules: !_bridgeExpected);
+      _hubRestaurantId = restaurantId;
+      BridgeStartResult? bridge;
+      if (_bridgeExpected) {
+        bridge = await BridgeManager.ensureReady();
+      } else if (!RestaurantCenterControl.startedThisSession) {
+        // Every launch begins closed: a print service left over from an
+        // earlier session is closed (after the ticket it may be printing).
+        await RestaurantCenterControl.closePrintServiceSafely();
+      }
       if (!mounted) return;
       if (restaurantId.isNotEmpty) {
         await hub.start(restaurantId);
@@ -335,7 +641,7 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
       if (!mounted) return;
       setState(() {
         _bootstrapped = true;
-        if (!bridge.ok && !_isBridgeReady(hub)) {
+        if (bridge != null && !bridge.ok && !_isBridgeReady(hub)) {
           _bootError = kDebugMode
               ? bridge.message
               : 'Yazıcı bağlantısı kurulamadı. Yazıcı ayarlarından servisi başlatın veya onarın.';
@@ -350,7 +656,7 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
       final hub = Provider.of<DesktopPrintHub>(context, listen: false);
       setState(() {
         _bootstrapped = true;
-        _bootError = _isBridgeReady(hub)
+        _bootError = _isBridgeReady(hub) || !_bridgeExpected
             ? null
             : (kDebugMode
                   ? error.toString()
@@ -361,13 +667,34 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
 
   @override
   void dispose() {
-    Provider.of<DesktopPrintHub>(context, listen: false).stop();
+    PrintServiceStartGate.operatorStarted.removeListener(_onCenterStartedChanged);
+    _pairingRequests?.cancel();
+    _liveShells -= 1;
+    if (_handheld && _liveShells <= 0) WaiterLanLink.instance.stop();
+    // Looked up in initState: asking the tree here throws once the element
+    // is deactivated (seen on every sign-out).
+    _hub.stop();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final panel = SellerPanelPage(entryRole: widget.entryRole);
+    if (_handheld) {
+      final inset = MediaQuery.of(context).padding;
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          panel,
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: inset.bottom + 12,
+            child: const WaiterLanLinkBanner(),
+          ),
+        ],
+      );
+    }
     return Consumer<DesktopPrintHub>(
       builder: (context, hub, _) {
         if (_bootstrapped) {

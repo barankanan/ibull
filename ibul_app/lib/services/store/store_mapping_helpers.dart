@@ -67,7 +67,7 @@ const String mapStoreSelectMinimal =
 const String mapStoreSelectBase =
     'seller_id, business_name, store_lat, store_lng, category, address, city, '
     'district, logo_url, gallery_images, banners, follower_count, rating, '
-    'created_at, phone, email';
+    'created_at, phone, email, working_hours, is_store_open';
 
 const String mapStoreDescriptionColumn = 'description';
 
@@ -384,6 +384,13 @@ SellerProduct mapSnakeCaseToProduct(Map<String, dynamic> data) {
     'accessories': data['accessories'],
     'additional_info': data['additional_info'],
     'faq': data['faq'],
+    // Kitchen station of the product. Without it the offline order center
+    // had no station for any item: an order taken with the internet down was
+    // saved but its kitchen ticket waited for the cloud to return.
+    'station_id': data['station_id'],
+    'station_name': data['station_name'],
+    'station_code': data['station_code'],
+    'stations': data['stations'],
   };
 
   return SellerProduct.fromMap(map, data['id'].toString());

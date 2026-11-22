@@ -14,4 +14,4 @@ fi
   --distpath "$ROOT/local_print_bridge/dist/macos" \
   --workpath "$ROOT/local_print_bridge/build/macos" \
   "$ROOT/local_print_bridge/macos/IbulPrintBridge.spec"
-echo "Built $ROOT/local_print_bridge/dist/macos/IbulPrintBridge"
+echo "Built $ROOT/local_print_bridge/dist/macos/IbulPrintBridge/ (folder: executable + _internal)"

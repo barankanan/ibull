@@ -9,7 +9,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/config/runtime_config.dart';
 import '../models/desktop_printer_setup_models.dart';
-import '../models/print_job_model.dart';
 import '../models/printer_model.dart';
 import '../utils/kitchen_print_dedup.dart';
 import 'bridge_manager.dart';
@@ -19,6 +18,12 @@ import 'kitchen_print_trace_log.dart';
 import 'kitchen_product_mapping_cache_store.dart';
 import 'local_print_service.dart';
 import 'printer_event_log_service.dart';
+import 'printer_link_status.dart';
+import 'printer_readiness.dart';
+import 'print_service_start_gate.dart';
+import 'print_station_service.dart';
+import 'print_job_repository.dart';
+import 'print_job_payload_identity.dart';
 import 'printer_repository.dart';
 import 'restaurant_printer_dispatch_resolver.dart';
 import 'bridge_print_dispatch_verification.dart';
@@ -132,6 +137,72 @@ class DesktopPrintHub extends ChangeNotifier {
   BridgeStatus _bridgeStatus = BridgeStatus.unknown;
   BridgeStatus get bridgeStatus => _bridgeStatus;
 
+  // ── One readiness answer (see printer_readiness.dart) ──────────────────────
+
+  /// Saved printer records for this restaurant. Null until first read.
+  int? _registeredPrinterCount;
+  int? get registeredPrinterCount => _registeredPrinterCount;
+
+  /// Kitchen/receipt roles assigned across the saved printers. Null = unknown.
+  int? _roleAssignmentCount;
+
+  /// This device's print-center choice. Null until first read.
+  bool? _thisDeviceIsPrintCenter;
+
+  /// The status chip and the printer center answer from here. The bridge fact
+  /// is the hub's own; the permission and the last printer probe come from the
+  /// canonical gate; the printer records and the device role are read from
+  /// their owners. "Ready" needs all of them, not just a bridge that answers.
+  PrinterReadiness get readiness => describePrinterReadiness(
+    bridge: switch (_bridgeStatus) {
+      BridgeStatus.online => ReadinessBridge.online,
+      BridgeStatus.offline => ReadinessBridge.offline,
+      BridgeStatus.error => ReadinessBridge.error,
+      BridgeStatus.checking => ReadinessBridge.checking,
+      BridgeStatus.unknown => ReadinessBridge.unknown,
+    },
+    registeredPrinters: _registeredPrinterCount,
+    stationAssignments: _roleAssignmentCount,
+    // A build with automatic printing switched off prints nothing by itself,
+    // whatever the stored permission says.
+    serviceEnabled: AppRuntimeConfig.printStartDisabled
+        ? false
+        : PhysicalPrintGate.allowed,
+    isPrintCenter: _thisDeviceIsPrintCenter,
+    printerReachable: PhysicalPrintGate.published?.printerReachable,
+    pendingJobs: PhysicalPrintGate.published?.pendingJobs ?? 0,
+  );
+
+  /// Re-reads the printer records and the device role. Call it after adding
+  /// or removing a printer or changing the role so every screen follows.
+  Future<void> refreshReadinessInputs() async {
+    final restaurant = _restaurantId ?? _readinessOnlyRestaurantId;
+    if (restaurant == null || restaurant.isEmpty) return;
+    var changed = false;
+    try {
+      final printers = await _printerRepository.fetchPrinters(restaurant);
+      if (_registeredPrinterCount != printers.length) {
+        _registeredPrinterCount = printers.length;
+        changed = true;
+      }
+      final roles = printers.fold<int>(0, (n, p) => n + p.assignedRoles.length);
+      if (_roleAssignmentCount != roles) {
+        _roleAssignmentCount = roles;
+        changed = true;
+      }
+    } catch (_) {
+      // Unknown stays unknown; it never turns into "ready".
+    }
+    try {
+      final center = await PrintStationService().isThisDevicePrintStation();
+      if (_thisDeviceIsPrintCenter != center) {
+        _thisDeviceIsPrintCenter = center;
+        changed = true;
+      }
+    } catch (_) {}
+    if (changed) notifyListeners();
+  }
+
   ListenerStatus _listenerStatus = ListenerStatus.stopped;
   ListenerStatus get listenerStatus => _listenerStatus;
 
@@ -163,6 +234,17 @@ class DesktopPrintHub extends ChangeNotifier {
   String? _restaurantId;
   String? get restaurantId => _restaurantId;
 
+  /// Set instead of [_restaurantId] when the hub is not allowed to run. It
+  /// only feeds the read-only readiness inputs.
+  String? _readinessOnlyRestaurantId;
+  bool _disposed = false;
+
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
   /// `true` when [start] has been called and a restaurant ID is set.
   bool get isRunning => _started && _restaurantId != null;
 
@@ -176,12 +258,15 @@ class DesktopPrintHub extends ChangeNotifier {
   /// atomic DB claim; claim failure clears the reservation so sweep can retry.
   /// Atomic `pending → claimed` remains the source of truth for print safety.
   final Set<String> _dispatchedJobIds = {};
+
+  /// Jobs this hub claimed but has not yet handed to the bridge. If the
+  /// pipeline throws in that window nothing was printed, so the job can be
+  /// closed as failed instead of staying `claimed` forever.
+  final Set<String> _claimedBeforeDispatch = <String>{};
   static const int _maxDispatchedJobIds = 250;
 
   /// Prevents concurrent manual retries for the same job.
   final Set<String> _retryingJobIds = {};
-
-  static const int _maxManualRetries = PrintJobModel.maxManualRetries;
 
   /// In-memory cache for printer encoding configs (printerId → config map).
   /// Avoids a DB round-trip per job when the same printer is used repeatedly.
@@ -242,9 +327,26 @@ class DesktopPrintHub extends ChangeNotifier {
   ///
   /// No-op if already running for the same ID.
   /// Restarts gracefully if called with a different ID.
-  Future<void> start(String restaurantId) async {
+  Future<void> start(String restaurantId, {bool? printStartDisabled}) async {
     final trimmed = restaurantId.trim();
     if (trimmed.isEmpty) return;
+    // Signing in must not begin claiming queued print jobs in a build that
+    // switched automatic printing off. The hub simply never runs.
+    // A restaurant's hub claims print jobs only while the operator has the
+    // printer center started; otherwise jobs wait untouched in the queue.
+    final centerClosed =
+        printStartDisabled == null && PrintServiceStartGate.refusal() != null;
+    if (centerClosed || (printStartDisabled ?? AppRuntimeConfig.printStartDisabled)) {
+      debugPrint(
+        '[PrintHub] start skipped: ${centerClosed ? PrintServiceStartGate.closedMessage : AppRuntimeConfig.printStartDisabledMessage}',
+      );
+      if (_started) await stop();
+      // Read-only: the status chip still needs the saved printers and the
+      // bridge answer. No subscription, no claim, no timer is created.
+      _readinessOnlyRestaurantId = trimmed;
+      unawaited(checkBridge());
+      return;
+    }
     if (_started && _restaurantId == trimmed) return;
     await stop();
     _restaurantId = trimmed;
@@ -255,6 +357,7 @@ class DesktopPrintHub extends ChangeNotifier {
     await _loadPersistedState();
     // Kick off background checks (non-blocking).
     _checkLaunchAgentInstalled().ignore();
+    unawaited(refreshReadinessInputs());
     _healthTimer = Timer.periodic(_healthInterval, (_) {
       checkBridge();
     });
@@ -384,6 +487,7 @@ class DesktopPrintHub extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _healthTimer?.cancel();
     _pendingSweepTimer?.cancel();
     _channelWatchdogTimer?.cancel();
@@ -408,13 +512,28 @@ class DesktopPrintHub extends ChangeNotifier {
 
   /// Manually re-check bridge health.
   Future<void> checkBridge() async {
-    _setBridgeStatus(BridgeStatus.checking);
+    // Show "checking" only while nothing is known yet. Flipping a known state
+    // to "checking" on every poll made the chip flicker between answers.
+    if (_bridgeStatus == BridgeStatus.unknown) {
+      _setBridgeStatus(BridgeStatus.checking);
+    }
     final svc = LocalPrintService(timeout: _healthTimeout);
     try {
       final status = await svc.checkAvailability(timeout: _healthTimeout);
       _setBridgeStatus(
         status.isAvailable ? BridgeStatus.online : BridgeStatus.offline,
       );
+      // The hub sends the tickets, so it must learn the bridge's print switch
+      // itself. Before, only the Garson screen's poll fed the gate: with any
+      // other screen open every ticket was refused as "Baskı sistemi kapalı".
+      // An answer without the switch leaves the last known value untouched.
+      final details = status.details;
+      if (status.isAvailable && details is Map) {
+        final enabled = printSystemEnabledFromHealth(
+          Map<String, dynamic>.from(details),
+        );
+        if (enabled != null) PhysicalPrintGate.observe(enabled);
+      }
     } on SocketException catch (_) {
       _setBridgeStatus(BridgeStatus.offline);
     } catch (_) {
@@ -423,6 +542,7 @@ class DesktopPrintHub extends ChangeNotifier {
     } finally {
       svc.dispose();
     }
+    await refreshReadinessInputs();
   }
 
   /// Try to auto-start the local print bridge.
@@ -573,35 +693,24 @@ class DesktopPrintHub extends ChangeNotifier {
     debugPrint('[PrintHub] retryJob jobId=$jobId');
     _retryingJobIds.add(jobId);
     try {
-      final current = await Supabase.instance.client
-          .from('print_jobs')
-          .select('retry_count, status')
-          .eq('id', jobId)
-          .maybeSingle();
-      final status = current?['status']?.toString().trim().toLowerCase() ?? '';
-      if (status != 'failed') {
-        debugPrint('[PrintHub] retryJob skipped — status=$status jobId=$jobId');
-        return;
-      }
-      final retryCount = (current?['retry_count'] as num?)?.toInt() ?? 0;
-      if (retryCount >= _maxManualRetries) {
+      // Tek uygulama: durum, sayaç sınırı ve `retry_count` koşullu atomik
+      // güncelleme PrintJobRepository.retryJob içinde. Başka bir yol işi zaten
+      // aldıysa veya sayaç değiştiyse (bayat onay) false döner ve hiçbir şey
+      // gönderilmez.
+      // Onay bayrağı sabit `true` değil: yalnızca çağıranın (arayüzün) doğruladığı
+      // değer iletilir; yukarıdaki koruma onaysız çağrıyı zaten reddediyor.
+      final reset = await PrintJobRepository().retryJob(
+        jobId,
+        operatorConfirmed: operatorConfirmed,
+      );
+      if (!reset) {
         debugPrint(
-          '[PrintHub] retryJob skipped — max retries reached '
-          'jobId=$jobId retryCount=$retryCount',
+          '[PrintHub] retryJob skipped — job not resettable '
+          '(not failed, max retries, or already taken) jobId=$jobId',
         );
         return;
       }
       _dispatchedJobIds.remove(jobId);
-      await Supabase.instance.client
-          .from('print_jobs')
-          .update({
-            'status': 'pending',
-            'last_error': null,
-            'printed_at': null,
-            'retry_count': retryCount + 1,
-          })
-          .eq('id', jobId)
-          .eq('status', 'failed');
       final job = await _fetchJob(jobId);
       if (job == null) return;
       _failedJobs.removeWhere((j) => j.jobId == jobId);
@@ -812,8 +921,53 @@ class DesktopPrintHub extends ChangeNotifier {
   // ── Dispatch pipeline ──────────────────────────────────────────────────────
 
   void _dispatchJobAsync(Map<String, dynamic> jobRecord) {
-    // Fire-and-forget; exceptions are caught inside _executeDispatch.
-    _executeDispatch(jobRecord).ignore();
+    // Fire-and-forget. An exception that escapes _executeDispatch must not
+    // leave a claimed job silently stuck: see _failClaimedJobBeforeDispatch.
+    final jobId = jobRecord['id']?.toString() ?? '';
+    _executeDispatch(jobRecord)
+        .catchError(
+          (Object error, StackTrace stackTrace) =>
+              _failClaimedJobBeforeDispatch(jobId, jobRecord, error, stackTrace),
+        )
+        .whenComplete(() => _claimedBeforeDispatch.remove(jobId))
+        .ignore();
+  }
+
+  /// Closes a job whose preparation crashed after this hub claimed it and
+  /// before anything was sent to the bridge. Nothing reached a printer, so
+  /// `failed` is safe; the operator sees it and decides on a manual reprint.
+  /// A crash after the bridge call started is never touched here: that job may
+  /// have printed and stays as it is.
+  Future<void> _failClaimedJobBeforeDispatch(
+    String jobId,
+    Map<String, dynamic> jobRecord,
+    Object error,
+    StackTrace stackTrace,
+  ) async {
+    debugPrint('[PrintHub] dispatch crashed jobId=$jobId error=$error');
+    debugPrintStack(stackTrace: stackTrace);
+    if (jobId.isEmpty || !_claimedBeforeDispatch.remove(jobId)) return;
+    const message =
+        'Fiş yazıcıya gönderilemedi: baskı hazırlığı sırasında hata oluştu. '
+        'Yazıcı ayarlarını kontrol edip fişi kuyruktan yeniden yazdırın.';
+    try {
+      await Supabase.instance.client
+          .from('print_jobs')
+          .update(<String, dynamic>{'status': 'failed', 'last_error': message})
+          .eq('id', jobId)
+          .eq('status', 'claimed');
+    } catch (updateError) {
+      debugPrint(
+        '[PrintHub] crashed job could not be marked failed '
+        'jobId=$jobId error=$updateError',
+      );
+    }
+    final payload = jobRecord['payload'];
+    final tableNo = payload is Map ? payload['table_no']?.toString() : null;
+    final description = 'Masa ${tableNo ?? '-'} - baskı hazırlığı';
+    _failedCount++;
+    _setLastJob(description: description, error: message);
+    _addFailedJob(jobId, description, message);
   }
 
   Future<void> _recoverPendingJobs({required String reason}) async {
@@ -836,7 +990,7 @@ class DesktopPrintHub extends ChangeNotifier {
           .from('print_jobs')
           .select(
             'id, restaurant_id, order_id, station_id, printer_id, '
-            'job_type, payload, status, order_saved_at, '
+            'job_type, payload, status, created_at, order_saved_at, '
             'print_job_created_at, hub_job_received_at, claimed_at, '
             'dispatch_started_at, printer_write_started_at, completed_at',
           )
@@ -905,10 +1059,36 @@ class DesktopPrintHub extends ChangeNotifier {
     }
   }
 
+  Future<void> _holdOldJob(String jobId) async {
+    try {
+      await Supabase.instance.client
+          .from('print_jobs')
+          .update(<String, dynamic>{
+            'status': 'paused_by_operator',
+            'last_error': PrintServiceStartGate.heldJobNote,
+          })
+          .eq('id', jobId)
+          .eq('status', 'pending');
+    } catch (error) {
+      debugPrint('[PrintHub] old job hold failed jobId=$jobId error=$error');
+    }
+  }
+
   Future<void> _executeDispatch(Map<String, dynamic> jobRecord) async {
     final dispatchWatch = Stopwatch()..start();
     final jobId = jobRecord['id']?.toString() ?? '';
     if (jobId.isEmpty) return;
+
+    // A job that waited from before this session's "Başlat" is held for the
+    // operator. This is checked here, on every pickup path, so it holds even
+    // when the cloud was away at start and the old jobs arrive later.
+    if (PrintServiceStartGate.jobIsFromBefore(
+      jobRecord['created_at'] ?? jobRecord['print_job_created_at'],
+    )) {
+      debugPrint('[PrintHub] old job held jobId=$jobId');
+      unawaited(_holdOldJob(jobId));
+      return;
+    }
 
     // In-memory reservation BEFORE atomic claim — collapses broadcast +
     // postgres_changes + sweep races into a single claim attempt. Does NOT
@@ -1063,6 +1243,13 @@ class DesktopPrintHub extends ChangeNotifier {
       }
     }
 
+    _claimedBeforeDispatch.add(jobId);
+    // Right after the service is switched on the bridge may still be starting
+    // and the 30s health poll has not read its print switch yet. Ask once
+    // instead of refusing the first ticket as "Baskı sistemi kapalı".
+    if (PhysicalPrintGate.allowed == null) {
+      await checkBridge();
+    }
     final claimMs = dispatchWatch.elapsedMilliseconds;
     debugPrint(
       '[PrintPipeline] trace=$trace stage=claimed '
@@ -1285,7 +1472,9 @@ class DesktopPrintHub extends ChangeNotifier {
         payload['station_name'] ?? payload['kitchen_ticket_header'] ?? area,
       );
       final requestedPrinterId = _readText(
-        jobRecord['printer_id'] ?? payload['printer_id'],
+        jobRecord['printer_id'] ??
+            payload['printer_id'] ??
+            payload['printer_record_id'],
       );
       final selectedPrinterId = _readText(
         preparedPayload.payload['selected_printer_id'] ??
@@ -1531,6 +1720,7 @@ class DesktopPrintHub extends ChangeNotifier {
     // ── Stage 3: HTTP dispatch to bridge (reuse client) ──────────────────
     // Mark printing in background (non-blocking) to avoid an extra DB
     // round-trip on the critical path.
+    _claimedBeforeDispatch.remove(jobId);
     final dispatchStartedAt = DateTime.now();
     _markPrinting(
       jobId,
@@ -2342,8 +2532,10 @@ class DesktopPrintHub extends ChangeNotifier {
           .update({
             'status': 'claimed',
             'last_error': null,
-            'hub_job_received_at': (hubJobReceivedAt ?? now).toIso8601String(),
-            'claimed_at': now.toIso8601String(),
+            'hub_job_received_at': (hubJobReceivedAt ?? now)
+                .toUtc()
+                .toIso8601String(),
+            'claimed_at': now.toUtc().toIso8601String(),
           })
           .eq('id', jobId)
           .eq('status', 'pending')
@@ -2368,8 +2560,10 @@ class DesktopPrintHub extends ChangeNotifier {
           .update({
             'status': 'claimed',
             'last_error': null,
-            'hub_job_received_at': (hubJobReceivedAt ?? now).toIso8601String(),
-            'claimed_at': now.toIso8601String(),
+            'hub_job_received_at': (hubJobReceivedAt ?? now)
+                .toUtc()
+                .toIso8601String(),
+            'claimed_at': now.toUtc().toIso8601String(),
           })
           .eq('id', jobId)
           .eq('status', 'pending')
@@ -2496,10 +2690,8 @@ class DesktopPrintHub extends ChangeNotifier {
           .update({
             'status': 'printing',
             'last_error': null,
-            'dispatch_started_at': dispatchStartedAt.toIso8601String(),
-            if (payload?['printer_record_id'] != null)
-              'printer_id': payload!['printer_record_id'],
-            ...?payload == null ? null : <String, dynamic>{'payload': payload},
+            'dispatch_started_at': dispatchStartedAt.toUtc().toIso8601String(),
+            ...printJobIdentityUpdate(payload),
           })
           .eq('id', jobId)
           .inFilter('status', ['claimed', 'pending']);
@@ -2526,13 +2718,9 @@ class DesktopPrintHub extends ChangeNotifier {
           .update({
             'status': 'completed',
             'last_error': null,
-            'printed_at': completedAt.toIso8601String(),
-            'completed_at': completedAt.toIso8601String(),
-            if (mergedPayload?['printer_record_id'] != null)
-              'printer_id': mergedPayload!['printer_record_id'],
-            ...?mergedPayload == null
-                ? null
-                : <String, dynamic>{'payload': mergedPayload},
+            'printed_at': completedAt.toUtc().toIso8601String(),
+            'completed_at': completedAt.toUtc().toIso8601String(),
+            ...printJobIdentityUpdate(mergedPayload),
             'printer_write_started_at':
                 bridgeResult?['printer_write_started_at'],
             'printer_write_completed_at':
@@ -2564,7 +2752,7 @@ class DesktopPrintHub extends ChangeNotifier {
             'status': 'failed',
             'last_error': error,
             'retry_count': retryCount + 1,
-            ...?mergedPayload == null ? null : <String, dynamic>{'payload': mergedPayload},
+            ...printJobIdentityUpdate(mergedPayload),
           })
           .eq('id', jobId);
     } catch (e) {
@@ -2909,6 +3097,9 @@ class DesktopPrintHub extends ChangeNotifier {
         final result = await svc.warmup(timeout: const Duration(seconds: 5));
         if (result != null && result['ok'] == true) {
           _setBridgeStatus(BridgeStatus.online);
+          // /warmup does not carry the print switch; read it right away
+          // instead of waiting for the next 30s health poll.
+          unawaited(checkBridge());
           final timings = result['timings'];
           debugPrint(
             '[PrintHub] warm-up: bridge pipeline ready '

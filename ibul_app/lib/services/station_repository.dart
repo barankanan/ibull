@@ -59,9 +59,44 @@ class StationRepository {
   }
 
   Future<void> setStationActive(String stationId, bool isActive) async {
-    await _client
+    final rows = await _client
         .from('stations')
         .update({'is_active': isActive})
-        .eq('id', stationId);
+        .eq('id', stationId)
+        .select('id');
+    // A policy that filters the row out answers with no error and no row.
+    if ((rows as List).isEmpty) {
+      throw const PostgrestException(
+        message: 'Alan güncellenemedi: bu hesabın yetkisi yok.',
+        code: '42501',
+      );
+    }
   }
+}
+
+/// What the operator is told when a preparation-area save is rejected. The
+/// raw exception text is kept in the message so a schema problem is
+/// recognisable instead of looking like "nothing happened".
+String stationSaveErrorMessage(Object error) {
+  if (error is PostgrestException) {
+    switch (error.code) {
+      case 'PGRST204':
+        return 'Hazırlama alanı kaydedilemedi: veritabanında gerekli sütun '
+            'yok (${error.message}). Şema güncellemesi gerekli.';
+      case '23505':
+        return 'Bu kod bu restoranda zaten kullanılıyor. Farklı bir kod girin.';
+      case '42501':
+        return 'Hazırlama alanı kaydedilemedi: bu işlem için yetkiniz yok.';
+      default:
+        return 'Hazırlama alanı kaydedilemedi: ${error.message}';
+    }
+  }
+  return 'Hazırlama alanı kaydedilemedi: $error';
+}
+
+/// Shown instead of "Kayıtlı hazırlama alanı bulunamadı" when loading itself
+/// failed, so a broken stream is not mistaken for an empty list.
+String stationLoadErrorMessage(Object error) {
+  final detail = error is PostgrestException ? error.message : '$error';
+  return 'Hazırlama alanları yüklenemedi: $detail';
 }

@@ -767,9 +767,18 @@ class _ProductCardState extends State<ProductCard> {
       ],
     );
 
-    return fillAvailable
-        ? imageStack
-        : AspectRatio(aspectRatio: 1.0, child: imageStack);
+    if (fillAvailable) return imageStack;
+    // Home rail / see-all cells are sized from [ProductCard.homeRailImageHeight].
+    // A square AspectRatio here would override that height with the card width
+    // and push the action row out of the cell on wider phones.
+    if (widget.homeRail && imageHeight != null) {
+      return SizedBox(
+        width: double.infinity,
+        height: imageHeight,
+        child: imageStack,
+      );
+    }
+    return AspectRatio(aspectRatio: 1.0, child: imageStack);
   }
 
   // Compact image section with AspectRatio (for seller page)

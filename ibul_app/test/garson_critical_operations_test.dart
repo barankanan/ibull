@@ -17,6 +17,7 @@ library;
 ///  12.  Aynı ürünü 4 sn sonra tekrar ekle → duplicate uyarısı ÇIKMAYI
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ibul_app/models/garson_operation_rules.dart';
 import 'package:ibul_app/models/restaurant_ops_models.dart';
 import 'package:ibul_app/widgets/garson/undo_action_controller.dart';
@@ -111,12 +112,15 @@ void main() {
     });
 
     // ── 1f. served statüsü ───────────────────────────────────────────────
-    test('served: undo=FALSE, edit=FALSE, transfer=FALSE', () {
+    // Servis edilmiş sipariş: düzenleme revizyon olarak işlenir (fark fişi
+    // mutfağa gider); geri alma ve aktarma kapalı; tam yeniden baskı kapalı.
+    test('served: undo=FALSE, edit=TRUE (revizyon), resend=TRUE, transfer=FALSE, tam yeniden baskı=FALSE', () {
       final r = GarsonOperationRules.forStatus('served');
       expect(r.canUndo, isFalse);
-      expect(r.canEdit, isFalse);
-      expect(r.canResend, isFalse);
+      expect(r.canEdit, isTrue);
+      expect(r.canResend, isTrue);
       expect(r.canTransfer, isFalse);
+      expect(KitchenPrintPolicy.canReprint('served'), isFalse);
     });
 
     // ── 1g. closed statüsü ───────────────────────────────────────────────
@@ -706,6 +710,9 @@ void main() {
 
     // Senaryo 1: Sipariş gönder → undo banner görünür
     testWidgets('7.1 Sipariş gönder → undo banner göster', (tester) async {
+      // Gönderim kimliği (WaiterSubmitIdentityStore) SharedPreferences kullanır;
+      // sahte başlangıç değeri olmadan platform kanalı yanıt vermez.
+      SharedPreferences.setMockInitialValues(<String, Object>{});
       await _pumpGarsonHarness(
         tester,
         scenario: SellerPanelGarsonPreviewScenario.ordersWithDraftOnly,
@@ -714,9 +721,12 @@ void main() {
       await tester.tap(find.text('Siparişi Gönder'));
       await _settle(tester);
 
-      // Sipariş başarıyla gönderildi mi?
+      // Sipariş başarıyla gönderildi mi? Yerel gönderimde yazıcıya iletim
+      // olmadığı için etiket "kaydedildi/basıldı" ayrımına göre
+      // `garsonSubmitSavedLabel` ile "Kuyruğa alındı" olur (önizlemedeki
+      // "masaya yansıtıldı" metni yalnızca gönderim-sonrası senaryo verisidir).
       expect(
-        find.text('Sipariş masaya yansıtıldı. Aktif siparişler aşağıda hazır.'),
+        find.text('Kuyruğa alındı'),
         findsOneWidget,
         reason: 'Başarı mesajı gösterilmeli',
       );
@@ -817,7 +827,27 @@ void main() {
       await tester.tap(find.widgetWithText(TextButton, 'İşlemler'));
       await _settle(tester);
 
-      // Hesabı Kes butonu aktif sipariş varken enabled
+      // Hesabı Kes butonu aktif sipariş varken enabled. Gönderilmemiş taslak
+      // de varsa alt metin taslak uyarısıdır (adisyon açık kalır).
+      expect(find.text('Hesabı Kes'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Sunucudaki adisyon açık kalır. Taslak silinirse kapanış ayrıca değerlendirilir.',
+        ),
+        findsOneWidget,
+      );
+      _assertNoRenderException(tester);
+    });
+
+    testWidgets('7.5b Taslaksız aktif siparişte Hesabı Kes alt metni kapanışı anlatır', (tester) async {
+      await _pumpGarsonHarness(
+        tester,
+        scenario: SellerPanelGarsonPreviewScenario.postSubmitActiveOrder,
+      );
+
+      await tester.tap(find.widgetWithText(TextButton, 'İşlemler'));
+      await _settle(tester);
+
       expect(find.text('Hesabı Kes'), findsOneWidget);
       expect(
         find.textContaining('Ödemeyi al ve masayı kapat'),

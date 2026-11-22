@@ -56,6 +56,7 @@ const serviceClient = {
     const query = {
       select(_columns, options) { countOnly = options?.head === true; return query; },
       eq(key, value) { filters.push([key, value]); return query; },
+      limit() { return query; },
       update(value) { op = 'update'; payload = value; return query; },
       insert(value) { op = 'insert'; payload = value; return query; },
       upsert(value) { op = 'upsert'; payload = value; return query; },
@@ -528,4 +529,36 @@ const selfPromotion = await callAs('lead-auth', {
 assert.equal(selfPromotion.status, 403);
 assert.equal(state.members.find((row) => row.id === 'lead').branch_id, branch);
 assert.equal(state.members.find((row) => row.id === 'lead').staff_role, 'sub_admin');
+// Delegated manager: the panel always echoes the stored role and branch. That
+// is not a change request (it used to answer 403); a real change by a
+// non-owner must still be refused.
+state.members.push({
+  id: 'echo-target', store_id: owner, email: 'echo@example.test', status: 'active',
+  auth_user_id: 'echo-auth', staff_role: 'waiter', branch_id: branch, permissions: ['viewOrders'],
+});
+const echoed = await callAs('sub-admin-1', {
+  operation: 'permissions', id: 'echo-target', permissions: ['viewOrders', 'manageOrders'],
+  staff_role: 'waiter', branch_id: branch,
+});
+assert.equal(echoed.status, 200, JSON.stringify(echoed.body));
+assert.equal(state.members.find((row) => row.id === 'echo-target').permissions.includes('manageOrders'), true);
+const roleSwitch = await callAs('sub-admin-1', {
+  operation: 'permissions', id: 'echo-target', permissions: ['viewOrders'],
+  staff_role: 'sub_admin', branch_id: branch,
+});
+assert.equal(roleSwitch.status, 403);
+assert.equal(state.members.find((row) => row.id === 'echo-target').staff_role, 'waiter');
+const branchSwitch = await callAs('sub-admin-1', {
+  operation: 'permissions', id: 'echo-target', permissions: ['viewOrders'],
+  staff_role: 'waiter', branch_id: otherBranch,
+});
+assert.equal(branchSwitch.status, 403);
+assert.equal(state.members.find((row) => row.id === 'echo-target').branch_id, branch);
+const delegatedBranches = await callAs('sub-admin-1', { operation: 'list_branches' });
+assert.equal(delegatedBranches.status, 200);
+assert.deepEqual(delegatedBranches.body.branches.map((row) => row.id).sort(), state.branches
+  .filter((row) => row.store_id === owner && row.status === 'active').map((row) => row.id).sort());
+assert.equal(delegatedBranches.body.branches.some((row) => row.id === otherBranch), false);
+assert.equal((await callAs('waiter-manager', { operation: 'list_branches' })).status, 403);
+assert.equal((await callAs('nobody-auth', { operation: 'list_branches' })).status, 403);
 console.log('PASS: staff create, link proof, foreign tenant denial, compensation, and password-change gate.');

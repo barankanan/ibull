@@ -49,44 +49,32 @@ Name: "{group}\Kaldir"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Ibul Satıcı"; Filename: "{app}\{#SellerExeName}"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "IbulLocalPrintBridge"; ValueData: """{app}\bridge\{#BridgeExeName}"""; Flags: uninsdeletevalue
+; Nothing starts at Windows sign-in. The seller app starts the printer service
+; when it opens. An autostart value left by an older setup is removed.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "IbulLocalPrintBridge"; Flags: deletevalue
 
 [Run]
-Filename: "{app}\bridge\{#BridgeExeName}"; WorkingDir: "{app}\bridge"; StatusMsg: "Yazici servisi baslatiliyor..."; Flags: runhidden nowait skipifsilent
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\bridge\wait_for_bridge_health.ps1"" -TimeoutSeconds 45"; StatusMsg: "Yazici servisi hazirlaniyor..."; Flags: waituntilterminated runhidden skipifsilent
+; Waiter phones reach the local center over the private (home/work) network
+; only. The rule is bound to the seller program, not to a fixed port.
+Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Ibul Satici Yerel Merkez"""; Flags: runhidden
+Filename: "netsh.exe"; Parameters: "advfirewall firewall add rule name=""Ibul Satici Yerel Merkez"" dir=in action=allow program=""{app}\{#SellerExeName}"" protocol=TCP profile=private"; StatusMsg: "Yerel ag izni ekleniyor..."; Flags: runhidden
 Filename: "{app}\{#SellerExeName}"; Description: "Ibul Satıcı uygulamasini simdi baslat"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "taskkill.exe"; Parameters: "/IM {#BridgeExeName} /F"; Flags: runhidden skipifdoesntexist
 Filename: "taskkill.exe"; Parameters: "/IM {#SellerExeName} /F"; Flags: runhidden skipifdoesntexist
+Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Ibul Satici Yerel Merkez"""; Flags: runhidden
 
 [Code]
-procedure RepairAutostartRegistry();
-var
-  Value: string;
-  BridgePath: string;
+procedure RemoveAutostartLeftovers();
 begin
-  BridgePath := ExpandConstant('"{app}\bridge\{#BridgeExeName}"');
-  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
-    'IbulLocalPrintBridge', Value) then
-  begin
-    if (Pos('powershell.exe', LowerCase(Value)) > 0) or
-       (Pos('.ps1', LowerCase(Value)) > 0) or
-       (Value <> BridgePath) then
-    begin
-      RegWriteStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
-        'IbulLocalPrintBridge', BridgePath);
-    end;
-  end
-  else
-  begin
-    RegWriteStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
-      'IbulLocalPrintBridge', BridgePath);
-  end;
+  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
+    'IbulLocalPrintBridge');
+  DeleteFile(ExpandConstant('{userstartup}\ibul-local-print.cmd'));
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
-    RepairAutostartRegistry();
+    RemoveAutostartLeftovers();
 end;
