@@ -506,7 +506,14 @@ class PrintStationConsumer:
         except Exception as exc:  # noqa: BLE001
             retry_count = int(job.get("retry_count") or 0) + 1
             error_text = str(exc)
-            is_retryable = retry_count <= config.max_retry_count
+            # Bytes may already be on the printer: the job is not handed back
+            # to the queue, where it would print a second copy by itself.
+            outcome_uncertain = write_may_have_started(exc)
+            if outcome_uncertain:
+                error_text = f"print_outcome_uncertain: {error_text}"
+            is_retryable = (
+                not outcome_uncertain and retry_count <= config.max_retry_count
+            )
             next_status = "pending" if is_retryable else "failed"
             self._update_job(
                 config,

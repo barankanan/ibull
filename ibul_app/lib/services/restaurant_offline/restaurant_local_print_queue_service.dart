@@ -215,6 +215,16 @@ class RestaurantLocalPrintQueueService {
           'bridge_accepted_not_device_ack',
         );
       }
+      // The bridge says whether bytes may already be on the printer. Only a
+      // send that certainly did not start is "failed" (safe to send again);
+      // anything else is "uncertain" and waits for the operator.
+      if (bridgeAnswerIsUncertain(response.body)) {
+        return _finish(
+          claimed,
+          RestaurantLocalPrintJobStatus.uncertain,
+          'Yazıcıya gönderim sonucu belirsiz. Fiş kendiliğinden tekrar basılmaz.',
+        );
+      }
       return _finish(
         claimed,
         RestaurantLocalPrintJobStatus.failed,
@@ -403,13 +413,25 @@ class RestaurantLocalPrintQueueService {
   }
 }
 
+/// True when a failed bridge answer says the ticket may be (partly) on paper.
+/// An answer without the outcome fields (an older bridge, or a refusal made
+/// before anything was sent such as "printing is switched off") is not.
+bool bridgeAnswerIsUncertain(Map<String, dynamic> body) {
+  if (body['retry_safe'] == true) return false;
+  return body['write_may_have_started'] == true ||
+      body['print_outcome']?.toString() == 'uncertain' ||
+      body['errorCode']?.toString() == 'print_outcome_uncertain';
+}
+
 bool localPrintErrorIsUncertain(String? error) {
   final text = (error ?? '').toLowerCase();
   return text.contains('timeout') ||
       text.contains('client_timeout') ||
       text.contains('uncertain') ||
       text.contains('belirsiz') ||
-      text.contains('print_outcome_unknown');
+      text.contains('print_outcome_unknown') ||
+      text.contains('print_outcome_uncertain') ||
+      text.contains('write_may_have_started');
 }
 
 bool _socketFailed(SocketException error) {

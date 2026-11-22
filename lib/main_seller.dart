@@ -44,6 +44,7 @@ import 'package:ibul_app/services/restaurant_offline/restaurant_offline_sync_ser
 import 'package:ibul_app/services/restaurant_offline/restaurant_lan_host.dart';
 import 'package:ibul_app/services/restaurant_offline/seller_lan_center.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_center_access.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_center_auto_start.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_center_control.dart';
 import 'package:ibul_app/services/print_service_start_gate.dart';
 import 'package:ibul_app/features/seller/domain/store_vertical.dart';
@@ -297,9 +298,12 @@ class _SellerSessionGateState extends State<_SellerSessionGate> {
         },
         syncPending: (id) =>
             RestaurantOfflineSyncService().syncPendingOrders(restaurantId: id),
-        // Nothing is reopened at launch, whatever an earlier session chose:
-        // the center starts only from Sistem > Yazıcı Merkezi > Başlat.
-        resumeCenter: (id) async => false,
+        // Nothing is reopened at launch by itself. The center starts from
+        // Sistem > Yazıcı Merkezi > Başlat, or at launch when the business
+        // switched "otomatik başlat" on there (the same sequence, once per
+        // run; this path also covers a launch without internet).
+        resumeCenter: (id) async =>
+            (await RestaurantCenterAutoStart.openAtLaunch(id))?.ok ?? false,
       );
 
   static StreamSubscription<Object?>? _acceptedOrders;
@@ -630,7 +634,14 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
       } else if (!RestaurantCenterControl.startedThisSession) {
         // Every launch begins closed: a print service left over from an
         // earlier session is closed (after the ticket it may be printing).
-        await RestaurantCenterControl.closePrintServiceSafely();
+        // With "otomatik başlat" switched on, the launch start does that
+        // close itself and then runs the operator's Başlat sequence.
+        final launch = restaurantId.isEmpty
+            ? null
+            : await RestaurantCenterAutoStart.openAtLaunch(restaurantId);
+        if (launch == null && !RestaurantCenterControl.startedThisSession) {
+          await RestaurantCenterControl.closePrintServiceSafely();
+        }
       }
       if (!mounted) return;
       if (restaurantId.isNotEmpty) {

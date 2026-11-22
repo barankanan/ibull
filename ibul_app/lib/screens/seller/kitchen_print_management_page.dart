@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
 import '../../features/seller/panel/printer_center/printer_assignment_state.dart';
 import '../../features/seller/panel/printer_center/printer_center_operations.dart';
+import '../../features/seller/panel/printer_center/printer_registry_status.dart';
 import '../../features/seller/panel/printer_center/printer_station_test_guard.dart';
 import '../../features/seller/panel/printer_center/widgets/printer_center_layout.dart';
 import '../../features/seller/panel/printer_center/widgets/printer_center_sections.dart';
@@ -49,6 +50,7 @@ import '../../services/bridge_manager.dart';
 import '../../services/print_service_start_gate.dart';
 import '../../services/restaurant_offline/lan_staff_probe.dart';
 import '../../services/restaurant_offline/restaurant_center_access.dart';
+import '../../services/restaurant_offline/restaurant_center_auto_start.dart';
 import '../../services/restaurant_offline/restaurant_center_control.dart';
 import 'printer_guide_dialog.dart';
 import 'restaurant_printer_setup_route.dart';
@@ -129,6 +131,9 @@ class _KitchenPrintManagementPageState
   late Future<List<dynamic>> _assignmentsFuture;
   late Future<List<dynamic>> _productsFuture;
   bool _loadingPrintStationState = true;
+  bool _autoStartLoaded = false;
+  late final PrinterReachabilityMonitor _reachability;
+  bool _autoStartEnabled = false;
   bool _savingPrintStation = false;
   bool _savingRoleMappings = false;
   bool _runningHardReset = false;
@@ -210,10 +215,231 @@ class _KitchenPrintManagementPageState
       KitchenProductMappingCacheStore.ensureHydrated(widget.restaurantId),
     );
     unawaited(_resolveEligibility());
+    unawaited(_loadAutoStartPreference());
+    _reachability = PrinterReachabilityMonitor(
+      restaurantId: widget.restaurantId,
+      probe: _probePrinterPort,
+    );
+    // Only the computer that runs the printer center checks the printers, at
+    // a slow pace and only while this screen is open. Nothing is scanned.
+    if (_hostsRestaurantCenter) {
+      _reachability.start(() => _allPrintersCache);
+    }
     _logPrinterSettings(
       'Init',
       'screen=KitchenPrintManagementPage openedTab=printers sellerId=${widget.restaurantId} '
           'storeId=- backendPath=printers?restaurant_id=eq.${widget.restaurantId}&order=created_at.asc',
+    );
+  }
+
+  @override
+  void dispose() {
+    _reachability.dispose();
+    super.dispose();
+  }
+
+  /// Does the saved printer's port accept a connection? Asked through the
+  /// print service of this computer; null when that cannot be asked.
+  Future<bool?> _probePrinterPort(String host, int port) async {
+    final service = LocalPrintService();
+    try {
+      final answer = await service.probeTcpPrinter(host: host, port: port);
+      final reachable = answer?['reachable'];
+      return reachable is bool ? reachable : null;
+    } catch (_) {
+      return null;
+    } finally {
+      service.dispose();
+    }
+  }
+
+  void _recheckSavedPrinters() {
+    if (!_hostsRestaurantCenter) return;
+    unawaited(_reachability.checkNow(_allPrintersCache));
+  }
+
+  DateTime? get _lastGoodSendAt {
+    DateTime? latest;
+    for (final job in _recentPrintJobs) {
+      if (job.status.trim().toLowerCase() != 'completed') continue;
+      final at = job.completedAt ?? job.printedAt;
+      if (at != null && (latest == null || at.isAfter(latest))) latest = at;
+    }
+    return latest;
+  }
+
+  String _clock(DateTime at) {
+    final local = at.toLocal();
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${two(local.day)}.${two(local.month)}.${local.year} '
+        '${two(local.hour)}:${two(local.minute)}';
+  }
+
+  /// One card that answers "is my printer setup still there and usable?".
+  Widget _buildSetupSummaryCard() {
+    return FutureBuilder<List<dynamic>>(
+      future: _assignmentsFuture,
+      builder: (context, snapshot) {
+        final stations =
+            (snapshot.data?[0] as List?)?.whereType<StationModel>().toList() ??
+            const <StationModel>[];
+        final mappings =
+            (snapshot.data?[2] as List?)
+                ?.whereType<StationPrinterModel>()
+                .toList() ??
+            const <StationPrinterModel>[];
+        return ListenableBuilder(
+          listenable: _reachability,
+          builder: (context, _) {
+            final summary = buildPrinterCenterSummary(
+              printers: _allPrintersCache,
+              statuses: _reachability.statuses,
+              stationNamesById: <String, String>{
+                for (final station in stations) station.id: station.name,
+              },
+              assignedStationIds: <String>{
+                for (final mapping in mappings) mapping.stationId,
+              },
+            );
+            final host = RestaurantLanHostRegistry.current;
+            final lastGood = _lastGoodSendAt;
+            return PrinterCenterCard(
+              key: const ValueKey<String>('printer-setup-summary'),
+              title: 'Kurulum özeti',
+              subtitle:
+                  'Yazıcılar bir kez eklenir. Kayıt ve eşleştirmeler bu bilgisayarda ve hesabınızda saklanır; günlük kullanımda tarama gerekmez.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  PrinterCenterKeyValue(
+                    label: 'Kayıtlı yazıcı',
+                    value: summary.registeredLabel,
+                  ),
+                  PrinterCenterKeyValue(
+                    label: 'Bağlı yazıcı',
+                    value: _hostsRestaurantCenter
+                        ? summary.connectedLabel
+                        : 'Yazıcı merkezi bilgisayarında görünür',
+                  ),
+                  PrinterCenterKeyValue(
+                    label: 'Ulaşılamayan',
+                    value: summary.unreachableLabel,
+                  ),
+                  PrinterCenterKeyValue(
+                    label: 'İstasyon eşleştirmeleri',
+                    value: summary.stationLabel,
+                  ),
+                  PrinterCenterKeyValue(
+                    label: 'Yazıcı Merkezi',
+                    value: !_printSystemEnabledLoaded
+                        ? 'Durum yükleniyor'
+                        : (_printSystemUiEnabled ? 'Açık' : 'Kapalı'),
+                  ),
+                  PrinterCenterKeyValue(
+                    label: 'LAN merkezi',
+                    value: host?.listening == true
+                        ? 'Açık · port ${host!.port}'
+                        : 'Kapalı',
+                  ),
+                  PrinterCenterKeyValue(
+                    label: 'Son başarılı baskı gönderimi',
+                    value: lastGood == null ? 'Kayıt yok' : _clock(lastGood),
+                  ),
+                  PrinterCenterKeyValue(
+                    label: 'Otomatik başlatma',
+                    value: !_hostsRestaurantCenter
+                        ? 'Yalnız yazıcı merkezi bilgisayarında'
+                        : (_autoStartEnabled ? 'Açık' : 'Kapalı'),
+                  ),
+                  if (summary.unreachableNames.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    const PrinterCenterNotice(
+                      message: unreachablePrinterAdvice,
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// The registration line under a saved printer.
+  Widget _buildPrinterLinkLine(PrinterModel printer) {
+    if (!_hostsRestaurantCenter) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: _reachability,
+      builder: (context, _) {
+        final status = _reachability.statusOf(printer.id);
+        final ready = status.readyToPrint(
+          serviceOpen: _printSystemUiEnabled,
+          printerActive: printer.isActive,
+        );
+        final unreachable = status.link == RegisteredPrinterLink.unreachable;
+        final seen = status.lastReachableAt;
+        final text = StringBuffer(status.label);
+        if (ready) text.write(' · baskıya hazır');
+        if (unreachable && seen != null) {
+          text.write(' · son bağlantı ${_clock(seen)}');
+        }
+        return Padding(
+          padding: const EdgeInsets.only(left: 12, top: 4),
+          child: Text(
+            text.toString(),
+            key: ValueKey<String>('printer-link-${printer.id}'),
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: unreachable
+                  ? const Color(0xFFB45309)
+                  : (ready ? const Color(0xFF15803D) : const Color(0xFF6B7280)),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _loadAutoStartPreference() async {
+    final enabled = await RestaurantCenterAutoStart.isEnabled(
+      widget.restaurantId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _autoStartEnabled = enabled;
+      _autoStartLoaded = true;
+    });
+  }
+
+  /// The opt-in "start the printer center when İBUL Satıcı opens". It is a
+  /// choice for the next launches; it neither starts nor stops anything now.
+  Future<void> _toggleAutoStart(bool enabled) async {
+    final previous = _autoStartEnabled;
+    setState(() => _autoStartEnabled = enabled);
+    try {
+      await RestaurantCenterAutoStart.setEnabled(widget.restaurantId, enabled);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _autoStartEnabled = previous);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tercih kaydedilemedi.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          enabled
+              ? 'İBUL Satıcı açıldığında Yazıcı Merkezi kendiliğinden başlayacak.'
+              : 'Yazıcı Merkezi yalnız Başlat ile açılacak.',
+        ),
+      ),
     );
   }
 
@@ -271,6 +497,7 @@ class _KitchenPrintManagementPageState
         widget.restaurantId,
       );
       _allPrintersCache = savedPrinters;
+      _recheckSavedPrinters();
       final enrichedPrinters = DiscoveredPrinterCatalog.enrichUnifiedCatalog(
         printers: snapshot.printers,
         savedPrinters: savedPrinters,
@@ -1080,56 +1307,51 @@ class _KitchenPrintManagementPageState
 
     try {
       // On the host computer this switch is the printer center's Başlat /
-      // Durdur: it also opens or closes the local order center.
+      // Durdur: it also opens or closes the local order center. "Başlat" is
+      // the one sequence shared with the start at launch.
       String? centerNotice;
       var heldOldJobs = 0;
-      if (_hostsRestaurantCenter) {
-        if (enabled) {
-          final started = await _startRestaurantCenter();
-          if (!started.access.allowed) throw Exception(started.message);
-          // The print service itself did not come up: say why. Going on would
-          // only end in a misleading "start the bridge first" message.
-          if (!started.bridgeOk) {
-            throw Exception(
-              started.message.trim().isEmpty
-                  ? 'Yazıcı servisi başlatılamadı.'
-                  : started.message,
-            );
-          }
-          if (!started.centerRunning) centerNotice = started.message;
-          heldOldJobs = started.heldOldJobs;
-        } else {
-          await RestaurantCenterControl.stop();
-        }
-      }
       var savedOnThisComputerOnly = false;
-      try {
-        final result = await _printStationService.setPrintSystemEnabled(
+      if (_hostsRestaurantCenter && enabled) {
+        final opened = await RestaurantCenterAutoStart.open(
           restaurantId: widget.restaurantId,
-          enabled: enabled,
           previousEnabled: previousEnabled,
+          service: _printStationService,
         );
-        if (!result) {
-          throw Exception('Baskı sistemi güncellenemedi.');
-        }
-      } catch (_) {
-        // During an internet cut the center must still start and stop on
-        // this computer; the cloud record follows when the internet returns.
-        if (!_hostsRestaurantCenter || await _cloudAnswers()) rethrow;
-        await _setPrintSystemOnThisComputer(enabled);
-        final service = _printStationService;
-        final restaurantId = widget.restaurantId;
-        RestaurantCenterControl.oweCloudSetting(restaurantId, () async {
-          final patched = await service.patchStationConfiguration(
-            restaurantId: restaurantId,
-            fields: <String, dynamic>{
-              'print_system_enabled': enabled,
-              'updated_at': DateTime.now().toIso8601String(),
-            },
+        if (!opened.ok) throw Exception(opened.message);
+        centerNotice = opened.centerNotice;
+        heldOldJobs = opened.heldOldJobs;
+        savedOnThisComputerOnly = opened.savedOnThisComputerOnly;
+      } else {
+        if (_hostsRestaurantCenter) await RestaurantCenterControl.stop();
+        try {
+          final result = await _printStationService.setPrintSystemEnabled(
+            restaurantId: widget.restaurantId,
+            enabled: enabled,
+            previousEnabled: previousEnabled,
           );
-          if (patched == null) throw Exception('not saved');
-        });
-        savedOnThisComputerOnly = true;
+          if (!result) {
+            throw Exception('Baskı sistemi güncellenemedi.');
+          }
+        } catch (_) {
+          // During an internet cut the center must still stop on this
+          // computer; the cloud record follows when the internet returns.
+          if (!_hostsRestaurantCenter || await _cloudAnswers()) rethrow;
+          await _setPrintSystemOnThisComputer(enabled);
+          final service = _printStationService;
+          final restaurantId = widget.restaurantId;
+          RestaurantCenterControl.oweCloudSetting(restaurantId, () async {
+            final patched = await service.patchStationConfiguration(
+              restaurantId: restaurantId,
+              fields: <String, dynamic>{
+                'print_system_enabled': enabled,
+                'updated_at': DateTime.now().toIso8601String(),
+              },
+            );
+            if (patched == null) throw Exception('not saved');
+          });
+          savedOnThisComputerOnly = true;
+        }
       }
       if (_hostsRestaurantCenter && !enabled) {
         await RestaurantCenterControl.closePrintServiceSafely();
@@ -1547,6 +1769,7 @@ class _KitchenPrintManagementPageState
       final stations = results[0] as List<StationModel>;
       final allPrinters = results[1] as List<PrinterModel>;
       _allPrintersCache = allPrinters;
+      _recheckSavedPrinters();
       final activePrinters = allPrinters
           .where((printer) => printer.isActive)
           .toList(growable: false);
@@ -2711,14 +2934,18 @@ class _KitchenPrintManagementPageState
               _localServiceStatusItem(),
               PrinterCenterStatusItem(
                 label: 'Kayıtlı yazıcı',
+                // While the saved printers are still being read, an empty
+                // list is "not loaded yet", never "no printer was added".
                 value: _allPrintersCache.isEmpty
-                    ? 'Eklenmedi'
+                    ? (_loadingPrintStationState ? 'Yükleniyor' : 'Eklenmedi')
                     : '${_allPrintersCache.length} yazıcı',
-                tone: _allPrintersCache.isEmpty
+                tone: _allPrintersCache.isEmpty && !_loadingPrintStationState
                     ? PrinterCenterTone.warning
                     : PrinterCenterTone.neutral,
                 detail: _allPrintersCache.isEmpty
-                    ? 'Mutfak ve adisyon fişleri basılamaz.'
+                    ? (_loadingPrintStationState
+                          ? 'Kayıtlı yazıcılar okunuyor.'
+                          : 'Mutfak ve adisyon fişleri basılamaz.')
                     : '$activeCount aktif',
               ),
               PrinterCenterStatusItem(
@@ -2733,6 +2960,8 @@ class _KitchenPrintManagementPageState
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          _buildSetupSummaryCard(),
           const SizedBox(height: 12),
           ListenableBuilder(
             listenable: connectivity,
@@ -2838,10 +3067,13 @@ class _KitchenPrintManagementPageState
     if (_staleBridgePrinters.isNotEmpty) {
       notices.add(
         PrinterCenterNotice(
-          tone: PrinterCenterTone.error,
+          // Not being listed by the print service right now is not a reason
+          // to add or pick the printer again: the record and its station
+          // assignments are kept and used as soon as it answers.
           message:
-              '${_staleBridgePrinters.length} kayıtlı yazıcı canlı taramada yok. '
-              'Kayıtlar silinmedi. Bu ${_printStationService.defaultPrintStationPlatform() == 'macos' ? 'MacBook' : 'cihaz'} için yazıcıyı yeniden seçin.',
+              '${_staleBridgePrinters.length} kayıtlı yazıcı şu an yazıcı servisinde görünmüyor. '
+              'Kayıt ve alan eşleştirmeleri duruyor; yeniden eklemeniz veya seçmeniz gerekmez. '
+              'Yazıcı servisi açık ve yazıcı ağdayken kendiliğinden kullanılır.',
         ),
       );
     }
@@ -2905,6 +3137,27 @@ class _KitchenPrintManagementPageState
             PrinterCenterNotice(
               tone: PrinterCenterTone.error,
               message: _printSystemError!,
+            ),
+          ],
+          if (_hostsRestaurantCenter) ...[
+            const SizedBox(height: 6),
+            const Divider(height: 16),
+            SwitchListTile.adaptive(
+              key: const ValueKey<String>('printer-center-auto-start-switch'),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              value: _autoStartEnabled,
+              onChanged: _autoStartLoaded ? _toggleAutoStart : null,
+              title: const Text(
+                "İBUL Satıcı açıldığında Yazıcı Merkezi'ni otomatik başlat",
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+              subtitle: const Text(
+                'Açıkken uygulama her açılışta kayıtlı yazıcılarla hazır gelir. '
+                'Önceden bekleyen fişler kendiliğinden basılmaz. '
+                'Durdur o oturum için her zaman geçerlidir.',
+                style: TextStyle(fontSize: 12),
+              ),
             ),
           ],
         ],
@@ -4356,6 +4609,7 @@ class _KitchenPrintManagementPageState
         ],
       ),
         ),
+        _buildPrinterLinkLine(printer),
         if (ipDrift != null && ipDrift.hasDrift)
           _buildEthernetIpDriftBanner(ipDrift),
         if (profileRepairMessage != null)

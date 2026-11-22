@@ -34,10 +34,53 @@ class _World {
         events.add('rpc');
         return rpc(request, rpcCalls);
       }
+      // The restaurant's saved setup: one kitchen printer, saved as the
+      // "Mutfak" role. A ticket only goes to a printer somebody chose.
+      if (request.url.path.endsWith('/printers')) {
+        return _rows(request, <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'printer-kitchen',
+            'restaurant_id': _restaurant,
+            'name': 'Mutfak',
+            'code': 'eth_192_168_10_100_9100',
+            'connection_type': 'network',
+            'ip_address': '192.168.10.100',
+            'port': 9100,
+            'device_identifier': 'tcp:192.168.10.100:9100',
+            'is_active': true,
+            'created_at': '2026-11-17T10:00:00Z',
+          },
+        ]);
+      }
+      if (request.url.path.endsWith('/restaurant_print_station_configs')) {
+        return _rows(request, <Map<String, dynamic>>[
+          <String, dynamic>{
+            'restaurant_id': _restaurant,
+            'kitchen_printer_id': 'printer-kitchen',
+            'print_system_enabled': true,
+          },
+        ]);
+      }
       return http.Response('[]', 200,
           headers: {'content-type': 'application/json'}, request: request);
     }),
   );
+
+  /// PostgREST answers a single-row request with one object.
+  static http.Response _rows(
+    http.Request request,
+    List<Map<String, dynamic>> rows,
+  ) {
+    final single =
+        (request.headers['Accept'] ?? request.headers['accept'] ?? '')
+            .contains('vnd.pgrst.object');
+    return http.Response(
+      jsonEncode(single ? rows.first : rows),
+      200,
+      headers: {'content-type': 'application/json'},
+      request: request,
+    );
+  }
 
   http.Client bridge() => MockClient((request) async {
     if (request.url.path == '/print/kitchen') {

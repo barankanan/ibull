@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/station_model.dart';
+import 'printer_repository.dart';
 
 class StationRepository {
   StationRepository({SupabaseClient? client})
@@ -24,11 +25,32 @@ class StationRepository {
   }
 
   Future<List<StationModel>> fetchStations(String restaurantId) async {
-    final rows = await _client
-        .from('stations')
-        .select()
-        .eq('restaurant_id', restaurantId)
-        .order('created_at', ascending: true);
+    // Stations are part of the saved printer setup: without them a station
+    // -> printer mapping cannot be shown or resolved while the cloud is away.
+    final Object rows;
+    try {
+      rows = await _client
+          .from('stations')
+          .select()
+          .eq('restaurant_id', restaurantId)
+          .order('created_at', ascending: true);
+    } catch (error) {
+      final cached = await PrinterRepository.lastGoodRowsWhenUnreachable(
+        PrinterRepository.stationsCacheKind,
+        restaurantId,
+        error,
+      );
+      if (cached == null) rethrow;
+      return cached.map(StationModel.fromMap).toList(growable: false);
+    }
+    await PrinterRepository.rememberLastGoodRows(
+      PrinterRepository.stationsCacheKind,
+      restaurantId,
+      rows,
+      emptyIsAuthoritative: PrinterRepository.emptyAnswerIsAuthoritative(
+        _client,
+      ),
+    );
     return List<Map<String, dynamic>>.from(
       rows as List,
     ).map(StationModel.fromMap).toList(growable: false);

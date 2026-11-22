@@ -41,6 +41,7 @@ from .network_scan import (
     suggest_ethernet_network_settings,
 )
 from .network_transport import (
+    PHASE_CONNECT,
     DEFAULT_TCP_PORT,
     DEFAULT_TIMEOUT_SECONDS,
     NetworkTcpTransport,
@@ -485,6 +486,62 @@ def _http_print_record_keys(keys: list[str]) -> None:
         now = time.monotonic()
         for key in keys:
             _HTTP_PRINT_RECENT_JOBS[key] = now
+
+
+# Keys of tickets whose send failed after writing may have begun. They stay
+# in _HTTP_PRINT_RECENT_JOBS (no automatic second copy) but a repeat is
+# answered as "outcome unknown", never as "already printed".
+_HTTP_PRINT_UNCERTAIN_KEYS: set[str] = set()
+
+
+def _http_print_mark_uncertain(keys: list[str]) -> None:
+    if not keys:
+        return
+    with _HTTP_PRINT_IDEM_LOCK:
+        _HTTP_PRINT_UNCERTAIN_KEYS.update(keys)
+
+
+def _http_print_any_uncertain(keys: list[str]) -> bool:
+    if not keys:
+        return False
+    with _HTTP_PRINT_IDEM_LOCK:
+        # A key that aged out of the recent set is no longer held back.
+        _HTTP_PRINT_UNCERTAIN_KEYS.intersection_update(_HTTP_PRINT_RECENT_JOBS)
+        return any(key in _HTTP_PRINT_UNCERTAIN_KEYS for key in keys)
+
+
+def _http_print_forget_keys(keys: list[str]) -> None:
+    """Drop idempotency keys of a ticket that certainly did not print.
+
+    The keys are recorded before the ticket is sent, so that a second request
+    arriving while the first is still printing is suppressed. When the send
+    fails before a single byte reached the printer, keeping them would make
+    the next attempt answer "duplicate, ok" and the ticket would never print
+    while being reported as printed.
+    """
+    if not keys:
+        return
+    with _HTTP_PRINT_IDEM_LOCK:
+        for key in keys:
+            _HTTP_PRINT_RECENT_JOBS.pop(key, None)
+            _HTTP_PRINT_UNCERTAIN_KEYS.discard(key)
+
+
+def print_failure_outcome(exc: BaseException) -> dict[str, object]:
+    """What a caller may do after a failed send.
+
+    ``retry_safe`` is true only when the failure is known to have happened
+    before any byte was written (a TCP connect-phase failure). Everything
+    else is ``uncertain``: part or all of the ticket may be on paper, and a
+    blind resend would print a second copy.
+    """
+    phase = getattr(exc, "phase", None)
+    retry_safe = phase == PHASE_CONNECT
+    return {
+        "write_may_have_started": not retry_safe,
+        "retry_safe": retry_safe,
+        "print_outcome": "not_sent" if retry_safe else "uncertain",
+    }
 
 
 def _same_subnet_hint(host: str, local_ips: list[str]) -> tuple[bool | None, str]:
@@ -3782,6 +3839,37 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             raw_payload = self._read_json_body()
             idem_keys = _http_print_idem_keys(raw_payload)
             job_id = _extract_http_print_job_id(raw_payload)
+            if raw_payload.get("operator_confirmed_retry") is True:
+                # The operator looked at the printer and chose to print this
+                # ticket again: that one request is not a duplicate.
+                LOGGER.info(
+                    "[KITCHEN_IDEMPOTENCY] operator confirmed retry job_id=%s",
+                    job_id or "-",
+                )
+                _http_print_forget_keys(idem_keys)
+            if _http_print_any_uncertain(idem_keys):
+                LOGGER.info(
+                    "[KITCHEN_IDEMPOTENCY] repeat of uncertain send refused job_id=%s",
+                    job_id or "-",
+                )
+                self._send_json(
+                    HTTPStatus.CONFLICT,
+                    {
+                        "ok": False,
+                        "already_attempted": True,
+                        "errorCode": "print_outcome_uncertain",
+                        "print_outcome": "uncertain",
+                        "write_may_have_started": True,
+                        "retry_safe": False,
+                        "print_job_id": job_id or "",
+                        "error": (
+                            "Önceki gönderimin sonucu belirsiz. Fiş kendiliğinden "
+                            "tekrar basılmaz; yazıcıyı kontrol edip kuyruktan "
+                            "yeniden başlatın."
+                        ),
+                    },
+                )
+                return
             if _http_print_any_processed(idem_keys):
                 LOGGER.info(
                     "[KITCHEN_IDEMPOTENCY] duplicate suppressed job_id=%s keys=%s",
@@ -4863,6 +4951,14 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             exc_details = getattr(exc, "details", None)
             if isinstance(exc_details, dict) and exc_details:
                 response.update(exc_details)
+            outcome = print_failure_outcome(exc)
+            response.update(outcome)
+            if outcome["retry_safe"]:
+                # Nothing reached the printer: the next attempt must really
+                # print instead of being answered as an already printed copy.
+                _http_print_forget_keys(_http_print_idem_keys(raw_request))
+            else:
+                _http_print_mark_uncertain(_http_print_idem_keys(raw_request))
             if (
                 selected_printer
                 and str(selected_printer.get("backend") or "").strip().lower() == "usb-direct"
@@ -4929,7 +5025,11 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             )
             self._send_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
-                {"ok": False, "error": f"Unexpected print failure: {exc}"},
+                {
+                    "ok": False,
+                    "error": f"Unexpected print failure: {exc}",
+                    **print_failure_outcome(exc),
+                },
             )
             return
 

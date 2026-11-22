@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show debugPrint, debugPrintStack;
@@ -26,12 +27,18 @@ class PrinterRepository implements PrinterRepositoryPort {
       'Fetch',
       'source=watchPrinters sellerId=$restaurantId storeId=- backendPath=$backendPath',
     );
-    return _client
+    final source = _client
         .from('printers')
         .stream(primaryKey: ['id'])
         .eq('restaurant_id', restaurantId)
-        .order('created_at', ascending: true)
-        .map((rows) {
+        .order('created_at', ascending: true);
+    // A registered printer must stay on screen while the cloud is away: every
+    // list the server sends is kept as this device's last good copy, and a
+    // connection failure shows that copy instead of an error. A refusal from
+    // the server (denied, bad request) is still passed on.
+    return source.transform(
+      StreamTransformer<List<Map<String, dynamic>>, List<PrinterModel>>.fromHandlers(
+        handleData: (rows, sink) {
           final printers = rows
               .map(
                 (row) => PrinterModel.fromMap(Map<String, dynamic>.from(row)),
@@ -42,17 +49,40 @@ class PrinterRepository implements PrinterRepositoryPort {
             'source=watchPrintersStream sellerId=$restaurantId storeId=- '
                 'backendPath=$backendPath printerCount=${printers.length}',
           );
-          return printers;
-        })
-        .handleError((Object error, StackTrace stackTrace) {
+          unawaited(
+            rememberLastGoodRows(
+              _printersCacheKind,
+              restaurantId,
+              rows,
+              emptyIsAuthoritative: emptyAnswerIsAuthoritative(_client),
+            ),
+          );
+          sink.add(printers);
+        },
+        handleError: (error, stackTrace, sink) {
           _logPrinterSettings(
             'Error',
             'source=watchPrintersStream sellerId=$restaurantId storeId=- backendPath=$backendPath',
             error: error,
             stackTrace: stackTrace,
           );
-          Error.throwWithStackTrace(error, stackTrace);
-        });
+          unawaited(() async {
+            final refused =
+                error is PostgrestException && !isCloudOutageAnswer(error);
+            final cached = refused
+                ? null
+                : await _lastGoodRows(_printersCacheKind, restaurantId);
+            if (cached == null) {
+              sink.addError(error, stackTrace);
+              return;
+            }
+            sink.add(
+              cached.map(PrinterModel.fromMap).toList(growable: false),
+            );
+          }());
+        },
+      ),
+    );
   }
 
   @override
@@ -77,7 +107,12 @@ class PrinterRepository implements PrinterRepositoryPort {
         'source=fetchPrinters sellerId=$restaurantId storeId=- '
             'backendPath=$backendPath printerCount=${printers.length}',
       );
-      await rememberLastGoodRows(_printersCacheKind, restaurantId, rows);
+      await rememberLastGoodRows(
+        _printersCacheKind,
+        restaurantId,
+        rows,
+        emptyIsAuthoritative: emptyAnswerIsAuthoritative(_client),
+      );
       return printers;
     } catch (error, stackTrace) {
       // Without the cloud the kitchen ticket still needs its printer: the
@@ -576,6 +611,7 @@ class PrinterRepository implements PrinterRepositoryPort {
   static const String _printersCacheKind = 'printers';
   static const String _stationPrintersCacheKind = 'station_printers';
   static const String stationConfigCacheKind = 'station_config';
+  static const String stationsCacheKind = 'stations';
 
   static String lastGoodRowsKey(String kind, String restaurantId) =>
       'printer_repository_last_good_v1_${kind}_${restaurantId.trim()}';
@@ -599,10 +635,57 @@ class PrinterRepository implements PrinterRepositoryPort {
     return null;
   }
 
+  /// The saved station -> printer assignments of [restaurantId], from the
+  /// rows last read from the server on this device. No network.
+  ///
+  /// Null means "not known on this device yet" (either list was never read):
+  /// a caller that must not guess then leaves the ticket to the path that
+  /// reads the assignments.
+  static Future<SavedStationPrinters?> lastGoodStationPrinters(
+    String restaurantId,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rawPrinters = prefs.getString(
+        lastGoodRowsKey(_printersCacheKind, restaurantId),
+      );
+      final rawMappings = prefs.getString(
+        lastGoodRowsKey(_stationPrintersCacheKind, restaurantId),
+      );
+      if (rawPrinters == null || rawMappings == null) return null;
+      final printers = jsonDecode(rawPrinters);
+      final mappings = jsonDecode(rawMappings);
+      if (printers is! List || mappings is! List) return null;
+      Map<String, dynamic>? stationConfig;
+      try {
+        final config = jsonDecode(
+          prefs.getString(
+                lastGoodRowsKey(stationConfigCacheKind, restaurantId),
+              ) ??
+              '[]',
+        );
+        if (config is List && config.isNotEmpty && config.first is Map) {
+          stationConfig = Map<String, dynamic>.from(config.first as Map);
+        }
+      } catch (_) {}
+      return SavedStationPrinters.fromRows(
+        printerRows: printers.whereType<Map>().map(
+          (row) => Map<String, dynamic>.from(row),
+        ),
+        mappingRows: mappings.whereType<Map>().map(
+          (row) => Map<String, dynamic>.from(row),
+        ),
+        stationConfig: stationConfig,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// True for failures that mean "the server could not be reached", as
   /// opposed to an answer from the server.
   static bool isCloudUnreachableError(Object error) {
-    if (error is PostgrestException) return false;
+    if (error is PostgrestException) return isCloudOutageAnswer(error);
     final text = error.toString().toLowerCase();
     return text.contains('socketexception') ||
         text.contains('connection refused') ||
@@ -613,16 +696,57 @@ class PrinterRepository implements PrinterRepositoryPort {
         text.contains('timed out');
   }
 
+  /// True when the server side answered, but the answer says the cloud itself
+  /// is down (gateway / upstream failure) rather than "this request is
+  /// refused". A registered printer must stay usable through such an outage,
+  /// so these are read from the last good copy like a dropped connection.
+  /// Permission and validation answers (401/403/4xx, PGRST codes) are not
+  /// outages and are never papered over.
+  static bool isCloudOutageAnswer(PostgrestException error) {
+    final code = int.tryParse((error.code ?? '').trim());
+    if (code != null && code >= 500 && code <= 599) return true;
+    final text = '${error.message} ${error.details ?? ''}'.toLowerCase();
+    return text.contains('bad gateway') ||
+        text.contains('service unavailable') ||
+        text.contains('gateway timeout') ||
+        text.contains('upstream connect error') ||
+        text.contains('upstream request timeout');
+  }
+
+  /// Whether an EMPTY answer from the server may replace a non-empty last
+  /// good copy. Without a live signed-in session the server filters every row
+  /// away (RLS) and answers "[]" with success; that is not "the restaurant has
+  /// no printers" and must not erase the copy the offline path depends on.
+  static bool emptyAnswerIsAuthoritative(SupabaseClient client) {
+    try {
+      final session = client.auth.currentSession;
+      return session != null && !session.isExpired;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Keeps the rows of the last successful read on this device.
+  ///
+  /// [emptyIsAuthoritative] false keeps an existing non-empty copy when the
+  /// answer is empty (see [emptyAnswerIsAuthoritative]).
   static Future<void> rememberLastGoodRows(
     String kind,
     String restaurantId,
-    Object? rows,
-  ) async {
+    Object? rows, {
+    bool emptyIsAuthoritative = true,
+  }) async {
     if (rows is! List || restaurantId.trim().isEmpty) return;
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(lastGoodRowsKey(kind, restaurantId), jsonEncode(rows));
+      final key = lastGoodRowsKey(kind, restaurantId);
+      if (rows.isEmpty && !emptyIsAuthoritative) {
+        final existing = prefs.getString(key);
+        if (existing != null && existing.isNotEmpty && existing != '[]') {
+          return;
+        }
+      }
+      await prefs.setString(key, jsonEncode(rows));
     } catch (_) {
       // The cache is a convenience; a failed write must not fail the read.
     }
@@ -636,6 +760,13 @@ class PrinterRepository implements PrinterRepositoryPort {
     Object error,
   ) async {
     if (!isCloudUnreachableError(error)) return null;
+    return _lastGoodRows(kind, restaurantId);
+  }
+
+  static Future<List<Map<String, dynamic>>?> _lastGoodRows(
+    String kind,
+    String restaurantId,
+  ) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(lastGoodRowsKey(kind, restaurantId));
@@ -690,7 +821,12 @@ class PrinterRepository implements PrinterRepositoryPort {
         'source=fetchStationPrinterMappings sellerId=$restaurantId storeId=- '
             'backendPath=$backendPath mappingCount=${mappings.length}',
       );
-      await rememberLastGoodRows(_stationPrintersCacheKind, restaurantId, rows);
+      await rememberLastGoodRows(
+        _stationPrintersCacheKind,
+        restaurantId,
+        rows,
+        emptyIsAuthoritative: emptyAnswerIsAuthoritative(_client),
+      );
       return mappings;
     } catch (error, stackTrace) {
       final cached = await lastGoodRowsWhenUnreachable(
@@ -963,4 +1099,93 @@ class PrinterRepository implements PrinterRepositoryPort {
       debugPrintStack(stackTrace: stackTrace);
     }
   }
+}
+
+/// Station -> saved printer, as assigned in Sistem > Yazıcı Merkezi.
+class SavedStationPrinters {
+  const SavedStationPrinters._(this._printerByStation, this.kitchenRolePrinter);
+
+  factory SavedStationPrinters.fromRows({
+    required Iterable<Map<String, dynamic>> printerRows,
+    required Iterable<Map<String, dynamic>> mappingRows,
+    Map<String, dynamic>? stationConfig,
+  }) {
+    final printers = <String, PrinterModel>{};
+    for (final row in printerRows) {
+      try {
+        final printer = PrinterModel.fromMap(row);
+        printers[printer.id] = printer;
+      } catch (_) {}
+    }
+    final chosen = <String, PrinterModel?>{};
+    final chosenIsPrimary = <String, bool>{};
+    for (final row in mappingRows) {
+      final station = row['station_id']?.toString().trim() ?? '';
+      final printerId = row['printer_id']?.toString().trim() ?? '';
+      if (station.isEmpty || printerId.isEmpty) continue;
+      final primary = row['is_primary'] == true;
+      if (chosen.containsKey(station) &&
+          (chosenIsPrimary[station] == true || !primary)) {
+        continue;
+      }
+      // The station IS assigned even when its printer record is missing:
+      // such a station must not fall through to some other printer.
+      chosen[station] = printers[printerId];
+      chosenIsPrimary[station] = primary;
+    }
+    return SavedStationPrinters._(
+      chosen,
+      _kitchenRolePrinter(stationConfig, printers),
+    );
+  }
+
+  /// The printer saved as the "Mutfak" role, matched to its record. It is the
+  /// printer of a station that has no assignment of its own. Never "the
+  /// printer that happened to print last".
+  static PrinterModel? _kitchenRolePrinter(
+    Map<String, dynamic>? config,
+    Map<String, PrinterModel> printers,
+  ) {
+    if (config == null) return null;
+    final ids = <String>{
+      config['kitchen_printer_id']?.toString().trim() ?? '',
+    };
+    String device = '';
+    final mappings = config['role_mappings'];
+    final role = mappings is Map ? mappings['mutfak'] : null;
+    if (role is Map) {
+      ids.add(role['printerRecordId']?.toString().trim() ?? '');
+      ids.add(role['printer_record_id']?.toString().trim() ?? '');
+      device =
+          (role['device_identifier'] ?? role['deviceIdentifier'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+    }
+    for (final id in ids) {
+      if (id.isNotEmpty && printers[id] != null) return printers[id];
+    }
+    if (device.isNotEmpty) {
+      for (final printer in printers.values) {
+        if ((printer.deviceIdentifier ?? '').trim().toLowerCase() == device) {
+          return printer;
+        }
+      }
+    }
+    return null;
+  }
+
+  final Map<String, PrinterModel?> _printerByStation;
+
+  /// See [_kitchenRolePrinter]. Null when no kitchen role printer is saved.
+  final PrinterModel? kitchenRolePrinter;
+
+  /// True when the station has an assignment (whether or not its printer
+  /// record could be found).
+  bool isAssigned(String stationId) =>
+      _printerByStation.containsKey(stationId.trim());
+
+  /// The assigned printer, or null (not assigned, or its record is missing).
+  PrinterModel? printerFor(String stationId) =>
+      _printerByStation[stationId.trim()];
 }

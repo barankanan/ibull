@@ -1097,3 +1097,47 @@ Commit `59bcaa5` (318 dosya; `build` sembolik bağlantısı hariç tüm çalış
 
 ## 2026-11-22 (16:15–16:35) — P5 Çevrimdışı masa kapatma: sözleşme + izole kanıt (production'a DOKUNULMADI)
 Üretimdeki `close_table_with_history` salt-okunur okundu: çağrı anında masadaki TÜM açık siparişleri kapatıyor; sipariş kümesi ve işlem kimliği yok. Yeni, yalnız eklemeli taslak: `20261122160000_offline_table_settlement.sql` ("Local only" başlıklı) — `restaurant_offline_settlement_settings` (işletme başına anahtar, varsayılan kapalı), `restaurant_offline_settlements` (`(restaurant_id, settlement_id)` tekil), `restaurant_offline_settlement_orders` (sipariş başına tek uzlaştırma), `apply_offline_table_settlement(...)` (yalnız servis rolü). Sözleşme ve idempotency modeli: `docs/OFFLINE_TABLE_SETTLEMENT_CONTRACT.md`. İzole PostgreSQL 17 (scratchpad, 127.0.0.1:55477, iş bitince durduruldu): `run_isolated_offline_table_settlement.sh` 25 PASS / 0 hata; 5 mutasyonun 5'i kırmızı (07 numaralı testte boş değer karşılaştırması düzeltildi). **Yapılmadı / doğrulanmadı:** üretim tetikleyicileriyle (`guard_restaurant_staff_order_write`, `orders_money_authority_guard`) uyum, `restaurant_has_permission` ile yetki eşdeğerliği, `table_payments` kaydı, doğrulayıcı uç noktası + imza, uygulama tarafı. `offlineMoneyOperationBlock` yerinde. Commit YOK.
+
+## 2026-11-23 (00:00–01:15) — P15 Kalıcı ve otomatik yazıcı sistemi (production'a migration/deploy YOK)
+
+Kapsam: kayıt kalıcılığı, otomatik servis başlatma, yeniden bağlantı görünürlüğü, tek fiş güvencesi. Taban: `4784f12` (checkpoint `59bcaa5` korunuyor). Supabase şemasına, RLS'e, Edge Function'a dokunulmadı. Fiziksel baskı gönderilmedi, Mac yeniden başlatılmadı.
+
+### Kök nedenler (kodda doğrulandı)
+| # | Kök neden | Düzeltme | Dosya |
+|---|---|---|---|
+| 1 | Herhangi bir yazıcıyı silmek iki rolü de (adisyon + mutfak) yerelde ve bulutta siliyordu; silme başarısız olsa bile | Önce kayıt silinir, sonra yalnız o yazıcıya işaret eden rol temizlenir | `services/desktop_print_orchestrator.dart` |
+| 2 | Oturum yok/süresi dolmuşken bulut `[]` döner; bu, kayıtlı yazıcıların yerel son iyi kopyasının üzerine yazılıyordu | Oturumsuz boş yanıt dolu kopyayı silmez | `services/printer_repository.dart`, `print_station_service.dart` |
+| 3 | Bulut 5xx / ağ geçidi hatasında kopyaya dönülmüyordu; istasyonların hiç yerel kopyası yoktu; internet yokken Yazıcılar sekmesi "Yazıcılar yüklenemedi" gösteriyordu | 5xx "ulaşılamıyor" sayılır; `stations` kopyası; `watchPrinters` bağlantı hatasında kopyayı gösterir | `printer_repository.dart`, `station_repository.dart` |
+| 4 | Açılışta hiçbir şey başlamıyordu, tercih yoktu | `RestaurantCenterAutoStart` (tek başlatma dizisi + kalıcı tercih, süreç başına en fazla bir açılış başlatması) | `services/restaurant_offline/restaurant_center_auto_start.dart`, `lib/main_seller.dart`, `screens/seller/kitchen_print_management_page.dart` |
+| 5 | Garson modülünün kurtarma taraması (`recoverPendingJobs`) Başlat'tan önce bekleyen işleri zaman süzgeci olmadan alıyordu | `PrintServiceStartGate.jobIsFromBefore` süzgeci | `services/order_print_job_service.dart` |
+| 6 | Hızlı yerel mutfak baskısı bütün istasyonları tek yazıcıya, o da yoksa köprünün "son bastığı" adrese gönderiyordu | İstasyonun atanmış yazıcısı, yoksa KAYITLI Mutfak rolü; karar yoksa hızlı yol hiç basmaz | `order_print_job_service.dart` (`resolveFastPathStationPrinters`), `printer_repository.dart` (`SavedStationPrinters`) |
+| 7 | Köprü tekilleştirme anahtarını baskıdan önce kaydedip başarısızlıkta silmiyordu: hiç basılmamış fiş sonraki denemede "zaten basıldı" yanıtı alıyordu; yazma aşaması bilgisi HTTP yanıtında yoktu | `retry_safe` / `write_may_have_started` / `print_outcome`; bağlantı aşaması hatasında anahtar unutulur; belirsiz iş tekrar gelirse 409; yalnız `operator_confirmed_retry` yeniden basar | `local_print_bridge/server.py`, `print_station.py`, `restaurant_local_print_queue_service.dart`, `desktop_print_hub.dart` |
+| 8 | Hub ısınması `printers.seller_id` (olmayan sütun) sorguluyordu | `restaurant_id` | `desktop_print_hub.dart` |
+| 9 | Kayıt ile erişilebilirlik aynı yerde gösteriliyordu; "canlı taramada yok … yeniden seçin" uyarısı; yüklenirken "Eklenmedi" | `PrinterReachabilityMonitor` + "Kurulum özeti" kartı + satır altı durum; metinler düzeltildi; "Temizle" onay ister | `features/seller/panel/printer_center/printer_registry_status.dart`, `kitchen_print_management_page.dart`, `desktop_printer_setup_page.dart` |
+
+### Otomatik testler
+- Yeni Dart testleri: `test/services/restaurant_center_auto_start_test.dart` (15), `test/printer_persistence/{station_printer_routing,printer_registry_status,old_jobs_held_at_start}_test.dart` (14 + 12 + 3), `printer_repository_offline_rows_test.dart` (+6). Hepsi PASS.
+- Güncellenen testler: `desktop_print_orchestrator_test.dart` (silme yalnız ilgili rolü temizler), `kitchen_print_after_commit_test.dart` (fiş yalnız kayıtlı yazıcıya gider; önceden kayıtsız "bridge-default"a basıyordu).
+- Tam Flutter çalıştırması (bu turun ortasında): 57 başarısız; aynı dosyalar `4784f12` kopyasında çalıştırıldı → 47'si HEAD'de de aynı (ana sayfa, araç kiralama, destek, CSV, `desktop_printer_setup_page` anahtar testleri, `garson_lan_pilot_ui`, `mobile_order_print_service`, `lan_bridge_sync`, `lan_private_listen` …). Bu turdan kaynaklanan 7 başarısızlık (yukarıdaki iki test dosyası) düzeltildi. `mixed_service_dialog_test` her iki tarafta da asılı kalıyor.
+- Köprü (Python `unittest`, 218 test): sistem Python'unda 27 başarısız = Pillow/pyusb eksikliği. Paketlenmiş yardımcının kendi `_internal` kitaplıklarıyla (`PYTHONPATH`, Pillow 12.2.0, pyusb 1.3.1, libusb) 19 başarısız; aynı 19'u HEAD kaynağında da birebir aynı (test/kaynak kayması: `reported_device_platform` yok, `/health` `print_system_enabled` alanı yok vb.). Yeni 10 köprü testi PASS (`test_print_failure_outcome.py`, `test_stopped_service_and_uncertain_repeat.py`: kapalı serviste 503 + yazıcıya 0 bayt; belirsiz fiş tekrar basılmaz ve "basıldı" denmez).
+
+### Gerçek uygulama (com.ibul.sellerdesktop Release, production'a bağlı; baskı gönderilmedi)
+| Adım | Gözlem | Durum |
+|---|---|---|
+| Yeni derleme | 209,3 MB, `codesign --verify --deep --strict` OK; köprü yardımcısı (22 Kas 10:06) DEĞİŞMEDİ | PASS |
+| Açılış (tercih kapalı) | "Yazıcı merkezi kapalı", köprü/LAN yok — eski davranış aynen | PASS |
+| Kurulum özeti | 1 kayıtlı yazıcı (`aa` 192.168.10.100:9100), 3/4 alan eşleşti (eşleşmeyen: "yeni alna"), merkez Kapalı | PASS |
+| Başlat | tek köprü 127.0.0.1:3001, LAN 192.168.10.67:18772, özet "Açık" | PASS |
+| Yazıcı yanıt vermiyorken | "Ulaşılamayan: aa" + "kayıt duruyor, yeniden eklemeniz gerekmez" (ilk yoklama soğuk ağda düştü) | PASS (kayıt silinmedi) |
+| Otomatik başlat anahtarı → Çık | köprü + LAN kapandı; tercih diskte `ibul.printer_center.auto_start.<rid>=1` | PASS |
+| Yeniden aç (hiç tıklama yok) | 6–8 sn'de tek köprü + LAN açık; `aa` "Kayıtlı · bağlı · baskıya hazır", özet 1/1 bağlı (bağımsız `nc`/ping de açık) | PASS (2 ayrı derlemede) |
+| Açılışta baskı | köprü kaydında son giriş 22 Kas 16:33; bu geceki 3 başlatmada yeni kayıt yok | PASS |
+| Durdur | köprü süreci yok, 3001/18772 kapalı, `.env PRINT_SYSTEM_ENABLED=False`; tercih açıkken 45 sn sonra da kapalı | PASS |
+
+### Yapılmadı / doğrulanmadı
+- Paket içi köprü yeniden derlenmedi (PyInstaller ortamı yok) → kök neden 7'nin Python tarafı gerçek uygulamada ETKİN DEĞİL; Dart tarafı eski köprüyle geriye uyumlu.
+- Fiziksel baskı, gerçek sipariş (TEST 15), Mac yeniden başlatma (TEST 4), yazıcıyı fiziksel kapat/aç (TEST 5–6 gerçek), internet kes/aç (TEST 7–8 gerçek), ağ değiştirme (TEST 10): onay bekliyor.
+- TEST 14 (alt yönetici): `20261122090000_print_settings_staff_permission.sql` production'da yok → BLOCKED.
+- Yazıcı IP'si değişince kimlik doğrulamalı yeniden bulma: yok (köprü MAC toplamıyor; `printer_identity.py` kullanılmıyor). Kullanıcıya DHCP rezervasyonu öneriliyor.
+- Kısmi çok istasyonlu başarısızlıkta yerel/bulut tekilleştirme anahtarı uyuşmazlığı (yerel `name`, bulut `product_name`) incelendi, düzeltilmedi.
+- Durum şeridindeki "Yazıcı bağlantısı henüz doğrulanmadı" (hub hazır durumu) ile yeni satır altı "bağlı" bilgisi ayrı kaynaklardan geliyor.

@@ -677,6 +677,19 @@ class DesktopPrintHub extends ChangeNotifier {
   /// Resets DB status to `pending`, then re-dispatches through the standard
   /// pipeline.  The job is optimistically removed from [failedJobs]; it will
   /// be re-added if it fails again.
+  /// Jobs whose retry the operator confirmed moments ago.
+  final Map<String, DateTime> _operatorRetryMarks = <String, DateTime>{};
+
+  bool _isOperatorConfirmedRetry(String jobId) {
+    final at = _operatorRetryMarks[jobId];
+    if (at == null) return false;
+    if (DateTime.now().difference(at) > const Duration(minutes: 2)) {
+      _operatorRetryMarks.remove(jobId);
+      return false;
+    }
+    return true;
+  }
+
   Future<void> retryJob(String jobId, {bool operatorConfirmed = false}) async {
     if (!operatorConfirmed) {
       debugPrint('[PrintHub] retryJob refused without operator confirmation');
@@ -713,6 +726,10 @@ class DesktopPrintHub extends ChangeNotifier {
       _dispatchedJobIds.remove(jobId);
       final job = await _fetchJob(jobId);
       if (job == null) return;
+      // The bridge remembers this job's key from the first attempt. Without
+      // the mark it would answer "already printed" and the retry the operator
+      // just confirmed would be recorded as done without any paper.
+      _operatorRetryMarks[jobId] = DateTime.now();
       _failedJobs.removeWhere((j) => j.jobId == jobId);
       notifyListeners();
       _persistFailedJobs().ignore();
@@ -1767,6 +1784,9 @@ class DesktopPrintHub extends ChangeNotifier {
           printPayload['logical_print_key'] = stationLogicalKey;
           printPayload['content_idempotency_key'] = stationLogicalKey;
           printPayload['idempotency_key'] = stationLogicalKey;
+          if (_isOperatorConfirmedRetry(jobId)) {
+            printPayload['operator_confirmed_retry'] = true;
+          }
           // Late barrier: LAN may have finished during claim/enrich.
           if (KitchenLanPrintBarrier.alreadyPrinted(stationLogicalKey)) {
             logPrintDedup(
@@ -3146,7 +3166,7 @@ class DesktopPrintHub extends ChangeNotifier {
       final rows = await Supabase.instance.client
           .from('printers')
           .select()
-          .eq('seller_id', restaurantId)
+          .eq('restaurant_id', restaurantId)
           .eq('is_active', true);
       final printers = rows as List;
       for (final row in printers) {
@@ -3166,6 +3186,12 @@ class DesktopPrintHub extends ChangeNotifier {
       debugPrint(
         '[PrintHub] warm printer cache: ${_printerConfigCache.length} printers',
       );
+      // The saved printers and station assignments are also kept as this
+      // device's last good copy: the paths that must pick a station's
+      // printer without the network (offline, fast local print) read it.
+      final repository = PrinterRepository();
+      await repository.fetchPrinters(restaurantId);
+      await repository.fetchStationPrinterMappings(restaurantId);
     } catch (e) {
       debugPrint('[PrintHub] warmPrinterConfigCache error: $e');
     }

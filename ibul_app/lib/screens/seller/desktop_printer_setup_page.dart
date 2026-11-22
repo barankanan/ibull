@@ -1235,6 +1235,29 @@ class _PrintersTabState extends State<_PrintersTab> {
   }
 
   Future<void> _cleanupBrokenPrinters() async {
+    // This removes printer records for good: it never runs on one tap.
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Kullanılmayan yazıcı kayıtları silinsin mi?'),
+        content: const Text(
+          'Kapalı duruma getirilmiş ve hiçbir alana atanmamış yazıcı kayıtları '
+          'kalıcı olarak silinir. Aktif ya da bir alana atanmış yazıcılara '
+          'dokunulmaz. Geçici olarak ulaşılamayan bir yazıcıyı silmeniz gerekmez.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Vazgeç'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Sil'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     setState(() {
       _runningMaintenance = true;
       _printCenterError = null;

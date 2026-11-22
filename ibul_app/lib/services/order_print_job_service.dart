@@ -37,6 +37,7 @@ import 'printer_encoding_profile_store.dart';
 import 'printer_event_log_service.dart';
 import 'printer_link_status.dart';
 import 'print_job_payload_identity.dart';
+import 'print_service_start_gate.dart';
 import 'printer_repository.dart';
 import '../utils/garson_flow_cache.dart';
 import '../utils/garson_perf_helper.dart';
@@ -2350,12 +2351,18 @@ class OrderPrintJobService {
 
     final rows = await _client
         .from('print_jobs')
-        .select('id')
+        .select('id, created_at')
         .eq('restaurant_id', normalizedRestaurantId)
         .eq('status', 'pending')
         .order('created_at', ascending: true)
         .limit(limit);
+    // On a restaurant's center computer a job that waited from before this
+    // session's "Başlat" is never printed by a recovery sweep: it is held for
+    // the operator, exactly as the hub and the bridge hold it. Without this
+    // an old queue could pour out when the center starts (also at an
+    // automatic start) while the cloud hold had not been written yet.
     final pendingJobIds = List<Map<String, dynamic>>.from(rows as List)
+        .where((row) => !PrintServiceStartGate.jobIsFromBefore(row['created_at']))
         .map((row) => row['id']?.toString() ?? '')
         .where((id) => id.isNotEmpty)
         .toList(growable: false);
@@ -5404,45 +5411,6 @@ class OrderPrintJobService {
     }
   }
 
-  /// Sync memory/snapshot only — never SharedPreferences, health, or Supabase.
-  UnifiedPrinterModel? _resolveLanKitchenPrinterSync({
-    required String restaurantId,
-  }) {
-    final snap = _printOrchestrator.peekCachedSetupSnapshot(restaurantId);
-    final fromSnap = snap?.localConfig?.kitchenSelection?.printer;
-    if (fromSnap != null) {
-      final host = _printerHostForPayload(fromSnap)?.trim() ?? '';
-      if (host.isNotEmpty &&
-          host != '127.0.0.1' &&
-          host != 'localhost' &&
-          fromSnap.backend == DesktopPrinterBackend.tcp) {
-        return fromSnap;
-      }
-    }
-
-    final cached = LanPrintBridgeLocator.peekKitchenTcpMemory(restaurantId);
-    if (cached == null) return null;
-    final id = 'tcp:${cached.host}:${cached.port}';
-    return UnifiedPrinterModel(
-      id: id,
-      displayName: 'Kitchen TCP ${cached.host}',
-      queueName: id,
-      backend: DesktopPrinterBackend.tcp,
-      os: DesktopPrinterOs.macos,
-      isAvailable: true,
-      canPrint: true,
-      raw: <String, dynamic>{
-        'host': cached.host,
-        'ip_address': cached.host,
-        'ipAddress': cached.host,
-        'port': cached.port,
-        'backend': 'tcp',
-        'transportType': 'ethernet',
-        'source': 'lan_kitchen_tcp_cache',
-      },
-    );
-  }
-
   /// Mobile/LAN-first kitchen print: resolve bridge → POST /print/kitchen.
   /// Never awaits Supabase; uses short timeouts and offline printer cache.
   Future<_LanDirectPrintResult> _attemptLanDirectKitchenPrint({
@@ -5479,11 +5447,6 @@ class OrderPrintJobService {
         return _LanDirectPrintResult.failed('no_station_groups');
       }
 
-      // Memory/snapshot only — no SharedPreferences / health / discovery.
-      var kitchenPrinter = _resolveLanKitchenPrinterSync(
-        restaurantId: restaurantId,
-      );
-
       // Desktop: localhost bridge (Sistem Alanı ile aynı). Mobile: warm LAN cache.
       final Uri bridgeUri;
       if (_canDirectDispatch) {
@@ -5501,21 +5464,28 @@ class OrderPrintJobService {
         bridgeUri = resolved;
       }
 
-      // Cache miss OK — bridge uses last_kitchen_tcp / network_host.
-      kitchenPrinter ??= UnifiedPrinterModel(
-        id: 'tcp:bridge-default',
-        displayName: 'Kitchen Bridge Default',
-        queueName: 'tcp:bridge-default',
-        backend: DesktopPrinterBackend.tcp,
-        os: DesktopPrinterOs.macos,
-        isAvailable: true,
-        canPrint: true,
-        raw: const <String, dynamic>{
-          'backend': 'tcp',
-          'transportType': 'ethernet',
-          'source': 'bridge_last_kitchen_tcp',
+      // Every station's printer is settled before the first ticket is sent.
+      // A station goes to the printer assigned to it in Yazıcı Merkezi; a
+      // station without an assignment goes to the kitchen role printer (the
+      // same rule as the queued path). When that cannot be decided from what
+      // this device knows, nothing is sent here and the saved print jobs
+      // take the station-aware path: a ticket is never sent to "whichever
+      // printer the bridge used last".
+      final printersByGroup = await resolveFastPathStationPrinters(
+        restaurantId: restaurantId,
+        stationIds: <String>[for (final group in stationGroups) group.stationId],
+        toBridgeTarget: _printOrchestrator.ethernetPrinterFromRecord,
+        // Not read on this device yet: read once, briefly. Later orders
+        // decide from the saved copy without the network.
+        loadSaved: () async {
+          await _printerRepository.fetchPrinters(restaurantId);
+          await _printerRepository.fetchStationPrinterMappings(restaurantId);
+          await _printOrchestrator.fetchSavedStationConfig(restaurantId);
         },
       );
+      if (printersByGroup.refusal != null) {
+        return _LanDirectPrintResult.skipped(printersByGroup.refusal!);
+      }
       final t1 = t0 + totalWatch.elapsedMilliseconds;
 
       final printService = LocalPrintService(
@@ -5533,7 +5503,9 @@ class OrderPrintJobService {
       var t6 = 0;
       var t7 = 0;
 
-      for (final group in stationGroups) {
+      for (var groupIndex = 0; groupIndex < stationGroups.length; groupIndex++) {
+        final group = stationGroups[groupIndex];
+        final kitchenPrinter = printersByGroup.printers[groupIndex];
         final clientJobId = _generateClientPrintJobId();
         clientJobIds.add(clientJobId);
         final logicalKey = buildKitchenLogicalPrintKey(
@@ -5888,4 +5860,77 @@ List<Map<String, dynamic>>? garsonFastJobsFromPrefetch({
     jobs.add(job);
   }
   return jobs;
+}
+
+/// The printer of each station group for the fast local kitchen print.
+class FastPathStationPrinters {
+  const FastPathStationPrinters.resolved(this.printers) : refusal = null;
+  const FastPathStationPrinters.refused(String this.refusal)
+    : printers = const <UnifiedPrinterModel>[];
+
+  /// One printer per station, in the order asked. Empty when [refusal] is set.
+  final List<UnifiedPrinterModel> printers;
+
+  /// Why the fast path must not print (null when every station is settled).
+  final String? refusal;
+}
+
+/// Decides which saved printer each station's ticket goes to: the printer
+/// assigned to the station, else the saved "Mutfak" role printer. Refuses (so
+/// that nothing at all is sent on this path) when any station cannot be
+/// settled; it never substitutes a printer nobody chose, such as the one
+/// that printed last.
+Future<FastPathStationPrinters> resolveFastPathStationPrinters({
+  required String restaurantId,
+  required List<String> stationIds,
+  required UnifiedPrinterModel Function(PrinterModel printer) toBridgeTarget,
+  Future<void> Function()? loadSaved,
+  Duration loadTimeout = const Duration(milliseconds: 1500),
+  Future<SavedStationPrinters?> Function(String restaurantId)? readSaved,
+}) async {
+  final read = readSaved ?? PrinterRepository.lastGoodStationPrinters;
+  var saved = await read(restaurantId);
+  if (saved == null && loadSaved != null) {
+    try {
+      await loadSaved().timeout(loadTimeout);
+    } catch (_) {}
+    saved = await read(restaurantId);
+  }
+  if (saved == null) {
+    return const FastPathStationPrinters.refused('station_printers_unknown');
+  }
+  String? unusable(PrinterModel printer) {
+    if (!printer.isActive) return 'inactive';
+    if (!printer.isEthernetConnection) return 'not_ethernet';
+    return null;
+  }
+
+  final printers = <UnifiedPrinterModel>[];
+  for (final stationId in stationIds) {
+    final station = stationId.trim();
+    if (station.isNotEmpty && saved.isAssigned(station)) {
+      final assigned = saved.printerFor(station);
+      if (assigned == null) {
+        return const FastPathStationPrinters.refused(
+          'station_printer_record_missing',
+        );
+      }
+      final problem = unusable(assigned);
+      if (problem != null) {
+        return FastPathStationPrinters.refused('station_printer_$problem');
+      }
+      printers.add(toBridgeTarget(assigned));
+      continue;
+    }
+    final kitchen = saved.kitchenRolePrinter;
+    if (kitchen == null) {
+      return const FastPathStationPrinters.refused('no_kitchen_role_printer');
+    }
+    final problem = unusable(kitchen);
+    if (problem != null) {
+      return FastPathStationPrinters.refused('kitchen_role_printer_$problem');
+    }
+    printers.add(toBridgeTarget(kitchen));
+  }
+  return FastPathStationPrinters.resolved(printers);
 }

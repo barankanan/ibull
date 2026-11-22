@@ -122,6 +122,9 @@ class PrintStationService implements PrintStationServicePort {
       PrinterRepository.stationConfigCacheKind,
       restaurantId,
       row == null ? const <Object>[] : <Object>[row],
+      emptyIsAuthoritative: PrinterRepository.emptyAnswerIsAuthoritative(
+        _client,
+      ),
     );
     if (row == null) return null;
     return Map<String, dynamic>.from(row as Map);

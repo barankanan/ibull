@@ -2315,7 +2315,7 @@ void main() {
   );
 
   test(
-    'deletePrinter clears persisted role mappings and station mappings',
+    'deletePrinter clears only the deleted printer\'s role and station mappings',
     () async {
       final fakeRepo = _FakePrinterRepository();
       final fakeStation = _FakePrintStationService();
@@ -2375,16 +2375,22 @@ void main() {
       expect(result.ok, isTrue);
       expect(await fakeRepo.fetchPrinterById('db-receipt'), isNull);
       expect(fakeRepo.stationMappings, isEmpty);
-      expect(fakeStation.savedConfig?['role_mappings'], isEmpty);
+      // The receipt role pointed at the deleted printer: it is cleared.
+      final roles = fakeStation.savedConfig?['role_mappings'] as Map;
+      expect(roles['adisyon'], isNull);
       expect(fakeStation.savedConfig?['adisyon_printer_id'], isNull);
-      expect(fakeStation.savedConfig?['kitchen_printer_id'], isNull);
+      // The kitchen role points at another printer: deleting the receipt
+      // printer must not unmap it.
+      expect(roles['mutfak'], isNotNull);
+      expect(fakeStation.savedConfig?['kitchen_printer_id'], isNotNull);
+      expect(await fakeRepo.fetchPrinterById('db-kitchen'), isNotNull);
 
       final snapshot = await orchestrator.loadSetupSnapshot(
         restaurantId: 'rest-delete',
         forceRefresh: true,
       );
       expect(snapshot.selectedReceiptPrinterId, isNull);
-      expect(snapshot.selectedKitchenPrinterId, isNull);
+      expect(snapshot.selectedKitchenPrinterId, isNotNull);
     },
   );
 

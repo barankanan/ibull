@@ -5067,13 +5067,22 @@ class DesktopPrintOrchestrator {
       );
     }
 
-    await _clearRoleSelectionsFromLocalConfig(restaurantId);
+    // The record is removed first: if that fails (cloud away, refused) the
+    // saved role selections must stay exactly as they were. Only the roles
+    // that pointed at THIS printer are cleared afterwards; deleting a spare
+    // printer never unmaps the receipt or kitchen printer.
+    await _printerRepository.deleteStationPrinterMappingsForPrinter(printerId);
+    await _printerRepository.deletePrinter(printerId);
+    await _clearRoleSelectionsFromLocalConfig(
+      restaurantId,
+      clearReceipt: usedByReceipt,
+      clearKitchen: usedByKitchen,
+    );
     await _clearRoleMappingsFromRemoteConfig(
       restaurantId: restaurantId,
       remoteConfig: remoteConfig,
+      deletedPrinter: legacyPrinter,
     );
-    await _printerRepository.deleteStationPrinterMappingsForPrinter(printerId);
-    await _printerRepository.deletePrinter(printerId);
     _snapshotCache.remove(restaurantId.trim());
     _lastRoleMappingReloadJson.remove(restaurantId);
     _log(
@@ -7496,6 +7505,19 @@ class DesktopPrintOrchestrator {
     return null;
   }
 
+  /// Reads the saved print station configuration (role printers), keeping
+  /// this device's last good copy fresh. Failures are swallowed.
+  Future<void> fetchSavedStationConfig(String restaurantId) async {
+    await _safeFetchRemoteConfig(restaurantId);
+  }
+
+  /// The bridge target of a saved Ethernet printer record.
+  UnifiedPrinterModel ethernetPrinterFromRecord(PrinterModel printer) =>
+      _buildEthernetUnifiedPrinter(
+        printer,
+        os: detectOs(),
+      );
+
   UnifiedPrinterModel _buildEthernetUnifiedPrinter(
     PrinterModel legacyPrinter, {
     required DesktopPrinterOs os,
@@ -9581,16 +9603,21 @@ class DesktopPrintOrchestrator {
     return hasUsb && hasCups;
   }
 
-  Future<void> _clearRoleSelectionsFromLocalConfig(String restaurantId) async {
+  Future<void> _clearRoleSelectionsFromLocalConfig(
+    String restaurantId, {
+    required bool clearReceipt,
+    required bool clearKitchen,
+  }) async {
+    if (!clearReceipt && !clearKitchen) return;
     final current = await _loadLocalConfig(restaurantId);
     if (current == null) return;
     final updated = PrinterSetupLocalConfig(
       restaurantId: current.restaurantId,
       os: current.os,
-      receiptSelection: null,
-      kitchenSelection: null,
-      receiptTest: null,
-      kitchenTest: null,
+      receiptSelection: clearReceipt ? null : current.receiptSelection,
+      kitchenSelection: clearKitchen ? null : current.kitchenSelection,
+      receiptTest: clearReceipt ? null : current.receiptTest,
+      kitchenTest: clearKitchen ? null : current.kitchenTest,
       savedAt: DateTime.now(),
       lastCloudWarning: current.lastCloudWarning,
       thisDeviceIsPrintStation: current.thisDeviceIsPrintStation,
@@ -9598,19 +9625,68 @@ class DesktopPrintOrchestrator {
     await _saveLocalConfig(updated);
   }
 
+  /// Which cloud role slots point at [printer]. Visible for the delete path
+  /// only: a role that points elsewhere is never touched.
+  ({bool receipt, bool kitchen}) _remoteRolesUsingPrinter(
+    Map<String, dynamic> remoteConfig,
+    PrinterModel printer,
+  ) {
+    bool uses(PrinterSetupRole role, String legacyIdField) {
+      final legacyId = remoteConfig[legacyIdField]?.toString().trim() ?? '';
+      if (legacyId.isNotEmpty && legacyId == printer.id.trim()) return true;
+      final mappings = remoteConfig['role_mappings'];
+      if (mappings is! Map) return false;
+      final roleMap = mappings[role.value];
+      if (roleMap is! Map) return false;
+      try {
+        return _printerMatchesRoleSelection(
+          printer,
+          UnifiedPrinterModel.fromJson(Map<String, dynamic>.from(roleMap)),
+        );
+      } catch (_) {
+        return false;
+      }
+    }
+
+    return (
+      receipt: uses(PrinterSetupRole.adisyon, 'adisyon_printer_id'),
+      kitchen: uses(PrinterSetupRole.mutfak, 'kitchen_printer_id'),
+    );
+  }
+
   Future<void> _clearRoleMappingsFromRemoteConfig({
     required String restaurantId,
     required Map<String, dynamic>? remoteConfig,
+    PrinterModel? deletedPrinter,
   }) async {
     if (remoteConfig == null) return;
+    // No printer given = full reset (operator confirmed): both roles go.
+    final roles = deletedPrinter == null
+        ? (receipt: true, kitchen: true)
+        : _remoteRolesUsingPrinter(remoteConfig, deletedPrinter);
+    if (!roles.receipt && !roles.kitchen) return;
+    final existing = remoteConfig['role_mappings'];
+    final nextMappings = deletedPrinter != null && existing is Map
+        ? Map<String, dynamic>.from(existing)
+        : <String, dynamic>{};
     final fields = <String, dynamic>{
-      'role_mappings': <String, dynamic>{},
-      'adisyon_printer_id': null,
-      'adisyon_printer_name': null,
-      'kitchen_printer_id': null,
-      'kitchen_printer_name': null,
       'updated_at': DateTime.now().toIso8601String(),
     };
+    if (roles.receipt && deletedPrinter != null) {
+      nextMappings[PrinterSetupRole.adisyon.value] = null;
+    }
+    if (roles.kitchen && deletedPrinter != null) {
+      nextMappings[PrinterSetupRole.mutfak.value] = null;
+    }
+    if (roles.receipt) {
+      fields['adisyon_printer_id'] = null;
+      fields['adisyon_printer_name'] = null;
+    }
+    if (roles.kitchen) {
+      fields['kitchen_printer_id'] = null;
+      fields['kitchen_printer_name'] = null;
+    }
+    fields['role_mappings'] = nextMappings;
     try {
       await _printStationService.patchStationConfiguration(
         restaurantId: restaurantId,
