@@ -1150,3 +1150,10 @@ Kapsam: kayıt kalıcılığı, otomatik servis başlatma, yeniden bağlantı g�
 - Köprü `unittest` (derleme ortamıyla): 220 test, 19 başarısız = HEAD ile birebir aynı 19.
 - Yeni uygulama derlemesi (209,3 MB, imza OK; gömülü yardımcı `com.ibul.sellerdesktop.printbridge`, app-sandbox + inherit). Gerçek uygulama: açılışta 11 sn'de tek köprü + LAN merkezi, `/health` ok, yazıcıya bağlantı yoklaması açık, yeni baskı kaydı yok; çıkışta ikisi de kapandı. PASS.
 - Gerçek uygulamada DOĞRULANMADI: belirsiz fişin tutulması ve operatör onaylı yeniden baskı (fiziksel baskı gerektirir).
+
+### P15 devam (01:29) — kullanıcı onaylı TEK fiziksel test fişi (yeni köprülü derleme)
+- Açılış: otomatik başlatma ile merkez hazır, şerit "Yazıcı Hazır", özet 1/1 bağlı. Baskı öncesi köprü kaydı 35 giriş (son: 22 Kas 16:33).
+- Yazıcı Merkezi → Kayıtlı Yazıcılar → `aa` → **Test** (tek tık). Bu bağlantı pencere açmadan doğrudan yazıcı test fişi gönderiyor (`job_name=ibul-test-receipt`, `document_type=receipt`) — planlanan "Mutfak Genel" fişi DEĞİL; onay tek fiş için olduğundan ikinci fiş gönderilmedi.
+- Köprü: 01:29:54 tek yeni giriş (36), hedef `tcp:192.168.10.100:9100`, `queue_status=completed`, `success=True`; 20 sn sonra da 36 (tekrar yok).
+- **Kâğıt çıktısı DOĞRULANMADI** (TCP yazımı kâğıt kanıtı değildir); kullanıcı teyidi bekleniyor.
+- Hâlâ yapılmadı: mutfak/istasyon fişi ve gerçek sipariş (TEST 15), belirsiz fişin tutulması ve operatör onaylı yeniden baskı, Mac yeniden başlatma, yazıcı kapat/aç, internet kes/aç.
