@@ -1142,3 +1142,11 @@ Kapsam: kayıt kalıcılığı, otomatik servis başlatma, yeniden bağlantı g�
 - Kısmi çok istasyonlu başarısızlıkta yerel/bulut tekilleştirme anahtarı uyuşmazlığı (yerel `name`, bulut `product_name`) incelendi, düzeltilmedi.
 - Durum şeridindeki "Yazıcı bağlantısı henüz doğrulanmadı" (hub hazır durumu) ile yeni satır altı "bağlı" bilgisi ayrı kaynaklardan geliyor.
 - **Son tam Flutter çalıştırması (commit `ba1f285`, 01:10–01:21, `--timeout 90s`):** 3300 geçti, 1 atlandı, 49 başarısız; 49'un tamamı `4784f12` kopyasında da başarısız (bu turdan gelen yeni başarısızlık 0).
+
+### P15 devam (01:20–01:30) — köprü yardımcısı yeniden paketlendi (kullanıcı onayıyla PyInstaller kuruldu)
+- Derleme ortamı: `~/IBUL_isolated_build/bridge-venv` (Python 3.14.0, PyInstaller 6.22.3, Pillow 12.2.0, pyusb 1.3.1). Komut: `PYTHON=~/IBUL_isolated_build/bridge-venv/bin/python3 sh local_print_bridge/macos/build_bridge_executable.sh`. Önceki yardımcı: `local_print_bridge/dist/macos/IbulPrintBridge.prev-20261120` (git dışı).
+- **Paketlenmiş köprünün uçtan uca kontrolü ek bir kök neden buldu:** gerçek mutfak yolunun kullandığı `NetworkTcpTransport.print_bytes` hata aşamasını hiç işaretlemiyordu (yalnız modül düzeyi `print_tcp` işaretliyordu). Sonuç: yazma sırasında kopan gönderim ("connection reset", "timed out") köprüde "geçici" sayılıp OTOMATİK yeniden gönderilebiliyordu (çift fiş). Düzeltme: bağlantı hatası `phase=connect`, yazma hatası `phase=write` (`local_print_bridge/network_transport.py`); testler `test_print_failure_outcome.py::NetworkTransportPhaseTests`.
+- Paketlenmiş köprü, özel portta + loopback sahte yazıcıyla (3001'e ve gerçek yazıcıya dokunmadan): kapalı servis 503 + 0 bayt; yazıcıya bağlanılamadı → `retry_safe=true / not_sent`; aynı fiş tekrar gönderilince GERÇEKTEN basıldı; basılmış fiş tekrar gelince bastırıldı (tek fiş). 6/6 PASS.
+- Köprü `unittest` (derleme ortamıyla): 220 test, 19 başarısız = HEAD ile birebir aynı 19.
+- Yeni uygulama derlemesi (209,3 MB, imza OK; gömülü yardımcı `com.ibul.sellerdesktop.printbridge`, app-sandbox + inherit). Gerçek uygulama: açılışta 11 sn'de tek köprü + LAN merkezi, `/health` ok, yazıcıya bağlantı yoklaması açık, yeni baskı kaydı yok; çıkışta ikisi de kapandı. PASS.
+- Gerçek uygulamada DOĞRULANMADI: belirsiz fişin tutulması ve operatör onaylı yeniden baskı (fiziksel baskı gerektirir).

@@ -84,5 +84,55 @@ class PrintFailureOutcomeTests(unittest.TestCase):
         self.assertFalse(bridge_server._http_print_any_uncertain(keys))
 
 
+class NetworkTransportPhaseTests(unittest.TestCase):
+    """The transport the real kitchen path uses must tag the failure phase."""
+
+    def test_connect_failure_is_tagged_connect(self) -> None:
+        import socket as _socket
+
+        from local_print_bridge.network_transport import NetworkTcpTransport
+
+        probe = _socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        dead_port = probe.getsockname()[1]
+        probe.close()  # nothing listens here
+        transport = NetworkTcpTransport("127.0.0.1", dead_port, timeout=0.5)
+        with self.assertRaises(TcpTransportError) as ctx:
+            transport.print_bytes(b"ticket", job_name="t")
+        self.assertEqual(ctx.exception.phase, PHASE_CONNECT)
+        self.assertTrue(bridge_server.print_failure_outcome(ctx.exception)["retry_safe"])
+
+    def test_write_failure_is_tagged_write_and_is_not_transient(self) -> None:
+        from unittest.mock import patch
+
+        from local_print_bridge import network_transport as nt
+        from local_print_bridge.network_transport import (
+            NetworkTcpTransport,
+            write_may_have_started,
+        )
+
+        class _Sock:
+            def settimeout(self, _):
+                pass
+
+            def send(self, _):
+                raise ConnectionResetError("connection reset by peer")
+
+            def close(self):
+                pass
+
+        transport = NetworkTcpTransport("192.0.2.10", 9100, timeout=0.5)
+        with patch.object(nt.socket, "create_connection", return_value=_Sock()):
+            with self.assertRaises(TcpTransportError) as ctx:
+                transport.print_bytes(b"ticket", job_name="t")
+        self.assertEqual(ctx.exception.phase, PHASE_WRITE)
+        self.assertTrue(write_may_have_started(ctx.exception))
+        self.assertFalse(bridge_server.print_failure_outcome(ctx.exception)["retry_safe"])
+        # "connection reset" used to look transient: the bridge resent the
+        # ticket by itself. With the phase tagged it never does.
+        handler = object.__new__(bridge_server.PrintBridgeHandler)
+        self.assertFalse(handler._is_transient_transport_error(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -269,13 +269,18 @@ class NetworkTcpTransport:
             t_connected = time.monotonic()
         except OSError as exc:
             error = _classify_oserror(exc, self.host, self.port)
+            # Nothing was written: this ticket is certainly not on paper.
+            error.phase = PHASE_CONNECT
             LOGGER.error(
-                "[TCP_PRINT][error] code=%s message=%s",
+                "[TCP_PRINT][error] code=%s phase=%s message=%s",
                 error.code,
+                PHASE_CONNECT,
                 str(exc),
             )
             raise error from exc
 
+        # From here on bytes may be on the printer: a failure must never be
+        # answered by sending the ticket again.
         try:
             sock.settimeout(self.write_timeout)
             total = 0
@@ -292,17 +297,21 @@ class NetworkTcpTransport:
                     total += sent
             t_sent = time.monotonic()
         except TcpTransportError as exc:
+            exc.phase = PHASE_WRITE
             LOGGER.error(
-                "[TCP_PRINT][error] code=%s message=%s",
+                "[TCP_PRINT][error] code=%s phase=%s message=%s",
                 exc.code,
+                PHASE_WRITE,
                 str(exc),
             )
             raise
         except OSError as exc:
             error = _classify_oserror(exc, self.host, self.port)
+            error.phase = PHASE_WRITE
             LOGGER.error(
-                "[TCP_PRINT][error] code=%s message=%s",
+                "[TCP_PRINT][error] code=%s phase=%s message=%s",
                 error.code,
+                PHASE_WRITE,
                 str(exc),
             )
             raise error from exc
