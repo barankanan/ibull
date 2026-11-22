@@ -1141,3 +1141,4 @@ Kapsam: kayıt kalıcılığı, otomatik servis başlatma, yeniden bağlantı g�
 - Yazıcı IP'si değişince kimlik doğrulamalı yeniden bulma: yok (köprü MAC toplamıyor; `printer_identity.py` kullanılmıyor). Kullanıcıya DHCP rezervasyonu öneriliyor.
 - Kısmi çok istasyonlu başarısızlıkta yerel/bulut tekilleştirme anahtarı uyuşmazlığı (yerel `name`, bulut `product_name`) incelendi, düzeltilmedi.
 - Durum şeridindeki "Yazıcı bağlantısı henüz doğrulanmadı" (hub hazır durumu) ile yeni satır altı "bağlı" bilgisi ayrı kaynaklardan geliyor.
+- **Son tam Flutter çalıştırması (commit `ba1f285`, 01:10–01:21, `--timeout 90s`):** 3300 geçti, 1 atlandı, 49 başarısız; 49'un tamamı `4784f12` kopyasında da başarısız (bu turdan gelen yeni başarısızlık 0).
