@@ -539,6 +539,22 @@ Future<bool> awaitWithinRefreshBudget(
   return !timedOut;
 }
 
+/// Bulut erişilemezken basılan adisyonun altına konan not. Ödeme/borç bilgisi
+/// doğrulanamadığı için fiş kesin tahsilat iddiası taşımaz.
+const String kOfflineReceiptNote =
+    'ÇEVRİMDIŞI BİLGİLENDİRME - ÖDEME BİLGİSİ DOĞRULANAMADI';
+
+/// Mevcut alt notu koruyarak, bulut erişilemiyorsa çevrimdışı notunu ekler.
+String receiptFooterForConnectivity({
+  required String existingFooter,
+  required bool cloudReachable,
+}) {
+  final base = existingFooter.trim();
+  if (cloudReachable) return base;
+  if (base.contains(kOfflineReceiptNote)) return base;
+  return base.isEmpty ? kOfflineReceiptNote : '$base\n$kOfflineReceiptNote';
+}
+
 bool shouldSkipManualGarsonRefresh({required bool refreshInProgress}) =>
     refreshInProgress;
 

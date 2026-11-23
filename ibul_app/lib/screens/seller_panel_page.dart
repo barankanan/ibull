@@ -14192,6 +14192,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             ..['order_id'] = activeOrderId
             ..['table_order_id'] = activeOrderId;
       payloadBuildMs = payloadWatch.elapsedMilliseconds;
+      final offlineFooter = receiptFooterForConnectivity(
+        existingFooter: basePayload['footer_note']?.toString() ?? '',
+        cloudReachable: RestaurantConnectivityService.instance.supabaseReachable,
+      );
+      if (offlineFooter.isNotEmpty) basePayload['footer_note'] = offlineFooter;
 
       final stationConfig = await _printStationService.fetchStationConfig(
         sellerId,
