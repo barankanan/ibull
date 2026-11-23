@@ -188,7 +188,6 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
         host?.printBridgeUri != null &&
         _isLoopback(host!.printBridgeUri!) &&
         deviceMayRunLocalPrintBridge(defaultTargetPlatform);
-    final ethernet = _printers.where(_isEthernet).toList(growable: false);
     DateTime? lastSync;
     for (final order in _orders) {
       if (order.syncStatus != RestaurantLocalOrderSyncStatus.synced) continue;
@@ -197,172 +196,242 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
       }
     }
 
+    final serverUp = host?.listening == true;
+    final problemCount =
+        conflicts.length + uncertainOrders.length + failedOrders.length;
+
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
         backgroundColor: Colors.white,
-        foregroundColor: _purple,
+        foregroundColor: const Color(0xFF111827),
         elevation: 0,
-        title: const Text('Yerel Operasyon Merkezi'),
+        scrolledUnderElevation: 0.5,
+        title: const Text(
+          'Yerel Operasyon Merkezi',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
+        ),
         actions: [
           IconButton(
+            tooltip: 'Yenile',
             onPressed: _loading ? null : _reload,
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_rounded),
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // A phone never runs a print bridge: show the computer's center.
-          ListenableBuilder(
-            listenable: WaiterLanLink.instance,
-            builder: (context, _) =>
-                WaiterLanLink.instance.paired &&
-                    !deviceMayRunLocalPrintBridge(defaultTargetPlatform)
-                ? const LanCenterStatusCard()
-                : const SizedBox.shrink(),
-          ),
-          _section('Yerel Operasyon Merkezi', <Widget>[
-            _row('İnternet', connectivity.supabaseReachable ? 'ulaşılıyor' : 'yok'),
-            _row('Yerel ağ', connectivity.hasNetwork ? 'var' : 'yok'),
-            _row(
-              'Yerel sunucu',
-              host?.listening == true ? 'açık · port ${host!.port}' : 'kapalı',
-            ),
-            if (_centerNotice != null) Text(_centerNotice!),
-            Wrap(
-              spacing: 8,
-              children: [
-                if (host?.listening != true)
-                  TextButton(
-                    onPressed: _centerBusy ? null : _startCenter,
-                    child: const Text('Yerel merkezi başlat'),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+            children: [
+              // A phone never runs a print bridge: show the computer's center.
+              ListenableBuilder(
+                listenable: WaiterLanLink.instance,
+                builder: (context, _) =>
+                    WaiterLanLink.instance.paired &&
+                        !deviceMayRunLocalPrintBridge(defaultTargetPlatform)
+                    ? const LanCenterStatusCard()
+                    : const SizedBox.shrink(),
+              ),
+              _section('Merkez durumu', Icons.hub_outlined, <Widget>[
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _statusPill(
+                      'İnternet',
+                      connectivity.supabaseReachable ? 'var' : 'yok',
+                      connectivity.supabaseReachable,
+                    ),
+                    _statusPill(
+                      'Yerel ağ',
+                      connectivity.hasNetwork ? 'var' : 'yok',
+                      connectivity.hasNetwork,
+                    ),
+                    _statusPill(
+                      'Yerel sunucu',
+                      serverUp ? 'açık · port ${host!.port}' : 'kapalı',
+                      serverUp,
+                    ),
+                  ],
+                ),
+                if (_centerNotice != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    _centerNotice!,
+                    style: const TextStyle(color: Color(0xFF475569)),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: serverUp
+                      ? OutlinedButton.icon(
+                          onPressed: _centerBusy ? null : _stopCenter,
+                          icon: const Icon(Icons.stop_circle_outlined),
+                          label: const Text('Yerel merkezi durdur'),
+                        )
+                      : FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _purple,
+                          ),
+                          onPressed: _centerBusy ? null : _startCenter,
+                          icon: const Icon(Icons.play_circle_outline),
+                          label: const Text('Yerel merkezi başlat'),
+                        ),
+                ),
+              ]),
+              _section('Garson cihazları', Icons.phone_iphone_rounded, <Widget>[
+                _row('Şu an bağlı', '${host?.deviceCount ?? 0}'),
+                _row(
+                  'Eşleştirme',
+                  serverUp ? 'bu bilgisayardan yapılabilir' : 'önce merkezi başlatın',
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (serverUp)
+                      FilledButton.tonalIcon(
+                        onPressed: _issueCode,
+                        icon: const Icon(Icons.qr_code_2_rounded),
+                        label: const Text('Garson cihazı bağla'),
+                      ),
+                    TextButton.icon(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => RestaurantLanWaiterPage(
+                              restaurantId: widget.restaurantId,
+                            ),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                      label: const Text('Garson cihazı'),
+                    ),
+                  ],
+                ),
+                if (_pairingLink != null) ...[
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Garson telefonu merkezi kendiliğinden bulamıyorsa bu bağlantı '
+                    'kodunu kullanın: telefonda "Kodla bağla"ya yapıştırın. '
+                    'İki dakika geçerlidir, bir kez kullanılır.',
+                    style: TextStyle(color: Color(0xFF475569)),
+                  ),
+                  const SizedBox(height: 8),
+                  _codeBox(
+                    SelectableText(
+                      _pairingLink!,
+                      key: const Key('lan_pairing_link'),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+                if (_pairingCode != null) ...[
+                  const SizedBox(height: 10),
+                  _codeBox(
+                    SelectableText(
+                      'Kod: $_pairingCode  (2 dakika geçerli, tek kullanımlık)',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ]),
+              LanPairedDevicesSection.forHost(
+                canManageDevices: widget.canManageDevices,
+                staffNames: widget.staffNames,
+              ),
+              _section('Kayıtlı yazıcılar', Icons.print_outlined, <Widget>[
+                if (_printers.isEmpty)
+                  const Text(
+                    'Bu cihazda kayıtlı yazıcı bilgisi yok.',
+                    style: TextStyle(color: Color(0xFF475569)),
                   )
                 else
-                  TextButton(
-                    onPressed: _centerBusy ? null : _stopCenter,
-                    child: const Text('Yerel merkezi durdur'),
+                  for (final printer in _printers)
+                    _printerTile(printer, ethernet: _isEthernet(printer)),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => KitchenPrintManagementPage(
+                            restaurantId: widget.restaurantId,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.settings_outlined, size: 18),
+                    label: const Text('Yazıcı ayarlarını aç'),
                   ),
-              ],
-            ),
-          ]),
-          _section('Garson Bağlantısı', <Widget>[
-            _row('Bağlı cihaz', '${host?.deviceCount ?? 0}'),
-            _row(
-              'Eşleştirme',
-              host?.listening == true ? 'bu bilgisayardan kod üretilebilir' : 'sunucu kapalı',
-            ),
-            if (host?.listening == true)
-              TextButton(
-                onPressed: _issueCode,
-                child: const Text('Garson cihazı bağla'),
-              ),
-            if (_pairingLink != null) ...[
-              const Text(
-                'Garson telefonu merkezi kendiliğinden bulamıyorsa bu bağlantı '
-                'kodunu kullanın: telefonda "Kodla bağla"ya yapıştırın. '
-                'İki dakika geçerlidir, bir kez kullanılır.',
-              ),
-              const SizedBox(height: 8),
-              SelectableText(
-                _pairingLink!,
-                key: const Key('lan_pairing_link'),
-                style: const TextStyle(fontSize: 12),
+                ),
+              ]),
+              _section('Senkron ve siparişler', Icons.sync_rounded, <Widget>[
+                _row(
+                  'Durum',
+                  connectivity.isSyncing ? 'senkron sürüyor' : 'bekliyor',
+                ),
+                _row('Yerel kayıt', '${_orders.length}'),
+                _row('Bekleyen sipariş', '${pendingOrders.length}'),
+                _row(
+                  'Son senkron',
+                  lastSync == null ? 'kayıt yok' : lastSync.toLocal().toString(),
+                ),
+                const SizedBox(height: 4),
+                if (conflicts.isEmpty && pendingOrders.isEmpty)
+                  const Text(
+                    'Bekleyen sipariş, hata veya çakışma yok.',
+                    style: TextStyle(color: Color(0xFF475569)),
+                  ),
+                for (final order in conflicts)
+                  Text(
+                    '${order.localOrderId} · ${order.syncStatus.name}'
+                    '${(order.syncError ?? '').isEmpty ? '' : ' · ${order.syncError}'}',
+                    style: const TextStyle(color: Color(0xFFB91C1C)),
+                  ),
+                for (final order in pendingOrders)
+                  Text('${order.localOrderId} · ${order.syncStatus.name}'),
+              ]),
+              _section(
+                problemCount == 0 ? 'Baskı durumu' : 'Baskı durumu ($problemCount)',
+                Icons.receipt_long_outlined,
+                <Widget>[
+                  if (_reprintNotice != null) Text(_reprintNotice!),
+                  if (uncertainOrders.isEmpty && failedOrders.isEmpty)
+                    const Text(
+                      'Belirsiz veya iletilmemiş fiş yok. Otomatik tekrar kapalı.',
+                      style: TextStyle(color: Color(0xFF475569)),
+                    )
+                  else ...<Widget>[
+                    for (final order in uncertainOrders)
+                      _reprintRow(
+                        order,
+                        'belirsiz · otomatik tekrar yok',
+                        enabled: hostMayPrint,
+                      ),
+                    for (final order in failedOrders)
+                      _reprintRow(
+                        order,
+                        'yazıcıya iletilmedi',
+                        enabled: hostMayPrint,
+                      ),
+                    if (!hostMayPrint)
+                      const Text(
+                        'Yeniden baskı yalnız yazıcı ana bilgisayarında yapılır.',
+                        style: TextStyle(color: Color(0xFF475569)),
+                      ),
+                  ],
+                ],
               ),
             ],
-            if (_pairingCode != null)
-              SelectableText(
-                'Kod: $_pairingCode  (2 dakika geçerli, tek kullanımlık)',
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => RestaurantLanWaiterPage(
-                        restaurantId: widget.restaurantId,
-                      ),
-                    ),
-                  );
-                },
-                child: const Text('Garson cihazı'),
-              ),
-            ),
-          ]),
-          LanPairedDevicesSection.forHost(
-            canManageDevices: widget.canManageDevices,
-            staffNames: widget.staffNames,
           ),
-          _section('Ethernet Yazıcı Yönetimi', <Widget>[
-            if (ethernet.isEmpty)
-              const Text('Kayıtlı Ethernet yazıcı yok.')
-            else
-              for (final printer in ethernet)
-                Text(_printerLabel(printer)),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => KitchenPrintManagementPage(
-                        restaurantId: widget.restaurantId,
-                      ),
-                    ),
-                  );
-                },
-                child: const Text('Mevcut yazıcı ayarları'),
-              ),
-            ),
-          ]),
-          _section('Senkronizasyon Durumu', <Widget>[
-            _row('Durum', connectivity.isSyncing ? 'senkron sürüyor' : 'bekliyor'),
-            _row('Kuyruk', '${_orders.length} kayıt'),
-            _row(
-              'Son senkron',
-              lastSync == null ? 'kayıt yok' : lastSync.toLocal().toString(),
-            ),
-            if (conflicts.isEmpty)
-              const Text('Hata veya çakışma yok.')
-            else
-              for (final order in conflicts)
-                Text(
-                  '${order.localOrderId} · ${order.syncStatus.name}'
-                  '${(order.syncError ?? '').isEmpty ? '' : ' · ${order.syncError}'}',
-                ),
-          ]),
-          _section('Bekleyen Siparişler', <Widget>[
-            if (pendingOrders.isEmpty)
-              const Text('Bekleyen sipariş yok.')
-            else
-              for (final order in pendingOrders)
-                Text('${order.localOrderId} · ${order.syncStatus.name}'),
-          ]),
-          _section('Belirsiz Baskılar', <Widget>[
-            if (_reprintNotice != null) Text(_reprintNotice!),
-            if (uncertainOrders.isEmpty && failedOrders.isEmpty)
-              const Text('Belirsiz veya iletilmemiş fiş yok. Otomatik tekrar kapalı.')
-            else ...<Widget>[
-              for (final order in uncertainOrders)
-                _reprintRow(
-                  order,
-                  'belirsiz · otomatik tekrar yok',
-                  enabled: hostMayPrint,
-                ),
-              for (final order in failedOrders)
-                _reprintRow(
-                  order,
-                  'yazıcıya iletilmedi',
-                  enabled: hostMayPrint,
-                ),
-              if (!hostMayPrint)
-                const Text('Yeniden baskı yalnız yazıcı ana bilgisayarında yapılır.'),
-            ],
-          ]),
-        ],
+        ),
       ),
     );
   }
@@ -441,33 +510,113 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
     return uri.scheme == 'http' && (host == '127.0.0.1' || host == 'localhost');
   }
 
-  String _printerLabel(Map<String, dynamic> printer) {
-    final name = printer['name'] ?? printer['label'] ?? printer['id'] ?? 'Yazıcı';
-    final backend = printer['backend'] ?? printer['connection'] ?? printer['transport'] ?? '';
-    return '$name · $backend';
-  }
-
-  Widget _section(String title, List<Widget> children) {
+  Widget _section(String title, IconData icon, List<Widget> children) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE9D5FF)),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: _purple,
-              fontWeight: FontWeight.w700,
+          Row(
+            children: [
+              Icon(icon, size: 20, color: _purple),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Color(0xFF111827),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _statusPill(String label, String value, bool ok) {
+    final color = ok ? const Color(0xFF15803D) : const Color(0xFFB91C1C);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              '$label: $value',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: color, fontWeight: FontWeight.w600),
             ),
           ),
-          const SizedBox(height: 8),
-          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _codeBox(Widget child) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF5F3FF),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: const Color(0xFFE9D5FF)),
+    ),
+    child: child,
+  );
+
+  Widget _printerTile(Map<String, dynamic> printer, {required bool ethernet}) {
+    final name = '${printer['name'] ?? printer['label'] ?? printer['id'] ?? 'Yazıcı'}';
+    final host = '${printer['host'] ?? printer['ip'] ?? printer['address'] ?? ''}'.trim();
+    final port = '${printer['port'] ?? ''}'.trim();
+    final backend = '${printer['backend'] ?? printer['connection'] ?? printer['transport'] ?? ''}'.trim();
+    final detail = <String>[
+      if (ethernet) 'Ethernet' else if (backend.isNotEmpty) backend,
+      if (host.isNotEmpty) port.isEmpty ? host : '$host:$port',
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          const Icon(Icons.print_rounded, size: 18, color: Color(0xFF64748B)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                if (detail.isNotEmpty)
+                  Text(
+                    detail,
+                    style: const TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 12,
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -485,13 +634,15 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
+          Text(label, style: const TextStyle(color: Color(0xFF475569))),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
-              label,
-              style: const TextStyle(color: Color(0xFF475569)),
+              value,
+              textAlign: TextAlign.end,
+              style: const TextStyle(fontWeight: FontWeight.w700),
             ),
           ),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
         ],
       ),
     );
