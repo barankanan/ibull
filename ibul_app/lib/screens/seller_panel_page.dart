@@ -3018,19 +3018,27 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       // refresh succeeds, the catalog is back; and if a future first-load race
       // happens again, the (bounded) auto-bootstrap can still cover it once.
       _garsonBootstrapRetryCount = 0;
-      await Future.wait<void>(<Future<void>>[
-        _loadStoreTables(
-          silent: false,
-          source: source,
-          forceApply: forceApplyRefresh,
-        ),
-        _loadProductsSnapshot(source: source).then((_) {}),
-        _loadGarsonTableOrdersSnapshot(
-          source: source,
-          showError: true,
-          forceApply: forceApplyRefresh,
-        ).then((_) {}),
-      ]);
+      final finishedInBudget = await awaitWithinRefreshBudget(
+        Future.wait<void>(<Future<void>>[
+          _loadStoreTables(
+            silent: false,
+            source: source,
+            forceApply: forceApplyRefresh,
+          ),
+          _loadProductsSnapshot(source: source).then((_) {}),
+          _loadGarsonTableOrdersSnapshot(
+            source: source,
+            showError: true,
+            forceApply: forceApplyRefresh,
+          ).then((_) {}),
+        ]),
+      );
+      if (!finishedInBudget) {
+        // Bulut yanıt vermedi (ör. internet yok, LAN açık): örtüyü kapat,
+        // son doğrulanmış panoyu koru; kısmi veriyi "yüklendi" sayma.
+        debugPrint('[GarsonManualRefresh][timeout] keeping last good board');
+        return;
+      }
       _ensureGarsonRealtimeMonitoring(_resolveGarsonSellerId());
       if (!mounted) return;
       _hasLoadedGarsonBootstrapData = true;

@@ -518,6 +518,27 @@ bool incomingHasUnseenWaiterCall({
   return false;
 }
 
+/// Elle yenilemenin toplam süre bütçesi. Bulut yanıtı gelmezse (internet yok,
+/// LAN açık) tam ekran "Yenileniyor" örtüsü bu süreden sonra kapanır ve son
+/// doğrulanmış pano korunur.
+const Duration kGarsonManualRefreshBudget = Duration(seconds: 12);
+
+/// [work] bütçe içinde biterse true, bitmezse false döner. Hata fırlatırsa
+/// aynen iletilir. Zaman aşımında iş arka planda sürer; sonucu yok sayılır.
+Future<bool> awaitWithinRefreshBudget(
+  Future<void> work, {
+  Duration budget = kGarsonManualRefreshBudget,
+}) async {
+  var timedOut = false;
+  await work.timeout(
+    budget,
+    onTimeout: () {
+      timedOut = true;
+    },
+  );
+  return !timedOut;
+}
+
 bool shouldSkipManualGarsonRefresh({required bool refreshInProgress}) =>
     refreshInProgress;
 
