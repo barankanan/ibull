@@ -96,6 +96,8 @@ class SellerPanelTopBar extends StatelessWidget {
     this.onNotificationsTap,
     this.onToggleSidebar,
     this.sidebarCollapsed = false,
+    this.onRefresh,
+    this.refreshBusy = false,
   });
 
   final String title;
@@ -104,6 +106,10 @@ class SellerPanelTopBar extends StatelessWidget {
   final VoidCallback? onNotificationsTap;
   final VoidCallback? onToggleSidebar;
   final bool sidebarCollapsed;
+
+  /// Null ise düğme gösterilmez (sayfanın kendi Yenile düğmesi varsa).
+  final VoidCallback? onRefresh;
+  final bool refreshBusy;
 
   @override
   Widget build(BuildContext context) {
@@ -176,6 +182,19 @@ class SellerPanelTopBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
+          if (onRefresh != null)
+            IconButton(
+              key: const ValueKey('seller-top-bar-refresh'),
+              onPressed: refreshBusy ? null : onRefresh,
+              tooltip: 'Yenile',
+              icon: refreshBusy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded, size: 18),
+            ),
           IconButton(
             onPressed: onToggleSidebar,
             tooltip: sidebarCollapsed
@@ -408,6 +427,8 @@ class SellerPanelTabletShell extends StatelessWidget {
     required this.content,
     this.contentBanner,
     this.onNotificationsTap,
+    this.onRefresh,
+    this.refreshBusy = false,
   });
 
   final String title;
@@ -418,6 +439,8 @@ class SellerPanelTabletShell extends StatelessWidget {
   final Widget content;
   final Widget? contentBanner;
   final VoidCallback? onNotificationsTap;
+  final VoidCallback? onRefresh;
+  final bool refreshBusy;
 
   @override
   Widget build(BuildContext context) {
@@ -444,6 +467,8 @@ class SellerPanelTabletShell extends StatelessWidget {
                   sidebarCollapsed: true,
                   onToggleSidebar: () => Scaffold.of(ctx).openDrawer(),
                   onNotificationsTap: onNotificationsTap,
+                  onRefresh: onRefresh,
+                  refreshBusy: refreshBusy,
                 ),
               ),
               Expanded(

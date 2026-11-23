@@ -9187,8 +9187,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           beforeSelect: () => Navigator.of(context).maybePop(),
         ),
         onLogoutTap: _handleSellerLogoutTap,
-        content: _buildContent(),
+        content: _buildKeyedContent(),
         onNotificationsTap: () {},
+        onRefresh: _topBarRefreshVisible(_selectedModule)
+            ? () => unawaited(_refreshCurrentModule())
+            : null,
+        refreshBusy: _topBarRefreshBusy,
         contentBanner: webPrintNoticeBanner,
       );
     } else {
@@ -9200,6 +9204,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           onNotificationsTap: () {},
           sidebarCollapsed: _sidebarCollapsed,
           onToggleSidebar: _toggleSidebar,
+          onRefresh: _topBarRefreshVisible(_selectedModule)
+              ? () => unawaited(_refreshCurrentModule())
+              : null,
+          refreshBusy: _topBarRefreshBusy,
         ),
         sidebar: SellerPanelSidebar(
           items: _buildPanelMenuEntries(),
@@ -9207,7 +9215,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           collapsed: _sidebarCollapsed,
           roleLabel: _staffIdentityLabel,
         ),
-        content: _buildContent(),
+        content: _buildKeyedContent(),
         contentBanner: webPrintNoticeBanner,
       );
     }
@@ -17549,6 +17557,57 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         isError: true,
       ),
     );
+  }
+
+  // ── Ortak sağ üst Yenile (Garson ve Sistem kendi düğmesini taşır) ──────────
+  bool _topBarRefreshBusy = false;
+  int _moduleRefreshEpoch = 0;
+
+  bool _topBarRefreshVisible(SellerModule module) =>
+      module != SellerModule.garson &&
+      module != SellerModule.system &&
+      !_offlineBlocked(module);
+
+  Widget _buildKeyedContent() => KeyedSubtree(
+    key: ValueKey<String>('module-${_selectedModule.name}-$_moduleRefreshEpoch'),
+    child: _buildContent(),
+  );
+
+  Future<void> _refreshCurrentModule() async {
+    if (_topBarRefreshBusy) return;
+    final module = _selectedModule;
+    setState(() => _topBarRefreshBusy = true);
+    try {
+      switch (module) {
+        case SellerModule.dashboard:
+          await _refreshDashboardData(
+            source: 'top_bar_refresh',
+            userInitiated: true,
+          );
+        case SellerModule.products:
+          await _loadProductsSnapshot(source: 'top_bar_refresh');
+        case SellerModule.orders:
+          await _loadSellerOrders();
+        case SellerModule.team:
+          await _loadSubAdminsSnapshot();
+        case SellerModule.store:
+          await _loadStoreProfile();
+        case SellerModule.finance:
+          _dashboardClosedHistorySignature = null;
+          _financeRefreshToken++;
+          await _refreshDashboardData(
+            source: 'top_bar_refresh_finance',
+            userInitiated: true,
+          );
+        default:
+          // Kendi verisini yükleyen gömülü sayfalar: yeniden kurulup tekrar yükler.
+          _moduleRefreshEpoch++;
+      }
+    } catch (error) {
+      debugPrint('[TopBarRefresh] module=${module.name} error=$error');
+    } finally {
+      if (mounted) setState(() => _topBarRefreshBusy = false);
+    }
   }
 
   Widget _buildContent() {
