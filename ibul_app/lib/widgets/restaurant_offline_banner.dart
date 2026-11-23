@@ -173,6 +173,8 @@ class _RestaurantOfflineBannerState extends State<RestaurantOfflineBanner> {
             if (_pendingSyncCount > 0) {
               // Not plain green: the cloud answers but orders are still waiting.
               lines.add(waiterCloudLine(pendingSync: _pendingSyncCount));
+              final authNotice = RestaurantOfflineSyncService.authNotice.value;
+              if (authNotice != null) lines.add(authNotice);
               background = const Color(0xFF2563EB);
             } else {
               // Only the printer notice is left to say.

@@ -949,6 +949,155 @@ void main() {
     expect(await orders.list('rest-sync'), hasLength(1));
   });
 
+  group('Sync auth hold (expired / refused session never fails an order)', () {
+    Future<
+      ({
+        RestaurantOfflineSyncService sync,
+        RestaurantLocalOrderQueueService orders,
+        List<String?> auth,
+        HttpServer server,
+      })
+    >
+    setUpSync({
+      required List<int> statuses,
+      required Future<String> Function({required bool forceRefresh}) tokens,
+    }) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      RestaurantLocalOrderQueueService.clearAllMemoryForTests();
+      final orders = RestaurantLocalOrderQueueService();
+      final host = _host(
+        material,
+        restaurantId: 'rest-auth',
+        branchId: 'branch-1',
+        orders: orders,
+      );
+      await _listen(host, material);
+      addTearDown(host.stop);
+      final auth = <String?>[];
+      var call = 0;
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        await utf8.decoder.bind(request).join();
+        auth.add(request.headers.value(HttpHeaders.authorizationHeader));
+        final status = statuses[call < statuses.length ? call : statuses.length - 1];
+        call++;
+        request.response.statusCode = status;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          status == 200
+              ? jsonEncode(<String, Object?>{'order_id': 'remote-auth', 'order_number': '1'})
+              : '{"error":"unauthorized"}',
+        );
+        await request.response.close();
+      });
+      final now = DateTime.now().toUtc();
+      await orders.enqueue(
+        order: RestaurantLocalOrderRecord(
+          localOrderId: 'local-auth',
+          restaurantId: 'rest-auth',
+          tableId: '4',
+          tableName: 'Masa 4',
+          tableNumber: 4,
+          waiterId: '',
+          waiterName: 'Ali',
+          items: const <Map<String, dynamic>>[
+            <String, dynamic>{'name': 'Çorba', 'quantity': 1, 'price': 40},
+          ],
+          notes: '',
+          total: 40,
+          stationGroups: const <Map<String, dynamic>>[],
+          printStatus: 'pending',
+          syncStatus: RestaurantLocalOrderSyncStatus.pendingSync,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      final connectivity = RestaurantConnectivityService()
+        ..debugSkipNetworkProbes = true
+        ..debugSetConnectivity(
+          hasNetwork: true,
+          supabaseReachable: true,
+          lanHostReachable: true,
+        );
+      addTearDown(connectivity.dispose);
+      final sync = RestaurantOfflineSyncService(
+        orderQueue: orders,
+        connectivityService: connectivity,
+        isolatedEvidenceVerifierUri: Uri.parse('http://127.0.0.1:${server.port}/'),
+        isolatedAccessToken: 'x',
+      )..accessTokenProvider = tokens;
+      return (sync: sync, orders: orders, auth: auth, server: server);
+    }
+
+    test('no usable session: nothing is sent and the order is NOT marked failed', () async {
+      final ctx = await setUpSync(
+        statuses: const [200],
+        tokens: ({required bool forceRefresh}) async =>
+            throw const SyncAuthUnavailable('oturum yenilenemedi'),
+      );
+      final synced = await ctx.sync.syncPendingOrders(restaurantId: 'rest-auth');
+      expect(synced, 0);
+      expect(ctx.auth, isEmpty, reason: 'sunucuya hiçbir istek gitmemeli');
+      final stored = await ctx.orders.getByLocalId(
+        restaurantId: 'rest-auth',
+        localOrderId: 'local-auth',
+      );
+      expect(stored?.syncStatus, RestaurantLocalOrderSyncStatus.pendingSync);
+      expect(stored?.syncError ?? '', isEmpty);
+      expect(RestaurantOfflineSyncService.authNotice.value, contains('Oturum doğrulanamadı'));
+    });
+
+    test('server 401 once: session is refreshed, same order sent once, notice cleared', () async {
+      final refreshes = <bool>[];
+      final ctx = await setUpSync(
+        statuses: const [401, 200],
+        tokens: ({required bool forceRefresh}) async {
+          refreshes.add(forceRefresh);
+          return forceRefresh ? 'a.b.fresh' : 'a.b.stale';
+        },
+      );
+      final synced = await ctx.sync.syncPendingOrders(restaurantId: 'rest-auth');
+      expect(synced, 1);
+      expect(refreshes, [false, true]);
+      expect(ctx.auth, ['Bearer a.b.stale', 'Bearer a.b.fresh']);
+      expect(RestaurantOfflineSyncService.authNotice.value, isNull);
+      expect(await ctx.orders.list('rest-auth'), hasLength(1));
+    });
+
+    test('server keeps refusing: held as pending (not failed), then goes once session is back', () async {
+      var good = false;
+      final ctx = await setUpSync(
+        statuses: const [401, 401, 200],
+        tokens: ({required bool forceRefresh}) async => good ? 'a.b.good' : 'a.b.bad',
+      );
+      expect(await ctx.sync.syncPendingOrders(restaurantId: 'rest-auth'), 0);
+      var stored = await ctx.orders.getByLocalId(
+        restaurantId: 'rest-auth',
+        localOrderId: 'local-auth',
+      );
+      expect(stored?.syncStatus, RestaurantLocalOrderSyncStatus.pendingSync);
+      expect(RestaurantOfflineSyncService.authNotice.value, isNotNull);
+      good = true;
+      expect(await ctx.sync.syncPendingOrders(restaurantId: 'rest-auth'), 1);
+      stored = await ctx.orders.getByLocalId(
+        restaurantId: 'rest-auth',
+        localOrderId: 'local-auth',
+      );
+      expect(stored?.syncStatus, RestaurantLocalOrderSyncStatus.synced);
+      expect(RestaurantOfflineSyncService.authNotice.value, isNull);
+      expect(await ctx.orders.list('rest-auth'), hasLength(1));
+    });
+
+    test('a token that is not a three-part JWT is never sent', () {
+      expect(RestaurantOfflineSyncService.looksLikeJwt(''), isFalse);
+      expect(RestaurantOfflineSyncService.looksLikeJwt('sb_publishable_abc'), isFalse);
+      expect(RestaurantOfflineSyncService.looksLikeJwt('a.b'), isFalse);
+      expect(RestaurantOfflineSyncService.looksLikeJwt('a..c'), isFalse);
+      expect(RestaurantOfflineSyncService.looksLikeJwt('a.b.c'), isTrue);
+    });
+  });
+
   test('legacy pairing box is not the transport and does not leak text', () {
     final box = sealLanBox(
       lanCodeKey('123456'),

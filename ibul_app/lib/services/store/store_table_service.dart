@@ -2029,6 +2029,9 @@ class StoreTableService {
     String? tableLabel,
     String? areaName,
   }) async {
+    // Timing only: tells RPC time from client-side work when a real close is
+    // measured. No ids, amounts or names are logged.
+    final rpcWatch = Stopwatch()..start();
     try {
       final raw = await _supabase
           .rpc(
@@ -2044,6 +2047,7 @@ class StoreTableService {
             ),
           )
           .timeout(tableOrderTimeout);
+      debugPrint('[CloseTiming] rpcMs=${rpcWatch.elapsedMilliseconds}');
       final result = raw is Map
           ? Map<String, dynamic>.from(raw)
           : <String, dynamic>{};

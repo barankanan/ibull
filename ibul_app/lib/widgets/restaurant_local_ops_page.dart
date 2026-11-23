@@ -9,6 +9,7 @@ import 'package:ibul_app/services/restaurant_offline/restaurant_local_cache_serv
 import 'package:ibul_app/services/restaurant_offline/restaurant_local_order_queue_service.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_local_print_queue_service.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_offline_models.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_offline_sync_service.dart' show quarantinedLocalOrderIds;
 import 'package:ibul_app/services/restaurant_offline/lan_staff_probe.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_center_control.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -400,8 +401,10 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
                   ),
                 for (final order in conflicts)
                   Text(
-                    '${_orderLabel(order.localOrderId)} · eşitlenemedi'
-                    '${(order.syncError ?? '').isEmpty ? '' : ' · ${_friendlySyncError(order.syncError)}'}',
+                    quarantinedLocalOrderIds.contains(order.localOrderId)
+                        ? '${_orderLabel(order.localOrderId)} · karantinada, otomatik gönderilmez (kayıt silinmedi)'
+                        : '${_orderLabel(order.localOrderId)} · eşitlenemedi'
+                              '${(order.syncError ?? '').isEmpty ? '' : ' · ${_friendlySyncError(order.syncError)}'}',
                     style: const TextStyle(color: Color(0xFFB91C1C)),
                   ),
                 for (final order in pendingOrders)

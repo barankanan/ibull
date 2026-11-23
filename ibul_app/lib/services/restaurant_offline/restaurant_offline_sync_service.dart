@@ -65,15 +65,64 @@ class RestaurantOfflineSyncService {
   Uri? get _evidenceVerifierUri =>
       resolveEvidenceVerifierUri(isolated: isolatedEvidenceVerifierUri);
 
-  /// The caller's own session token; the verifier checks it with the server.
-  String get _verifierAccessToken {
+  /// Test seam: replaces the session lookup. Production leaves it null.
+  @visibleForTesting
+  Future<String> Function({required bool forceRefresh})? accessTokenProvider;
+
+  /// Why the last run held its orders back for lack of a usable session
+  /// (null when it did not). The banner shows it instead of a raw error.
+  static final ValueNotifier<String?> authNotice = ValueNotifier<String?>(null);
+
+  /// The caller's own session token, refreshed first when it is expired or
+  /// about to be (after an internet cut the stored token is usually stale).
+  /// Never returns something that is not a three-part JWT, so a non-token can
+  /// never reach the server ("Expected 3 parts in JWT"). Throws
+  /// [SyncAuthUnavailable] when no valid session can be had; the order then
+  /// stays queued untouched.
+  Future<String> _freshAccessToken({required bool forceRefresh}) async {
+    final seam = accessTokenProvider;
+    if (seam != null) return seam(forceRefresh: forceRefresh);
     final isolated = isolatedAccessToken?.trim() ?? '';
     if (isolated.isNotEmpty) return isolated;
+    return defaultFreshAccessToken(forceRefresh: forceRefresh);
+  }
+
+  static Future<String> defaultFreshAccessToken({
+    required bool forceRefresh,
+  }) async {
     try {
-      return Supabase.instance.client.auth.currentSession?.accessToken ?? '';
+      final auth = Supabase.instance.client.auth;
+      var session = auth.currentSession;
+      if (session == null) throw const SyncAuthUnavailable('oturum yok');
+      final exp = session.expiresAt;
+      final nearExpiry =
+          session.isExpired ||
+          (exp != null &&
+              DateTime.fromMillisecondsSinceEpoch(exp * 1000).isBefore(
+                DateTime.now().add(const Duration(seconds: 60)),
+              ));
+      if (forceRefresh || nearExpiry) {
+        final refreshed = await auth.refreshSession().timeout(
+          const Duration(seconds: 8),
+        );
+        session = refreshed.session ?? auth.currentSession;
+      }
+      final token = session?.accessToken ?? '';
+      if (!looksLikeJwt(token)) {
+        throw const SyncAuthUnavailable('geçerli oturum belirteci yok');
+      }
+      return token;
+    } on SyncAuthUnavailable {
+      rethrow;
     } catch (_) {
-      return '';
+      throw const SyncAuthUnavailable('oturum yenilenemedi');
     }
+  }
+
+  @visibleForTesting
+  static bool looksLikeJwt(String token) {
+    final parts = token.trim().split('.');
+    return parts.length == 3 && parts.every((p) => p.isNotEmpty);
   }
 
   // Shared by every instance: the banner, the reconnect listener and the
@@ -129,6 +178,7 @@ class RestaurantOfflineSyncService {
 
     _connectivity.setSyncing(true);
     var syncedCount = 0;
+    var authHold = false;
     try {
       for (final order in pending) {
         if (_syncInFlight.contains(order.localOrderId)) continue;
@@ -271,6 +321,13 @@ class RestaurantOfflineSyncService {
             remoteOrderId: remoteOrderId,
           );
           syncedCount++;
+        } on SyncAuthUnavailable catch (hold) {
+          // No usable session: nothing was sent and the order is NOT marked
+          // failed. The rest of the batch would hit the same wall.
+          authNotice.value =
+              'Oturum doğrulanamadı (${hold.reason}). Siparişler cihazda bekliyor; '
+              'internet ve oturum gelince kendiliğinden gönderilir.';
+          authHold = true;
         } catch (error, stackTrace) {
           debugPrint(
             '[RestaurantOfflineSync] failed localOrder=${order.localOrderId} error=$error',
@@ -292,7 +349,9 @@ class RestaurantOfflineSyncService {
         } finally {
           _syncInFlight.remove(order.localOrderId);
         }
+        if (authHold) break;
       }
+      if (!authHold) authNotice.value = null;
     } finally {
       _connectivity.setSyncing(false);
     }
@@ -307,35 +366,42 @@ class RestaurantOfflineSyncService {
     Map<String, dynamic> params,
     String branchId,
   ) async {
-    final client = HttpClient();
-    try {
-      final request = await client.postUrl(_evidenceVerifierUri!);
-      request.headers.contentType = ContentType.json;
-      final token = _verifierAccessToken;
-      if (token.isNotEmpty) {
+    for (var attempt = 0; ; attempt++) {
+      // A 401 is answered once with a forced refresh; a second one means the
+      // server will not accept this session, which is an auth hold, not a
+      // failed order.
+      final token = await _freshAccessToken(forceRefresh: attempt > 0);
+      final client = HttpClient();
+      try {
+        final request = await client.postUrl(_evidenceVerifierUri!);
+        request.headers.contentType = ContentType.json;
         request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+        request.add(
+          utf8.encode(
+            jsonEncode(<String, dynamic>{...params, 'branch_id': branchId}),
+          ),
+        );
+        final response = await request.close().timeout(
+          const Duration(seconds: 8),
+        );
+        final text = await utf8.decoder.bind(response).join();
+        if (response.statusCode == 401) {
+          if (attempt == 0) continue;
+          throw const SyncAuthUnavailable('sunucu oturumu kabul etmedi');
+        }
+        if (response.statusCode >= 400) throw StateError(text);
+        final decoded = jsonDecode(text);
+        final body = decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+        return OrderPrintJobDispatchResult(
+          orderId: body?['order_id']?.toString(),
+          orderNumber: body?['order_number']?.toString(),
+          printJobCount: 0,
+          printJobIds: const <String>[],
+          raw: body ?? const <String, dynamic>{},
+        );
+      } finally {
+        client.close(force: true);
       }
-      request.add(
-        utf8.encode(
-          jsonEncode(<String, dynamic>{...params, 'branch_id': branchId}),
-        ),
-      );
-      final response = await request.close().timeout(
-        const Duration(seconds: 8),
-      );
-      final text = await utf8.decoder.bind(response).join();
-      if (response.statusCode >= 400) throw StateError(text);
-      final decoded = jsonDecode(text);
-      final body = decoded is Map ? Map<String, dynamic>.from(decoded) : null;
-      return OrderPrintJobDispatchResult(
-        orderId: body?['order_id']?.toString(),
-        orderNumber: body?['order_number']?.toString(),
-        printJobCount: 0,
-        printJobIds: const <String>[],
-        raw: body ?? const <String, dynamic>{},
-      );
-    } finally {
-      client.close(force: true);
     }
   }
 
@@ -375,6 +441,14 @@ class RestaurantOfflineSyncService {
       client.close(force: true);
     }
   }
+}
+
+/// Geçerli oturum yok/yenilenemedi: sipariş gönderilmez, hata sayılmaz, kuyrukta kalır.
+class SyncAuthUnavailable implements Exception {
+  const SyncAuthUnavailable(this.reason);
+  final String reason;
+  @override
+  String toString() => 'SyncAuthUnavailable($reason)';
 }
 
 /// Hata almış siparişin yeniden denenmeden önce beklediği süre.
