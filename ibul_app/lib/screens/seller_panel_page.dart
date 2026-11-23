@@ -16044,6 +16044,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         storeId: storeId,
       );
       if (!mounted) return;
+      // Kapatılmış ama sunucudan silinememiş masaların adı yeni misafirlere
+      // geri dönmesin: bekleyen silmeleri süz ve yeniden dene.
+      for (final entry in _pendingTableCustomerClears.entries.toList()) {
+        // Yalnız silinmesi beklenen AYNI müşteri gizlenir; masaya sonradan
+        // seçilen başka müşteri görünür kalır.
+        if (next[entry.key]?.id == entry.value) next.remove(entry.key);
+        unawaited(_retryClearTableCustomer(storeId, entry.key));
+      }
       setState(() => _garsonTableCustomers = next);
     } catch (_) {
       // The board still works without names; nothing is invented.
@@ -16058,6 +16066,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   /// the card for the next guests.
   void _clearGarsonTableCustomerAfterClose(int tableNumber) {
     if (!_garsonTableCustomers.containsKey(tableNumber)) return;
+    final clearedId = _garsonTableCustomers[tableNumber]?.id;
     final storeId = _resolveGarsonSellerId().trim();
     if (mounted) {
       setState(() {
@@ -16067,18 +16076,25 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       });
     }
     if (storeId.isEmpty) return;
-    unawaited(() async {
-      try {
-        await StoreCustomerDirectory().clearTable(
-          storeId: storeId,
-          tableNumber: tableNumber,
-        );
-      } catch (_) {
-        // Could not be cleared on the server: the next reload shows the
-        // stored selection again instead of hiding it.
-        _garsonTableCustomersLoadedAt = null;
-      }
-    }());
+    if (clearedId != null) _pendingTableCustomerClears[tableNumber] = clearedId;
+    unawaited(_retryClearTableCustomer(storeId, tableNumber));
+  }
+
+  // Sunucuda silinene kadar (internet yok vb.) yerelde gizli tutulan masalar.
+  final Map<int, String> _pendingTableCustomerClears = <int, String>{};
+
+  Future<void> _retryClearTableCustomer(String storeId, int tableNumber) async {
+    try {
+      await StoreCustomerDirectory().clearTable(
+        storeId: storeId,
+        tableNumber: tableNumber,
+      );
+      _pendingTableCustomerClears.remove(tableNumber);
+    } catch (_) {
+      // Sunucuda silinemedi: bekleyen listede kalır, sonraki yenilemede
+      // tekrar denenir; ad yeni misafirlere gösterilmez.
+      _garsonTableCustomersLoadedAt = null;
+    }
   }
 
   /// Pen icon on a table card: first name, last name and an optional phone.
