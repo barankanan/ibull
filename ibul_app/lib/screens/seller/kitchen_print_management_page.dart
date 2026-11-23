@@ -497,6 +497,7 @@ class _KitchenPrintManagementPageState
         widget.restaurantId,
       );
       _allPrintersCache = savedPrinters;
+      _persistPrintersToLocalCache(savedPrinters);
       _recheckSavedPrinters();
       final enrichedPrinters = DiscoveredPrinterCatalog.enrichUnifiedCatalog(
         printers: snapshot.printers,
@@ -1755,6 +1756,23 @@ class _KitchenPrintManagementPageState
     await _loadPrintStationState();
   }
 
+  /// Yazıcılar ekranı kayıtlı yazıcıları buluttan okur; Yerel Operasyon
+  /// Merkezi ise yalnız yerel önbelleği okur. Önbellek yalnız köprü
+  /// taramasında yazıldığı için "aa kayıtlı ama merkezde yok" oluyordu.
+  /// Tek kayıt modeli korunur: yeni tablo yok, yalnız aynı önbellek yazılır.
+  void _persistPrintersToLocalCache(List<PrinterModel> printers) {
+    if (printers.isEmpty) return;
+    unawaited(
+      RestaurantOfflineSnapshotSync().upsertFromSellerPanelState(
+        restaurantId: widget.restaurantId,
+        storeName: widget.restaurantId,
+        sellerId: widget.restaurantId,
+        storeCategory: _storeCategory,
+        printers: printers.map((p) => p.toMap()).toList(growable: false),
+      ),
+    );
+  }
+
   Future<List<dynamic>> _loadAssignmentsData() async {
     _logPrinterSettings(
       'Assignments',
@@ -1769,6 +1787,7 @@ class _KitchenPrintManagementPageState
       final stations = results[0] as List<StationModel>;
       final allPrinters = results[1] as List<PrinterModel>;
       _allPrintersCache = allPrinters;
+      _persistPrintersToLocalCache(allPrinters);
       _recheckSavedPrinters();
       final activePrinters = allPrinters
           .where((printer) => printer.isActive)
