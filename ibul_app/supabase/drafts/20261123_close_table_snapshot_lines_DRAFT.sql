@@ -2,6 +2,9 @@
 -- anıp onay vermesi gerekir. Üretimde şu an çalışan close_table_with_history
 -- (md5 ae2bbeeec475e796f5683273b90127c0) order_items'ı hiç okumaz.
 --
+-- İNCELEME NOTU: waiter_name kapatan personelin adıdır (siparişi alan garson
+-- değil); sipariş garsonu archived_orders[0].waiter_id içinde kimlik olarak durur.
+--
 -- Düzeltme: kapanış snapshot'ına sipariş kalemlerini (archived_orders[0].items)
 -- ekler ve başlık toplamı 0 iken kalem birim fiyatlarından türetilen tutarı
 -- kullanır. Geçmiş (zaten kapanmış) kayıtları DEĞİŞTİRMEZ; onlar için istemci
@@ -193,14 +196,18 @@ begin
     from (
       select
         o.id,
-        greatest(
-          coalesce(o.total_amount, 0),
-          coalesce((
+        -- Başlık toplamı kayıtlıysa (>0, indirim dahil) AYNEN kullanılır.
+        -- Yalnız 0 ise kalem birim fiyatlarından türetilir; greatest() indirimli
+        -- hesabı şişirirdi.
+        case
+          when coalesce(o.total_amount, 0) > 0
+            then o.total_amount::numeric(12,2)
+          else coalesce((
             select sum(coalesce(nullif(oi.line_total, 0), nullif(oi.total_price, 0),
                                 oi.unit_price * oi.quantity, 0))
             from public.order_items oi where oi.order_id = o.id
-          ), 0)
-        )::numeric(12,2) as row_total,
+          ), 0)::numeric(12,2)
+        end as row_total,
         to_jsonb(o) || jsonb_build_object('items', coalesce((
           select jsonb_agg(jsonb_build_object(
             'name', oi.product_name,
