@@ -106,7 +106,8 @@ class PrintStationService implements PrintStationServicePort {
           .from('restaurant_print_station_configs')
           .select()
           .eq('restaurant_id', restaurantId.trim())
-          .maybeSingle();
+          .maybeSingle()
+          .timeout(PrinterRepository.cloudReadTimeout);
     } catch (error) {
       // Without the cloud the last configuration read on this device is
       // used, so an offline order can still find its kitchen printer.

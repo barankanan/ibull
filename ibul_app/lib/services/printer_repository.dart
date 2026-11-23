@@ -85,6 +85,11 @@ class PrinterRepository implements PrinterRepositoryPort {
     );
   }
 
+  /// İnternet yokken (LAN açık) bulut okuması süresiz beklemesin: süre dolunca
+  /// mevcut "son iyi kayıt" geri dönüşü devreye girer. Zaman aşımı
+  /// [isCloudUnreachableError] tarafından bulut-erişilemez sayılır.
+  static const Duration cloudReadTimeout = Duration(seconds: 4);
+
   @override
   Future<List<PrinterModel>> fetchPrinters(String restaurantId) async {
     final backendPath =
@@ -98,7 +103,8 @@ class PrinterRepository implements PrinterRepositoryPort {
           .from('printers')
           .select()
           .eq('restaurant_id', restaurantId)
-          .order('created_at', ascending: true);
+          .order('created_at', ascending: true)
+          .timeout(cloudReadTimeout);
       final printers = List<Map<String, dynamic>>.from(
         rows as List,
       ).map(PrinterModel.fromMap).toList(growable: false);
@@ -801,7 +807,8 @@ class PrinterRepository implements PrinterRepositoryPort {
           .from('station_printers')
           .select(selectClause)
           .eq('stations.restaurant_id', restaurantId)
-          .order('created_at', ascending: true);
+          .order('created_at', ascending: true)
+          .timeout(cloudReadTimeout);
       final mappings =
           List<Map<String, dynamic>>.from(
               rows as List,
@@ -963,7 +970,8 @@ class PrinterRepository implements PrinterRepositoryPort {
           .from('restaurant_print_station_configs')
           .select('kitchen_printer_id, kitchen_printer_name, role_mappings')
           .eq('restaurant_id', normalizedRestaurantId)
-          .maybeSingle();
+          .maybeSingle()
+          .timeout(cloudReadTimeout);
     } catch (error) {
       final cached = await lastGoodRowsWhenUnreachable(
         stationConfigCacheKind,
