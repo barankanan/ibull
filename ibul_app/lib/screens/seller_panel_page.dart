@@ -5979,7 +5979,34 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     );
   }
 
+  /// İlk masa yükleme denemesi (başarılı ya da değil) bitene kadar Sistem ve
+  /// mobil masa listesi "Henüz masa kaydı yok" göstermez; gerçek ekranda
+  /// 27 masalı işletmede ilk karelerde bu yanlış boş durum görüldü.
+  bool _storeTablesFetchSettled = false;
+
+  bool get _storeTablesAwaitingFirstFetch =>
+      !_storeTablesFetchSettled && _storeTables.isEmpty;
+
   Future<void> _loadStoreTables({
+    bool silent = false,
+    String source = 'store_tables_load',
+    bool forceApply = false,
+  }) async {
+    try {
+      await _loadStoreTablesImpl(
+        silent: silent,
+        source: source,
+        forceApply: forceApply,
+      );
+    } finally {
+      if (!_storeTablesFetchSettled) {
+        _storeTablesFetchSettled = true;
+        if (mounted) setState(() {});
+      }
+    }
+  }
+
+  Future<void> _loadStoreTablesImpl({
     bool silent = false,
     String source = 'store_tables_load',
     bool forceApply = false,
@@ -11885,7 +11912,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           ),
         ),
         const SizedBox(height: 10),
-        if (_isLoadingStoreTables)
+        if (_isLoadingStoreTables || _storeTablesAwaitingFirstFetch)
           const Center(child: CircularProgressIndicator())
         else if (sellerId.isEmpty)
           _mobileSurfaceCard(
@@ -25709,7 +25736,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 OutlinedButton.icon(
                   onPressed: _printerSettingsRestaurantId.isEmpty
                       ? null
-                      : () {
+                      : () async {
+                          // Personel adları Alt Yöneticiler açılmadıysa boştu ve
+                          // cihaz kartında ham kimlik görünüyordu: kısa süreyle yükle.
+                          if (_subAdmins.isEmpty) {
+                            await _loadSubAdminsSnapshot().timeout(
+                              const Duration(seconds: 2),
+                              onTimeout: () {},
+                            );
+                          }
+                          if (!mounted) return;
+                          // ignore: use_build_context_synchronously
                           Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -25778,7 +25815,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   icon: const Icon(Icons.people_alt_outlined),
                   label: const Text('Garson Analitik'),
                 ),
-                if (tables.isEmpty)
+                if (tables.isEmpty &&
+                    !_isLoadingStoreTables &&
+                    !_storeTablesAwaitingFirstFetch)
                   OutlinedButton.icon(
                     onPressed: _isMutatingStoreTables
                         ? null
@@ -25790,7 +25829,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             ),
           ),
           const SizedBox(height: 16),
-          if (_isLoadingStoreTables)
+          if (_isLoadingStoreTables || _storeTablesAwaitingFirstFetch)
             const Center(child: CircularProgressIndicator())
           else if (sellerId.isEmpty)
             const Center(

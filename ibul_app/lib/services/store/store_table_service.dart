@@ -2101,6 +2101,20 @@ class StoreTableService {
     final resolvedSellerId = _resolveSellerId(sellerId);
     final effectiveClosedAt = (closedAt ?? DateTime.now()).toUtc();
     final recentFrom = effectiveClosedAt.subtract(const Duration(minutes: 15));
+    final Future<Map<String, dynamic>?> storeTableRowFuture = () async {
+      try {
+        final tableRows = await _supabase
+            .from('store_tables')
+            .select()
+            .eq('seller_id', resolvedSellerId)
+            .eq('table_number', tableNumber)
+            .limit(1)
+            .timeout(tableOrderTimeout);
+        final tables = List<Map<String, dynamic>>.from(tableRows as List);
+        if (tables.isNotEmpty) return Map<String, dynamic>.from(tables.first);
+      } catch (_) {}
+      return null;
+    }();
     var recentHistoryRows = const <Map<String, dynamic>>[];
     try {
       recentHistoryRows = List<Map<String, dynamic>>.from(
@@ -2159,20 +2173,9 @@ class StoreTableService {
       closedAt: effectiveClosedAt.toLocal(),
     );
 
-    Map<String, dynamic>? storeTableRow;
-    try {
-      final tableRows = await _supabase
-          .from('store_tables')
-          .select()
-          .eq('seller_id', resolvedSellerId)
-          .eq('table_number', tableNumber)
-          .limit(1)
-          .timeout(tableOrderTimeout);
-      final tables = List<Map<String, dynamic>>.from(tableRows as List);
-      if (tables.isNotEmpty) {
-        storeTableRow = Map<String, dynamic>.from(tables.first);
-      }
-    } catch (_) {}
+    // Masa satırı geçmiş okumasından bağımsızdır: seri beklemek kapanış
+    // sonrası süreyi iki katına çıkarıyordu; ikisi birlikte başlatıldı.
+    final storeTableRow = await storeTableRowFuture;
 
     final identityFields = TableOrderHistoryUtils.historyIdentityForArchive(
       tableNumber: tableNumber,

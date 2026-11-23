@@ -634,7 +634,14 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
   /// "local-order-…-1173607028" gibi ham kimlikler kullanıcıya gösterilmez.
   String _orderLabel(String localOrderId) {
     final id = localOrderId.trim();
-    final tail = id.length > 4 ? id.substring(id.length - 4) : id;
+    final parts = id.split('-');
+    // waiter-<zaman>-<personel>-<uuid…>: ayırt edici kısım zaman damgası;
+    // local-order-<zaman>-<sıra>: sıra. Sonuna bakmak iki garson siparişini
+    // aynı gösteriyordu (ortak uuid sonu).
+    final key = id.startsWith('waiter-') && parts.length > 1
+        ? parts[1]
+        : (parts.isNotEmpty ? parts.last : id);
+    final tail = key.length > 4 ? key.substring(key.length - 4) : key;
     if (id.startsWith('waiter-')) return 'Garson siparişi …$tail';
     return 'Yerel sipariş …$tail';
   }
