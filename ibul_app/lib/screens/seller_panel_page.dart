@@ -17596,28 +17596,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   bool _topBarRefreshBusy = false;
   int _moduleRefreshEpoch = 0;
 
-  /// Gerçek ekranda doğrulanan: bu sayfaların kendi Yenile düğmesi var; ikinci
-  /// bir düğme çizilmez (Genel Bakış, Listeler, Siparişler, AVM, Finans,
-  /// Başarılarım, Yorumlar, Garson, Sistem).
-  bool _moduleHasOwnRefresh(SellerModule module) {
+  /// Ortak üst çubuk Yenile YALNIZ yükleyicisi bilinen, kullanıcı girdisi
+  /// (form/taslak) taşımayan liste sayfalarında çıkar. Gerçek ekranda
+  /// doğrulandı: Genel Bakış, Listeler, Siparişler, AVM, Finans, Başarılarım,
+  /// Yorumlar, Garson ve Sistem kendi Yenile düğmesini taşır (ikincisi çizilmez).
+  /// Mağaza Profili yenilemesi doldurulmuş formu sunucu verisiyle ezerdi;
+  /// Sözleşmeler/Destek/Araç/İndir sayfaları yeniden kurulursa açık formlarını
+  /// kaybeder; bu sayfalarda ortak düğme bilerek yok.
+  bool _topBarRefreshVisible(SellerModule module) {
+    if (_offlineBlocked(module)) return false;
     switch (module) {
-      case SellerModule.dashboard:
-      case SellerModule.collections:
-      case SellerModule.orders:
-      case SellerModule.mallRequests:
-      case SellerModule.finance:
-      case SellerModule.achievements:
-      case SellerModule.reviews:
-      case SellerModule.garson:
-      case SellerModule.system:
+      case SellerModule.products:
+      case SellerModule.team:
+      case SellerModule.campaigns:
         return true;
       default:
         return false;
     }
   }
-
-  bool _topBarRefreshVisible(SellerModule module) =>
-      !_moduleHasOwnRefresh(module) && !_offlineBlocked(module);
 
   Widget _buildKeyedContent() => KeyedSubtree(
     key: ValueKey<String>('module-${_selectedModule.name}-$_moduleRefreshEpoch'),
@@ -17630,29 +17626,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     setState(() => _topBarRefreshBusy = true);
     try {
       switch (module) {
-        case SellerModule.dashboard:
-          await _refreshDashboardData(
-            source: 'top_bar_refresh',
-            userInitiated: true,
-          );
         case SellerModule.products:
           await _loadProductsSnapshot(source: 'top_bar_refresh');
-        case SellerModule.orders:
-          await _loadSellerOrders();
         case SellerModule.team:
           await _loadSubAdminsSnapshot();
-        case SellerModule.store:
-          await _loadStoreProfile();
-        case SellerModule.finance:
-          _dashboardClosedHistorySignature = null;
-          _financeRefreshToken++;
-          await _refreshDashboardData(
-            source: 'top_bar_refresh_finance',
-            userInitiated: true,
-          );
+        case SellerModule.campaigns:
+          await _loadCampaigns();
         default:
-          // Kendi verisini yükleyen gömülü sayfalar: yeniden kurulup tekrar yükler.
-          _moduleRefreshEpoch++;
+          break;
       }
     } catch (error) {
       debugPrint('[TopBarRefresh] module=${module.name} error=$error');
