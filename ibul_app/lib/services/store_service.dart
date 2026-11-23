@@ -693,13 +693,22 @@ class StoreService {
     String sellerId, {
     required String logTag,
   }) async {
+    // Bulut yakın zamanda yanıt vermediyse her sayfa 8 sn beklemesin.
+    if (RestaurantCloudGate.shouldFailFast) {
+      throw TimeoutException('cloud gate open: $logTag');
+    }
     try {
-      return await _supabase
+      final row = await _supabase
           .from('stores')
           .select('$_storeProfileBaseColumns,$_storeProfileReceiptColumns')
           .eq('seller_id', sellerId)
           .maybeSingle()
           .timeout(cloudLookupTimeout);
+      RestaurantCloudGate.noteSuccess();
+      return row;
+    } on TimeoutException {
+      RestaurantCloudGate.noteFailure();
+      rethrow;
     } on PostgrestException catch (error) {
       if (_isUndefinedColumnError(error)) {
         debugPrint(
