@@ -24,6 +24,16 @@ class SellerDashboardSectionLabel extends StatelessWidget {
   }
 }
 
+/// Satır sayısı korunarak sütunlar dengelenir: 6 kart 5 sütuna sığıyorsa
+/// 5+1 yerine 3+3 olur (tek başına kalan kart oluşmaz).
+int balancedGridColumns(int itemCount, int fitColumns) {
+  if (itemCount <= 0 || fitColumns <= 1 || itemCount <= fitColumns) {
+    return math.max(1, math.min(fitColumns, math.max(itemCount, 1)));
+  }
+  final rows = (itemCount / fitColumns).ceil();
+  return (itemCount / rows).ceil();
+}
+
 class SellerDashboardGrid extends StatelessWidget {
   const SellerDashboardGrid({
     super.key,
@@ -40,10 +50,11 @@ class SellerDashboardGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = math.max(
+        final fit = math.max(
           1,
           ((constraints.maxWidth + spacing) / (minItemWidth + spacing)).floor(),
         );
+        final columns = balancedGridColumns(children.length, fit);
         final width =
             (constraints.maxWidth - ((columns - 1) * spacing)) / columns;
         return Wrap(

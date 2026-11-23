@@ -8074,6 +8074,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         if (mounted) {
           setState(() {
             _subAdmins = items;
+            _subAdminsLoadedOnce = true;
           });
           _logSellerPanelStateUpdate(
             'sub_admins_stream',
@@ -8303,6 +8304,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       if (!mounted) return;
       setState(() {
         _subAdmins = items;
+        _subAdminsLoadedOnce = true;
       });
       _logSellerPanel(
         'Fetch',
@@ -8317,6 +8319,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             'subAdmins=${items.length}',
       );
     } catch (error) {
+      if (mounted) setState(() => _subAdminsLoadedOnce = true);
       _logSellerPanel(
         'Error',
         'branch=sub_admins:snapshot_error requestUrl=$requestUrl '
@@ -8325,6 +8328,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       );
     }
   }
+
+  /// İlk personel listesi gelene kadar "0 personel" gösterilmez.
+  bool _subAdminsLoadedOnce = false;
 
   void _refreshProducts() {
     // Stream updates automatically, but we can force reload if needed
@@ -17563,10 +17569,28 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   bool _topBarRefreshBusy = false;
   int _moduleRefreshEpoch = 0;
 
+  /// Gerçek ekranda doğrulanan: bu sayfaların kendi Yenile düğmesi var; ikinci
+  /// bir düğme çizilmez (Genel Bakış, Listeler, Siparişler, AVM, Finans,
+  /// Başarılarım, Yorumlar, Garson, Sistem).
+  bool _moduleHasOwnRefresh(SellerModule module) {
+    switch (module) {
+      case SellerModule.dashboard:
+      case SellerModule.collections:
+      case SellerModule.orders:
+      case SellerModule.mallRequests:
+      case SellerModule.finance:
+      case SellerModule.achievements:
+      case SellerModule.reviews:
+      case SellerModule.garson:
+      case SellerModule.system:
+        return true;
+      default:
+        return false;
+    }
+  }
+
   bool _topBarRefreshVisible(SellerModule module) =>
-      module != SellerModule.garson &&
-      module != SellerModule.system &&
-      !_offlineBlocked(module);
+      !_moduleHasOwnRefresh(module) && !_offlineBlocked(module);
 
   Widget _buildKeyedContent() => KeyedSubtree(
     key: ValueKey<String>('module-${_selectedModule.name}-$_moduleRefreshEpoch'),
@@ -33034,6 +33058,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
     return StaffTeamPanel(
       key: ValueKey('staff-${_authService.currentUser?.id}-$_storeCategory'),
+      loading: !_subAdminsLoadedOnce && _subAdmins.isEmpty,
       kind: kind,
       members: _subAdmins,
       isOwner: _actorIsStoreOwner,

@@ -16,6 +16,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ibul_app/services/restaurant_offline/waiter_lan_link.dart';
 
 import 'lan_center_status_card.dart';
+import 'lan_paired_devices_section.dart' show LanDeviceStatus, lanDeviceStatus;
 import 'lan_paired_devices_section.dart';
 import 'restaurant_lan_waiter_page.dart';
 
@@ -197,8 +198,15 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
     }
 
     final serverUp = host?.listening == true;
-    final problemCount =
-        conflicts.length + uncertainOrders.length + failedOrders.length;
+    final problemCount = uncertainOrders.length + failedOrders.length;
+    final now = DateTime.now();
+    final pairedDevices = (host?.deviceInfos ?? const <LanDeviceInfo>[])
+        .where((d) => lanDeviceStatus(d, now) != LanDeviceStatus.revoked)
+        .toList(growable: false);
+    // "Şu an bağlı" Bağlı Cihazlar kartlarındaki durumla AYNI kaynaktan gelir.
+    final liveDevices = pairedDevices
+        .where((d) => lanDeviceStatus(d, now) == LanDeviceStatus.active)
+        .length;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
@@ -283,7 +291,8 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
                 ),
               ]),
               _section('Garson cihazları', Icons.phone_iphone_rounded, <Widget>[
-                _row('Şu an bağlı', '${host?.deviceCount ?? 0}'),
+                _row('Şu an bağlı', '$liveDevices'),
+                _row('Eşleşmiş cihaz', '${pairedDevices.length}'),
                 _row(
                   'Eşleştirme',
                   serverUp ? 'bu bilgisayardan yapılabilir' : 'önce merkezi başlatın',
@@ -381,7 +390,7 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
                 _row('Bekleyen sipariş', '${pendingOrders.length}'),
                 _row(
                   'Son senkron',
-                  lastSync == null ? 'kayıt yok' : lastSync.toLocal().toString(),
+                  lastSync == null ? 'kayıt yok' : _formatTime(lastSync),
                 ),
                 const SizedBox(height: 4),
                 if (conflicts.isEmpty && pendingOrders.isEmpty)
@@ -391,12 +400,12 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
                   ),
                 for (final order in conflicts)
                   Text(
-                    '${order.localOrderId} · ${order.syncStatus.name}'
-                    '${(order.syncError ?? '').isEmpty ? '' : ' · ${order.syncError}'}',
+                    '${_orderLabel(order.localOrderId)} · eşitlenemedi'
+                    '${(order.syncError ?? '').isEmpty ? '' : ' · ${_friendlySyncError(order.syncError)}'}',
                     style: const TextStyle(color: Color(0xFFB91C1C)),
                   ),
                 for (final order in pendingOrders)
-                  Text('${order.localOrderId} · ${order.syncStatus.name}'),
+                  Text('${_orderLabel(order.localOrderId)} · sırada'),
               ]),
               _section(
                 problemCount == 0 ? 'Baskı durumu' : 'Baskı durumu ($problemCount)',
@@ -443,7 +452,7 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
   }) {
     return Row(
       children: [
-        Expanded(child: Text('${order.localOrderId} · $label')),
+        Expanded(child: Text('${_orderLabel(order.localOrderId)} · $label')),
         TextButton(
           onPressed: !enabled || _loading
               ? null
@@ -485,7 +494,7 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
       final token = 'm${DateTime.now().toUtc().microsecondsSinceEpoch}';
       final created = await queue.operatorReprint(job: job, reprintToken: token);
       final delivered = await queue.deliverToBridge(job: created, bridgeBase: bridge);
-      notices.add('${created.localJobId} · ${_reprintLabel(delivered.status)}');
+      notices.add('${_orderLabel(localOrderId)} · ${_reprintLabel(delivered.status)}');
     }
     if (!mounted) return;
     setState(() => _reprintNotice = notices.join('\n'));
@@ -588,9 +597,9 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
 
   Widget _printerTile(Map<String, dynamic> printer, {required bool ethernet}) {
     final name = '${printer['name'] ?? printer['label'] ?? printer['id'] ?? 'Yazıcı'}';
-    final host = '${printer['host'] ?? printer['ip'] ?? printer['address'] ?? ''}'.trim();
+    final host = '${printer['ip_address'] ?? printer['host'] ?? printer['ip'] ?? printer['address'] ?? ''}'.trim();
     final port = '${printer['port'] ?? ''}'.trim();
-    final backend = '${printer['backend'] ?? printer['connection'] ?? printer['transport'] ?? ''}'.trim();
+    final backend = '${printer['backend'] ?? printer['connection'] ?? printer['transport'] ?? printer['connection_type'] ?? ''}'.trim();
     final detail = <String>[
       if (ethernet) 'Ethernet' else if (backend.isNotEmpty) backend,
       if (host.isNotEmpty) port.isEmpty ? host : '$host:$port',
@@ -622,11 +631,42 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
     );
   }
 
+  /// "local-order-…-1173607028" gibi ham kimlikler kullanıcıya gösterilmez.
+  String _orderLabel(String localOrderId) {
+    final id = localOrderId.trim();
+    final tail = id.length > 4 ? id.substring(id.length - 4) : id;
+    if (id.startsWith('waiter-')) return 'Garson siparişi …$tail';
+    return 'Yerel sipariş …$tail';
+  }
+
+  /// Sunucudan gelen ham JSON/istisna metni yerine anlaşılır Türkçe açıklama.
+  String _friendlySyncError(String? raw) {
+    final text = (raw ?? '').toLowerCase();
+    if (text.contains('jwt') || text.contains('pgrst301') || text.contains('401')) {
+      return 'sunucu oturumu doğrulanamadı, bağlantı gelince yeniden denenir';
+    }
+    if (text.contains('timeout') || text.contains('timed out')) {
+      return 'sunucu yanıt vermedi';
+    }
+    if (text.contains('socket') || text.contains('network') || text.contains('connection')) {
+      return 'bağlantı kurulamadı';
+    }
+    return 'eşitleme hatası; ayrıntı günlüğe yazıldı';
+  }
+
+  String _formatTime(DateTime time) {
+    final t = time.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(t.day)}.${two(t.month)}.${t.year} ${two(t.hour)}:${two(t.minute)}';
+  }
+
   bool _isEthernet(Map<String, dynamic> printer) {
     final backend =
-        '${printer['backend'] ?? ''} ${printer['connection'] ?? ''} ${printer['transport'] ?? ''}'
+        '${printer['backend'] ?? ''} ${printer['connection'] ?? ''} ${printer['transport'] ?? ''} ${printer['connection_type'] ?? ''}'
             .toLowerCase();
-    return backend.contains('tcp') || backend.contains('ethernet');
+    return backend.contains('tcp') ||
+        backend.contains('ethernet') ||
+        backend.contains('network');
   }
 
   Widget _row(String label, String value) {

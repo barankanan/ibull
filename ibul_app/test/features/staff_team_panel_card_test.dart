@@ -16,6 +16,7 @@ SubAdmin _member(String id, String name, {String status = 'active'}) =>
 Future<List<String>> _pump(
   WidgetTester tester, {
   required Size size,
+  bool loading = false,
   bool isOwner = true,
   bool canManage = true,
   List<SubAdmin>? members,
@@ -29,6 +30,7 @@ Future<List<String>> _pump(
       home: Scaffold(
         body: SizedBox.expand(
           child: StaffTeamPanel(
+            loading: loading,
             kind: StaffBusinessKind.restaurant,
             members: members ??
                 <SubAdmin>[
@@ -119,4 +121,39 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('ilk yükleme sürerken sahte "0 personel" yerine yükleniyor gösterilir', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox.expand(
+            child: StaffTeamPanel(
+              loading: true,
+              kind: StaffBusinessKind.restaurant,
+              members: const <SubAdmin>[],
+              isOwner: true,
+              heldPermissions: const <String>{},
+              loadBranches: () async => const <Map<String, dynamic>>[],
+              onCreate: (_) async {},
+              onEdit: (_, _) async {},
+              onDeactivate: (_) async {},
+              onDelete: (_) async {},
+              onActivate: (_) async {},
+              canDelete: (_) => null,
+              canManage: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Bu işletmede personel yok.'), findsNothing);
+    expect(find.text('Personel'), findsNothing);
+  });
 }

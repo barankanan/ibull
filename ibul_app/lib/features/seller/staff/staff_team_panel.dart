@@ -35,7 +35,11 @@ class StaffTeamPanel extends StatefulWidget {
     required this.canDelete,
     required this.canManage,
     this.onSetPassword,
+    this.loading = false,
   });
+
+  /// Liste henüz ilk kez yüklenmediyse sahte "0 personel" yerine yükleniyor gösterilir.
+  final bool loading;
 
   final StaffBusinessKind kind;
   final List<SubAdmin> members;
@@ -163,9 +167,11 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
           spacing: 8,
           runSpacing: 8,
           children: [
-            _stat('Personel', widget.members.length),
-            _stat('Aktif', _countStatus('active'), color: const Color(0xFF15803D)),
-            _stat('Pasif', _countStatus('inactive')),
+            if (!widget.loading) ...[
+              _stat('Personel', widget.members.length),
+              _stat('Aktif', _countStatus('active'), color: const Color(0xFF15803D)),
+              _stat('Pasif', _countStatus('inactive')),
+            ],
           ],
         ),
         const SizedBox(height: 12),
@@ -233,7 +239,9 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
           ),
         const SizedBox(height: 12),
         Expanded(
-          child: visible.isEmpty
+          child: widget.loading && widget.members.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : visible.isEmpty
               ? const Center(child: Text('Bu işletmede personel yok.'))
               : ListView.separated(
                   itemCount: visible.length,
@@ -426,7 +434,9 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '$title · ${branchName ?? 'Şube yok'}',
+                      branchName == null
+                          ? title
+                          : '$title · $branchName',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
