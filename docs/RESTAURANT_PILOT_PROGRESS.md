@@ -1166,3 +1166,21 @@ Kapsam: kayıt kalıcılığı, otomatik servis başlatma, yeniden bağlantı g�
 - **Kâğıt çıktısı DOĞRULANMADI** (kullanıcı teyidi bekleniyor). Bahçe 1 siparişi AÇIK bırakıldı; kapatma/iptal kullanıcıya ait.
 - Not: dünkü köprü günlüğünde (22 Kas 16:14:58 zaman aşımı → 16:14:59 aynı işin yeniden gönderimi) bu turda düzeltilen "yazma/zaman aşımı sonrası otomatik tekrar" davranışının izi görülüyor.
 - **Kâğıt teyidi (kullanıcı beyanı, 2026-11-23):** 01:32:17'deki Bahçe 1 mutfak fişi yazıcıdan TEK kâğıt olarak çıktı. Kanıt: kullanıcı gözlemi + köprüde tek `completed` kaydı → TEST 15 (gerçek sipariş → kayıtlı istasyon yazıcısı, tek fiş): **PASS** (tek yazıcılı kurulumda). Çok yazıcılı yönlendirme gerçek cihazda denenmedi. Bahçe 1 siparişi açık; kullanıcı kapatacak.
+
+
+## 2026-11-23 — Üretim güvenliği: `table_order_history` yazma sertleştirmesi (VERIFIED, salt-okunur)
+
+- **Uygulama yolu:** Operatör SQL'i Supabase Dashboard → SQL Editor'den elle çalıştırdı (sonuç "Success. No rows returned"). Claude `apply_migration` denemesi reddedildi; başka yolla uygulanmadı. Proje `ihmixxzqnpamcwmrfibx`.
+- **Doğrulama (yalnız katalog/fonksiyon tanımı, veri değiştirilmedi):**
+  1. `table_order_history_staff_update_guard` BEFORE UPDATE, `tgenabled=O`; fonksiyon gövdesi taslakla birebir.
+  2. `audit_table_order_history_change()` + `table_order_history_audit_trg` (AFTER UPDATE/DELETE) mevcut, etkin.
+  3. `table_order_history_audit`: RLS açık; authenticated yalnız SELECT; politika `seller_id = auth.uid()`; anon yetkisi yok. Satır sayısı 0 (henüz değişiklik/silme olmadı).
+  4. `table_order_history`: anon yetkisi yok; authenticated DELETE/INSERT/SELECT/UPDATE (TRUNCATE/TRIGGER/REFERENCES kalktı).
+  5. `close_table_orders` ve `close_table_with_history`: anon ve public EXECUTE yok; authenticated + service_role var. `close_table_orders` gövdesi `restaurant_staff_may_operate(…,'closeBill',…)` çağırıyor.
+  6. `guard_restaurant_staff_order_write` ve tüm RLS politikaları (restrictive okuma koruması, owner insert/select, update/delete) değişmedi.
+  7. Meşru yollar: sahip (`auth.uid()=seller_id`) tetikleyiciden muaf; personel kimlik/etiket alanını güncelleyebilir; DELETE hâlâ `closeBill` ister; `close_table_with_history` yalnız INSERT yapar, değişmedi. Sunucuda geçmişi UPDATE eden fonksiyon yok.
+  8. Diğer işletme izolasyonu politika koşullarından (`seller_id = auth.uid()` / `user_can_access_restaurant`) korunuyor.
+- **Küçük not:** `guard_*`/`audit_*` tetikleyici fonksiyonlarında anon EXECUTE var (tetikleyici fonksiyonu doğrudan RPC ile çağrılamaz; önceden de böyleydi). İstenirse ayrı kapatılabilir.
+- **NOT VERIFIED:** Gerçek kullanıcı oturumlarıyla (sahip, `viewOrders`, `manageOrders`, `closeBill`, başka işletme) uygulama içi yetki testi; masa kapatma ve geçmiş ekranı gerçek uygulamada.
+- **Migration geçmişi:** `supabase_migrations.schema_migrations` bu SQL'i içermiyor (son kayıt `20261120090000_lan_staff_authority`). Elle uygulandığı için beklenen durum. Uzlaştırma önerisi: dosya `migrations/` altına aynı adla alınıp `supabase migration repair --status applied <sürüm>` ile işaretlenmeli (şema değiştirmez). Yapılmadı; operatör kararı.
+- **Diğer bekleyen migration'lara onay DEĞİLDİR:** yazıcı personel izni, geçmiş snapshot, fiyat otoritesi, çevrimdışı masa kapatma ayrı doğrulama/onay bekler.
