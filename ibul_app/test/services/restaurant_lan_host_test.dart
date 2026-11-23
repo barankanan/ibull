@@ -6,9 +6,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/services/restaurant_offline/lan_authority_seal.dart';
 import 'package:ibul_app/services/restaurant_offline/lan_channel.dart';
+import 'package:ibul_app/services/restaurant_offline/lan_pilot_contract.dart';
 import 'package:ibul_app/services/restaurant_offline/lan_staff_probe.dart';
 import 'package:ibul_app/services/restaurant_offline/lan_tls.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_connectivity_service.dart';
+import 'package:ibul_app/services/order_print_job_service.dart';
+import 'package:ibul_app/services/kitchen_routing_service.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_local_cache_service.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_lan_host.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_offline_order_router.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_local_order_queue_service.dart';
@@ -511,6 +515,363 @@ void main() {
     expect(denied['status'], 401);
     expect(denied['error'], 'Personel daha önce doğrulanmadı.');
     expect(denied['error'], isNot('Personel sunucusuna ulaşılamadı.'));
+  });
+
+  group('center\'s own order: saved first, ticket tracked separately', () {
+    const items = <Map<String, dynamic>>[
+      <String, dynamic>{
+        'product_id': 'corba',
+        'name': 'Çorba',
+        'quantity': 1,
+        'price': 40,
+      },
+    ];
+
+    Future<
+      ({
+        RestaurantOfflineOrderRouter router,
+        RestaurantLocalOrderQueueService orders,
+        _GatedPrintService printer,
+      })
+    >
+    open(
+      String restaurantId, {
+      Duration budget = const Duration(milliseconds: 60),
+      RestaurantLocalOrderQueueService? orders,
+    }) async {
+      final queue = orders ?? RestaurantLocalOrderQueueService();
+      final host = _host(material, restaurantId: restaurantId, orders: queue);
+      await _listen(host, material);
+      addTearDown(host.stop);
+      await RestaurantLocalCacheService().write(
+        RestaurantLocalCacheSnapshot(
+          restaurantId: restaurantId,
+          restaurantName: 'Test',
+          sellerId: restaurantId,
+          storeCategory: 'Restoran',
+          tables: const <Map<String, dynamic>>[],
+          tableOrderSnapshots: const <Map<String, dynamic>>[],
+          products: const <Map<String, dynamic>>[
+            <String, dynamic>{'id': 'corba', 'name': 'Çorba', 'price': 40},
+          ],
+          stations: const <Map<String, dynamic>>[],
+          printers: const <Map<String, dynamic>>[],
+          stationPrinters: const <Map<String, dynamic>>[],
+          printerRoles: const <String, dynamic>{},
+          printerProfiles: const <String, dynamic>{},
+          productStationMappings: const <String, dynamic>{},
+          discoveredPrinters: const <Map<String, dynamic>>[],
+          lastSetupSnapshot: const <String, dynamic>{},
+          cachedAt: DateTime.now(),
+        ),
+      );
+      final printer = _GatedPrintService();
+      final connectivity = RestaurantConnectivityService()
+        ..debugSkipNetworkProbes = true
+        ..debugSetConnectivity(
+          hasNetwork: false,
+          supabaseReachable: false,
+          bridgeReachable: true,
+        );
+      addTearDown(connectivity.dispose);
+      final router = RestaurantOfflineOrderRouter(
+        connectivityService: connectivity,
+        orderQueueService: queue,
+        orderPrintJobService: printer,
+        localPrintAnswerBudget: budget,
+      );
+      return (router: router, orders: queue, printer: printer);
+    }
+
+    Future<RestaurantLocalOrderRecord?> waitFor(
+      RestaurantLocalOrderQueueService orders,
+      String restaurantId,
+      String localOrderId,
+      bool Function(RestaurantLocalOrderRecord) done,
+    ) async {
+      for (var i = 0; i < 200; i++) {
+        final row = await orders.getByLocalId(
+          restaurantId: restaurantId,
+          localOrderId: localOrderId,
+        );
+        if (row != null && done(row)) return row;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      return null;
+    }
+
+    test('a slow ticket does not hold the send: saved, ticket pending, then '
+        'the real result is recorded and nothing prints twice', () async {
+      const rid = 'own-slow';
+      final t = await open(rid);
+      final watch = Stopwatch()..start();
+      final result = await t.router.dispatchOfflineOrder(
+        restaurantId: rid,
+        tableNumber: 10,
+        items: items,
+        localOrderId: 'waiter-slow-1',
+        tableName: 'Bahçe 4',
+      );
+      expect(watch.elapsedMilliseconds, lessThan(2000));
+      expect(result.dispatchPath, 'offline_local_queue_print_pending');
+      expect(result.physicallyDispatched, isFalse);
+      expect(result.printFailureMessage, isNull);
+      expect(result.raw['print_status'], 'pending');
+      final saved = await t.orders.getByLocalId(
+        restaurantId: rid,
+        localOrderId: 'waiter-slow-1',
+      );
+      expect(saved, isNotNull, reason: 'saved before the ticket settles');
+      expect(saved!.printStatus, 'pending');
+      expect(saved.total, 40);
+
+      // While the ticket is on its way the sync leaves the order alone.
+      expect(localTicketsInFlight, contains('waiter-slow-1'));
+      expect(
+        selectOrdersForSync(<RestaurantLocalOrderRecord>[
+          saved,
+        ], now: DateTime.now()),
+        isEmpty,
+      );
+
+      // The same send repeated ten times: one record, no second print call.
+      for (var i = 0; i < 10; i++) {
+        final again = await t.router.dispatchOfflineOrder(
+          restaurantId: rid,
+          tableNumber: 10,
+          items: items,
+          localOrderId: 'waiter-slow-1',
+          tableName: 'Bahçe 4',
+        );
+        expect(again.raw['duplicate'], isTrue);
+      }
+      expect((await t.orders.list(rid)), hasLength(1));
+      expect(t.printer.calls, 1);
+
+      t.printer.gate.complete();
+      final printed = await waitFor(
+        t.orders,
+        rid,
+        'waiter-slow-1',
+        (row) => row.printStatus == 'printed',
+      );
+      expect(printed, isNotNull, reason: 'late result reaches the journal');
+      expect(localTicketsInFlight, isNot(contains('waiter-slow-1')));
+      expect(
+        selectOrdersForSync(<RestaurantLocalOrderRecord>[
+          printed!,
+        ], now: DateTime.now()),
+        hasLength(1),
+      );
+      expect(t.printer.calls, 1);
+    });
+
+    test('a sync that finishes while the ticket prints keeps its mark', () async {
+      const rid = 'own-sync-race';
+      final t = await open(rid);
+      await t.router.dispatchOfflineOrder(
+        restaurantId: rid,
+        tableNumber: 3,
+        items: items,
+        localOrderId: 'waiter-race-1',
+      );
+      await t.orders.markSynced(
+        restaurantId: rid,
+        localOrderId: 'waiter-race-1',
+        remoteOrderId: 'cloud-1',
+      );
+      t.printer.gate.complete();
+      final row = await waitFor(
+        t.orders,
+        rid,
+        'waiter-race-1',
+        (row) => row.printStatus == 'printed',
+      );
+      expect(row, isNotNull);
+      expect(row!.syncStatus, RestaurantLocalOrderSyncStatus.synced);
+      expect(row.remoteOrderId, 'cloud-1');
+    });
+
+    test('a ticket that settles in time is answered as before', () async {
+      const rid = 'own-fast';
+      final t = await open(rid, budget: const Duration(seconds: 5));
+      t.printer.gate.complete();
+      final result = await t.router.dispatchOfflineOrder(
+        restaurantId: rid,
+        tableNumber: 4,
+        items: items,
+        localOrderId: 'waiter-fast-1',
+      );
+      expect(result.physicallyDispatched, isTrue);
+      expect(result.printJobCount, 1);
+      final row = await t.orders.getByLocalId(
+        restaurantId: rid,
+        localOrderId: 'waiter-fast-1',
+      );
+      expect(row!.printStatus, 'printed');
+    });
+
+    test('a second deliberate order with the same items is a second order', () async {
+      const rid = 'own-second';
+      final t = await open(rid, budget: const Duration(seconds: 5));
+      t.printer.gate.complete();
+      for (final id in <String>['waiter-a', 'waiter-b']) {
+        await t.router.dispatchOfflineOrder(
+          restaurantId: rid,
+          tableNumber: 5,
+          items: items,
+          localOrderId: id,
+        );
+      }
+      expect((await t.orders.list(rid)), hasLength(2));
+      expect(t.printer.calls, 2);
+    });
+
+    test('a failed disk write is not answered as saved and prints nothing', () async {
+      const rid = 'own-disk';
+      final t = await open(
+        rid,
+        orders: RestaurantLocalOrderQueueService(
+          writeHook: (_, _) async => throw const FileSystemException('disk full'),
+        ),
+      );
+      await expectLater(
+        t.router.dispatchOfflineOrder(
+          restaurantId: rid,
+          tableNumber: 6,
+          items: items,
+          localOrderId: 'waiter-disk-1',
+        ),
+        throwsA(anything),
+      );
+      expect(t.printer.calls, 0);
+    });
+
+    test('measured: 30 own orders on a real journal file answer well '
+        'inside two seconds each', () async {
+      const rid = 'own-perf';
+      final dir = await Directory.systemTemp.createTemp('ibul-own-perf');
+      addTearDown(() => dir.delete(recursive: true));
+      final t = await open(
+        rid,
+        budget: const Duration(seconds: 5),
+        orders: RestaurantLocalOrderQueueService(journalDirectory: dir),
+      );
+      t.printer.gate.complete();
+      final samples = <int>[];
+      for (var i = 0; i < 30; i++) {
+        final watch = Stopwatch()..start();
+        await t.router.dispatchOfflineOrder(
+          restaurantId: rid,
+          tableNumber: 8,
+          items: items,
+          localOrderId: 'waiter-perf-$i',
+        );
+        samples.add(watch.elapsedMicroseconds);
+      }
+      samples.sort();
+      final mean = samples.reduce((a, b) => a + b) / samples.length / 1000;
+      final p95 = samples[(samples.length * 0.95).ceil() - 1] / 1000;
+      final worst = samples.last / 1000;
+      // ignore: avoid_print
+      print(
+        '[OWN_ORDER_PERF] n=${samples.length} mean_ms=${mean.toStringAsFixed(1)} '
+        'p95_ms=${p95.toStringAsFixed(1)} worst_ms=${worst.toStringAsFixed(1)} '
+        'failures=0 printer=fake(instant) journal=file',
+      );
+      expect(worst, lessThan(2000));
+      expect(File('${dir.path}/orders_$rid.json').existsSync(), isTrue);
+      expect(await t.orders.list(rid), hasLength(30));
+    });
+
+    test('a printer that is off leaves the order saved', () async {
+      const rid = 'own-printer-off';
+      final t = await open(rid, budget: const Duration(seconds: 5));
+      t.printer.answer = const GarsonKitchenImmediateResult(
+        fallbackReason: 'bridge_unavailable',
+        dispatchPath: 'legacy',
+      );
+      t.printer.gate.complete();
+      final result = await t.router.dispatchOfflineOrder(
+        restaurantId: rid,
+        tableNumber: 7,
+        items: items,
+        localOrderId: 'waiter-off-1',
+      );
+      expect(result.physicallyDispatched, isFalse);
+      final row = await t.orders.getByLocalId(
+        restaurantId: rid,
+        localOrderId: 'waiter-off-1',
+      );
+      expect(row, isNotNull);
+      expect(row!.printStatus, isNot('printed'));
+      expect(row.syncStatus, RestaurantLocalOrderSyncStatus.pendingSync);
+    });
+  });
+
+  test('phone cannot reach the center: held on the device under the same '
+      'key, said so, and the retry adds no second record', () async {
+    const rid = 'phone-held';
+    await RestaurantLocalCacheService().write(
+      RestaurantLocalCacheSnapshot(
+        restaurantId: rid,
+        restaurantName: 'Test',
+        sellerId: rid,
+        storeCategory: 'Restoran',
+        tables: const <Map<String, dynamic>>[],
+        tableOrderSnapshots: const <Map<String, dynamic>>[],
+        products: const <Map<String, dynamic>>[],
+        stations: const <Map<String, dynamic>>[],
+        printers: const <Map<String, dynamic>>[],
+        stationPrinters: const <Map<String, dynamic>>[],
+        printerRoles: const <String, dynamic>{},
+        printerProfiles: const <String, dynamic>{},
+        productStationMappings: const <String, dynamic>{},
+        discoveredPrinters: const <Map<String, dynamic>>[],
+        lastSetupSnapshot: const <String, dynamic>{},
+        cachedAt: DateTime.now(),
+      ),
+    );
+    final transport = _FlakyTransport();
+    RestaurantLanPairing.transport = transport;
+    addTearDown(() => RestaurantLanPairing.transport = null);
+    final orders = RestaurantLocalOrderQueueService();
+    final printer = _GatedPrintService();
+    final router = RestaurantOfflineOrderRouter(
+      orderQueueService: orders,
+      orderPrintJobService: printer,
+    );
+    Future<OrderPrintJobDispatchResult> send() => router.dispatchOfflineOrder(
+      restaurantId: rid,
+      tableNumber: 2,
+      items: const <Map<String, dynamic>>[
+        <String, dynamic>{'name': 'Çorba', 'quantity': 1, 'price': 40},
+      ],
+      localOrderId: 'waiter-phone-1',
+    );
+    await expectLater(
+      send(),
+      throwsA(
+        predicate(
+          (error) => error.toString().contains(
+            'Bu cihazda kayıtlı — mutfağa henüz iletilmedi',
+          ),
+        ),
+      ),
+    );
+    expect(
+      LanPilotContract.userMessage(
+        StateError(LanPilotContract.heldOnDeviceMessage).toString(),
+      ),
+      LanPilotContract.heldOnDeviceMessage,
+    );
+    expect(await orders.list(rid), hasLength(1));
+    transport.reachable = true;
+    final delivered = await send();
+    expect(delivered.raw['lan_host'], isTrue);
+    expect(transport.seen, <String>['waiter-phone-1', 'waiter-phone-1']);
+    expect(await orders.list(rid), hasLength(1));
+    expect(printer.calls, 0, reason: 'the phone never prints by itself');
   });
 
   test('a listening host is the offline route only while it is up', () async {
@@ -1838,6 +2199,18 @@ void main() {
   });
 }
 
+class _FlakyTransport implements RestaurantLanOrderTransport {
+  bool reachable = false;
+  final List<String> seen = <String>[];
+
+  @override
+  Future<bool> submit(RestaurantLocalOrderRecord order) async {
+    seen.add(order.localOrderId);
+    if (!reachable) throw const SocketException('Ana bilgisayar kapalı');
+    return true;
+  }
+}
+
 class _RememberTransport implements RestaurantLanOrderTransport {
   @override
   Future<bool> submit(RestaurantLocalOrderRecord order) async => true;
@@ -2011,3 +2384,33 @@ Future<void> _expectClosed(Future<Map<String, dynamic>> attempt) async {
 }
 
 class _RealHttpOverrides extends HttpOverrides {}
+
+class _GatedPrintService extends OrderPrintJobService {
+  final Completer<void> gate = Completer<void>();
+  GarsonKitchenImmediateResult answer = const GarsonKitchenImmediateResult(
+    physicallyDispatched: true,
+    dispatchPath: 'test_printer',
+    selectedPrinterId: 'test',
+  );
+  int calls = 0;
+
+  @override
+  Future<GarsonKitchenImmediateResult> dispatchGarsonKitchenImmediateFromItems({
+    required String restaurantId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> items,
+    String? waiterId,
+    String? waiterName,
+    String? waiterTitle,
+    GarsonKitchenPrinterHint? printerHint,
+    bool canUseLocalPrintFastPath = false,
+    Map<String, String>? productStationIdByProductId,
+    Map<String, ProductStationMapping>? productStationByProductId,
+    String? tableAreaName,
+    String orderKey = '',
+  }) async {
+    calls++;
+    await gate.future;
+    return answer;
+  }
+}

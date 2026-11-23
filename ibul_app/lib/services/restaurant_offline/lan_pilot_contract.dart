@@ -28,8 +28,15 @@ class LanPilotContract {
   static const String menuMissingMessage =
       'Yerel menü doğrulanamadı. Sipariş gönderilmedi.';
 
+  /// The order center did not confirm the order; it is kept on this device
+  /// under the same send key, so sending again cannot create a second order.
+  static const String heldOnDeviceMessage =
+      'Bu cihazda kayıtlı — mutfağa henüz iletilmedi. '
+      'Bağlantı gelince yeniden gönderin.';
+
   static String? userMessage(String raw) {
     for (final message in <String>[
+      heldOnDeviceMessage,
       bridgeClosedMessage,
       menuMissingMessage,
       notSentMessage,

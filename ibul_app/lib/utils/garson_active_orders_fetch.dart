@@ -440,7 +440,7 @@ Map<String, dynamic>? normalizeRestaurantOrderToGarsonTableOrder({
   );
   final total = _parseMoney(order['total_amount'] ?? order['total']);
 
-  return buildGarsonBoardOrderModel(
+  final model = buildGarsonBoardOrderModel(
     orderId: orderId,
     restaurantId: restaurantId,
     tableId: tableId,
@@ -456,6 +456,11 @@ Map<String, dynamic>? normalizeRestaurantOrderToGarsonTableOrder({
     sourceTable: 'orders',
     placementSource: 'orders_table',
   );
+  // The key the order was sent under. A copy of this order still held on
+  // the device (saved locally, synced later) is recognised by it.
+  final localOrderId = order['local_order_id']?.toString().trim() ?? '';
+  if (localOrderId.isEmpty) return model;
+  return <String, dynamic>{...model, 'local_order_id': localOrderId};
 }
 
 bool isGarsonRestaurantTableOrderRow(Map<String, dynamic> order) {

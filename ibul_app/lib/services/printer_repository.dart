@@ -515,21 +515,41 @@ class PrinterRepository implements PrinterRepositoryPort {
   @override
   Future<PrinterModel?> fetchPrinterById(String printerId) async {
     if (printerId.trim().isEmpty) return null;
-    try {
-      final row = await _client
+    return printerByIdFrom(
+      printerId: printerId,
+      read: () => _client
           .from('printers')
           .select()
           .eq('id', printerId)
-          .maybeSingle();
-      if (row == null) return null;
-      return PrinterModel.fromMap(Map<String, dynamic>.from(row as Map));
-    } catch (error, stackTrace) {
-      _logPrinterSettings(
+          .maybeSingle(),
+      onError: (error, stackTrace) => _logPrinterSettings(
         'Error',
         'source=fetchPrinterById printerId=$printerId',
         error: error,
         stackTrace: stackTrace,
-      );
+      ),
+    );
+  }
+
+  /// One printer row from [read], bounded by [timeout].
+  ///
+  /// With the internet gone but the socket still open, the read neither
+  /// answers nor fails. Unbounded, it held the kitchen ticket of an order
+  /// already saved locally (and the waiter's "Sipariş gönderiliyor" screen)
+  /// for close to a minute. After [timeout] the row last read from the
+  /// server on this device is used, exactly as for a refused connection.
+  static Future<PrinterModel?> printerByIdFrom({
+    required String printerId,
+    required Future<dynamic> Function() read,
+    Duration timeout = cloudReadTimeout,
+    void Function(Object error, StackTrace stackTrace)? onError,
+  }) async {
+    try {
+      final row = await read().timeout(timeout);
+      if (row == null) return null;
+      return PrinterModel.fromMap(Map<String, dynamic>.from(row as Map));
+    } catch (error, stackTrace) {
+      onError?.call(error, stackTrace);
       if (isCloudUnreachableError(error)) {
         final cached = await _lastGoodPrinterById(printerId);
         if (cached != null) return cached;

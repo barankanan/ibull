@@ -34479,6 +34479,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     final raw = result.raw;
     return <String, dynamic>{
       'id': result.orderId ?? raw['order_id']?.toString(),
+      if ((raw['local_order_id']?.toString().trim() ?? '').isNotEmpty)
+        'local_order_id': raw['local_order_id'].toString().trim(),
       'seller_id': widget.sellerId,
       'table_number': widget.tableNumber,
       'items': items,
@@ -34509,6 +34511,17 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     if (result.raw['lan_host'] == true) {
       return _KitchenDispatchFeedback(
         notice: lanTicketStatusText(result.raw['print_status']?.toString()),
+        orderId: result.orderId,
+        dispatchPath: result.dispatchPath,
+      );
+    }
+    // Saved in this computer's journal while the kitchen ticket is still on
+    // its way: the order is safe, the ticket is neither sent nor failed yet.
+    if (result.raw['offline'] == true &&
+        result.raw['print_status'] == 'pending' &&
+        result.dispatchPath == 'offline_local_queue_print_pending') {
+      return _KitchenDispatchFeedback(
+        notice: result.raw['message']?.toString() ?? '',
         orderId: result.orderId,
         dispatchPath: result.dispatchPath,
       );

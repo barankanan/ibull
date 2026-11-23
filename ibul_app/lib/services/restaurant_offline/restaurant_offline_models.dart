@@ -360,3 +360,8 @@ List<Map<String, dynamic>> _readMapList(Object? raw) {
       .map((row) => Map<String, dynamic>.from(row))
       .toList(growable: false);
 }
+
+/// Local order ids whose kitchen ticket is being printed by this process
+/// right now (between the durable save and the recorded print result).
+/// The cloud sync leaves these for its next round.
+final Set<String> localTicketsInFlight = <String>{};

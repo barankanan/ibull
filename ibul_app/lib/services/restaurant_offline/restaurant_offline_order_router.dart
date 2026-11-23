@@ -1,3 +1,4 @@
+import 'lan_pilot_contract.dart';
 import 'offline_catalog_pricing.dart';
 import '../../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
 import '../bridge_print_dispatch_verification.dart';
@@ -20,6 +21,7 @@ class RestaurantOfflineOrderRouter {
     RestaurantLocalPrintQueueService? printQueueService,
     OrderPrintJobService? orderPrintJobService,
     DateTime Function()? clock,
+    this.localPrintAnswerBudget = const Duration(seconds: 5),
   }) : _connectivity =
            connectivityService ?? RestaurantConnectivityService.instance,
        _cacheService = cacheService ?? RestaurantLocalCacheService(),
@@ -37,6 +39,12 @@ class RestaurantOfflineOrderRouter {
   String? _heldRoute;
   final DateTime Function() _clock;
 
+  /// How long the waiter's send waits for the kitchen ticket of an order that
+  /// is already saved in the local journal. The order exists from the moment
+  /// it is saved; the ticket is tracked separately. A slow printer lookup must
+  /// not hold the "Sipariş gönderiliyor" screen (Bahçe 4, 2026-11-23: 58 s).
+  final Duration localPrintAnswerBudget;
+
   OrderPrintJobService get _orderPrintJobServiceOrCreate =>
       _orderPrintJobService ?? OrderPrintJobService();
 
@@ -52,8 +60,11 @@ class RestaurantOfflineOrderRouter {
     if (RestaurantLanPairing.transport != null &&
         !RestaurantLanPairing.centerReachable) {
       // The center may be back since it last failed to answer.
+      // Bounded: an unanswered look for the center must not hold the send.
       try {
-        await RestaurantLanPairing.recheck?.call();
+        await RestaurantLanPairing.recheck?.call().timeout(
+          lanRecheckBudget,
+        );
       } catch (_) {}
     }
     _heldRoute = null;
@@ -178,7 +189,7 @@ class RestaurantOfflineOrderRouter {
       );
       if (!decision.showSuccess) {
         await _orderQueue.enqueue(order: order);
-        throw StateError('Sipariş gönderilemedi. Cihazda bekliyor.');
+        throw StateError(LanPilotContract.heldOnDeviceMessage);
       }
       await _orderQueue.enqueue(order: order);
       return OrderPrintJobDispatchResult(
@@ -253,6 +264,100 @@ class RestaurantOfflineOrderRouter {
     final persisted =
         already ?? await _orderQueue.enqueue(order: pricedOrder ?? order);
 
+    // From here the order is durably saved. The ticket goes on in its own
+    // right: if it is not settled within the budget the waiter is told the
+    // order is saved and the ticket is still on its way, and the journal
+    // receives the real print result when it arrives. Nothing is printed
+    // twice: the one print call below keeps running, it is not restarted.
+    final printing = _printSavedLocalOrder(
+      persisted: persisted,
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+      lineItems: lineItems,
+      waiterId: waiterId,
+      waiterName: waiterName,
+      waiterTitle: waiterTitle,
+      tableName: tableName,
+      localOrderIdValue: localOrderIdValue,
+      createdAt: now,
+    );
+    printing.ignore();
+    return printing.timeout(
+      localPrintAnswerBudget,
+      onTimeout: () => OrderPrintJobDispatchResult(
+        orderId: localOrderIdValue,
+        orderNumber: localOrderIdValue,
+        printJobCount: 0,
+        printJobIds: const <String>[],
+        raw: <String, dynamic>{
+          'offline': true,
+          'local_order_id': localOrderIdValue,
+          'sync_status': RestaurantLocalOrderSyncStatus.pendingSync.name,
+          'print_status': 'pending',
+          'message': localOrderSavedTicketPendingMessage,
+          'table_number': tableNumber,
+          'table_name': persisted.tableName,
+        },
+        dispatchedJobCount: 0,
+        failedJobCount: 0,
+        physicallyDispatched: false,
+        dispatchPath: 'offline_local_queue_print_pending',
+        traceId: '',
+      ),
+    );
+  }
+
+  static const Duration lanRecheckBudget = Duration(seconds: 3);
+
+  static const String localOrderSavedTicketPendingMessage =
+      'Sipariş bu bilgisayara kaydedildi. Mutfak fişi henüz yazıcıya '
+      'iletilmedi; sonucu masada görünecek.';
+
+  Future<OrderPrintJobDispatchResult> _printSavedLocalOrder({
+    required RestaurantLocalOrderRecord persisted,
+    required String restaurantId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> lineItems,
+    required String? waiterId,
+    required String? waiterName,
+    required String? waiterTitle,
+    required String? tableName,
+    required String localOrderIdValue,
+    required DateTime createdAt,
+  }) async {
+    localTicketsInFlight.add(localOrderIdValue);
+    try {
+      return await _printSavedLocalOrderNow(
+        persisted: persisted,
+        restaurantId: restaurantId,
+        tableNumber: tableNumber,
+        lineItems: lineItems,
+        waiterId: waiterId,
+        waiterName: waiterName,
+        waiterTitle: waiterTitle,
+        tableName: tableName,
+        localOrderIdValue: localOrderIdValue,
+        createdAt: createdAt,
+      );
+    } finally {
+      localTicketsInFlight.remove(localOrderIdValue);
+    }
+  }
+
+  Future<OrderPrintJobDispatchResult> _printSavedLocalOrderNow({
+    required RestaurantLocalOrderRecord persisted,
+    required String restaurantId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> lineItems,
+    required String? waiterId,
+    required String? waiterName,
+    required String? waiterTitle,
+    required String? tableName,
+    required String localOrderIdValue,
+    required DateTime createdAt,
+  }) async {
+    final now = createdAt;
+    final order = persisted;
     final immediate = await _orderPrintJobServiceOrCreate
         .dispatchGarsonKitchenImmediateFromItems(
           restaurantId: restaurantId,
@@ -308,11 +413,23 @@ class RestaurantOfflineOrderRouter {
     );
     await _printQueue.enqueue(job: localPrintJob);
 
-    final updatedOrder = persisted.copyWith(
-      printStatus: printStatus,
-      updatedAt: DateTime.now(),
-    );
-    await _orderQueue.update(restaurantId: restaurantId, order: updatedOrder);
+    // Only the print result is written, onto the record as it is now: a sync
+    // that finished while the ticket was printing keeps its synced mark.
+    await _orderQueue.transaction(() async {
+      final current =
+          await _orderQueue.getByLocalId(
+            restaurantId: restaurantId,
+            localOrderId: localOrderIdValue,
+          ) ??
+          persisted;
+      await _orderQueue.update(
+        restaurantId: restaurantId,
+        order: current.copyWith(
+          printStatus: printStatus,
+          updatedAt: DateTime.now(),
+        ),
+      );
+    });
 
     return OrderPrintJobDispatchResult(
       orderId: localOrderIdValue,

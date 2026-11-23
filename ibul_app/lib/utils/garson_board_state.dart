@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'package:ibul_app/utils/garson_area_sections.dart';
+import 'package:ibul_app/utils/garson_table_order_state.dart';
 import 'package:ibul_app/utils/table_labels.dart';
 
 enum GarsonInitialLoadStatus { loading, loaded, empty, failed }
@@ -807,6 +808,17 @@ GarsonBoardState reconcileLanFloorOrders({
     if (key.isEmpty) return;
     final previous = byKey[key];
     if (previous == null) {
+      byKey[key] = Map<String, dynamic>.from(order);
+      return;
+    }
+    // The cloud's own row for this send key replaces the device copy and
+    // is never replaced by it, however late the copy was last touched.
+    if (cloudOrderSendKey(previous).isNotEmpty &&
+        cloudOrderSendKey(order).isEmpty) {
+      return;
+    }
+    if (cloudOrderSendKey(order).isNotEmpty &&
+        cloudOrderSendKey(previous).isEmpty) {
       byKey[key] = Map<String, dynamic>.from(order);
       return;
     }

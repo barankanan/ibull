@@ -1100,6 +1100,7 @@ class StoreTableService {
         .select(
           'id, restaurant_id, table_id, order_status, status, order_type, '
           'delivery_type, total_amount, created_at, updated_at, '
+          'local_order_id, '
           'order_items(id, product_id, product_name, quantity, unit_price, '
           'line_total, item_note, station_id, attributes)',
         )
@@ -1301,6 +1302,7 @@ class StoreTableService {
           .select(
             'id, restaurant_id, table_id, order_status, status, order_type, '
             'delivery_type, total_amount, created_at, updated_at, '
+            'local_order_id, '
             'order_items(id, product_id, product_name, quantity, unit_price, '
             'line_total, item_note, station_id, attributes)',
           )

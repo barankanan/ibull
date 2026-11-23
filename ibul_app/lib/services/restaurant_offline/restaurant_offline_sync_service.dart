@@ -481,9 +481,16 @@ List<RestaurantLocalOrderRecord> selectOrdersForSync(
   int limit = 10,
   Duration retryAfter = orderSyncRetryAfter,
   Set<String> quarantined = quarantinedLocalOrderIds,
+  Set<String>? ticketsInFlight,
 }) {
+  final inFlight = ticketsInFlight ?? localTicketsInFlight;
   pending = pending
       .where((o) => !quarantined.contains(o.localOrderId))
+      // The ticket of this order is being printed right now. Sent at this
+      // moment it would go up as "uncertain" although it is about to print;
+      // it is taken on the next round, with its real result. The mark lives
+      // only while the print call runs, so no order is held back by it.
+      .where((o) => !inFlight.contains(o.localOrderId))
       .toList(growable: false);
   final fresh =
       pending

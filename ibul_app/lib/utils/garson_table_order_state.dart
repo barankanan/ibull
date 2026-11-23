@@ -417,6 +417,38 @@ List<GarsonVisibleOrderPreservation> _collectGarsonPreservedTables({
   return preservedTables;
 }
 
+/// The send key of a cloud order row, or '' when the row is itself a local
+/// copy (its id is the send key) or carries no key.
+String cloudOrderSendKey(Map<String, dynamic> order) {
+  final key = order['local_order_id']?.toString().trim() ?? '';
+  if (key.isEmpty) return '';
+  final id = order['id']?.toString().trim() ?? '';
+  return id == key ? '' : key;
+}
+
+/// [held] without the device copies of orders that [cloud] already contains.
+///
+/// An order saved locally is held under its send key ("waiter-…"); after the
+/// sync the cloud returns the same order under its own id. Both are one
+/// order: keeping the device copy as well showed the table with two orders
+/// and twice the total. Two orders with different send keys stay separate,
+/// whatever their items.
+List<Map<String, dynamic>> dropLocalCopiesOfCloudOrders({
+  required List<Map<String, dynamic>> held,
+  required List<Map<String, dynamic>> cloud,
+}) {
+  final syncedKeys = <String>{
+    for (final order in cloud)
+      if (cloudOrderSendKey(order).isNotEmpty) cloudOrderSendKey(order),
+  };
+  if (syncedKeys.isEmpty) return held;
+  return <Map<String, dynamic>>[
+    for (final order in held)
+      if (!syncedKeys.contains(order['id']?.toString().trim() ?? ''))
+        order,
+  ];
+}
+
 GarsonVisibleOrderMergeResult mergeGarsonVisibleOrdersSafely({
   required List<Map<String, dynamic>> currentVisibleOrders,
   required List<Map<String, dynamic>> incomingOrders,
@@ -424,10 +456,14 @@ GarsonVisibleOrderMergeResult mergeGarsonVisibleOrdersSafely({
   required String source,
   required bool userInitiated,
 }) {
-  final normalizedCurrent = _normalizeOrdersForVisibleMerge(
+  var normalizedCurrent = _normalizeOrdersForVisibleMerge(
     currentVisibleOrders,
   );
   final normalizedIncoming = _normalizeOrdersForVisibleMerge(incomingOrders);
+  normalizedCurrent = dropLocalCopiesOfCloudOrders(
+    held: normalizedCurrent,
+    cloud: normalizedIncoming,
+  );
 
   if (userInitiated) {
     final shouldPreserveVisibleUserState =
