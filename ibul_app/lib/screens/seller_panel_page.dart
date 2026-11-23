@@ -527,7 +527,28 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   bool _hasLoadedSellerQuestionsData = false;
   bool _hasLoadedSellerWalletData = false;
   bool _hasLoadedStoreTablesData = false;
-  String? _sellerDataOwnerId;
+  String? _sellerDataOwnerIdRaw;
+  // Hatırlanan sahip kimliğinin hangi oturum kullanıcısına ait olduğu. Oturum
+  // değişirse eski kullanıcının kimliği ASLA kullanılmaz (bkz. getter).
+  String? _sellerDataOwnerBoundAuthId;
+
+  /// Yalnız YEREL veriyi bulmak için ipucu. Sunucu yetkisi/RLS kanıtı DEĞİLDİR:
+  /// yetki kararları bu değere dayanmaz, sunucu her istekte kendi doğrular.
+  /// Kayıt başka bir oturum kullanıcısına aitse yok sayılır (fail-closed).
+  String? get _sellerDataOwnerId {
+    final raw = _sellerDataOwnerIdRaw;
+    if (raw == null || raw.isEmpty) return null;
+    final current = _normalizeSellerIdentity(_authService.currentUser?.id);
+    if (current.isEmpty || current != _sellerDataOwnerBoundAuthId) {
+      return null;
+    }
+    return raw;
+  }
+
+  void _setSellerDataOwnerId(String owner, String authUserId) {
+    _sellerDataOwnerIdRaw = owner;
+    _sellerDataOwnerBoundAuthId = authUserId;
+  }
   String? _storeTablesLoadedForSellerId;
   bool _hasLoadedPendingLocationRequestData = false;
   bool _showStoreMediaSection = false;
@@ -2035,15 +2056,16 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     bool persist = true,
   }) {
     final normalized = _normalizeSellerIdentity(candidate);
-    if (normalized.isEmpty || normalized == _sellerDataOwnerId) return;
-    _sellerDataOwnerId = normalized;
+    final authUserId = _normalizeSellerIdentity(_authService.currentUser?.id);
+    // Oturum yoksa hiçbir sahip kimliği hatırlanmaz (fail-closed).
+    if (normalized.isEmpty || authUserId.isEmpty) return;
+    if (normalized == _sellerDataOwnerId) return;
+    _setSellerDataOwnerId(normalized, authUserId);
     debugPrint(
       '[SellerOwnerId][remember] source=$source ownerId=$normalized '
-      'authUserId=${_authService.currentUser?.id ?? '-'}',
+      'authUserId=$authUserId',
     );
     if (!persist) return;
-    final authUserId = _normalizeSellerIdentity(_authService.currentUser?.id);
-    if (authUserId.isEmpty) return;
     unawaited(() async {
       try {
         final prefs = await SharedPreferences.getInstance();
@@ -2068,12 +2090,17 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         prefs.getString(_sellerDataOwnerStorageKey(authUserId)),
       );
       if (stored.isEmpty || stored == _sellerDataOwnerId) return;
+      // Okuma sırasında oturum değiştiyse eski kullanıcının kaydını uygulama.
+      if (_normalizeSellerIdentity(_authService.currentUser?.id) !=
+          authUserId) {
+        return;
+      }
       if (!mounted) {
-        _sellerDataOwnerId = stored;
+        _setSellerDataOwnerId(stored, authUserId);
         return;
       }
       setState(() {
-        _sellerDataOwnerId = stored;
+        _setSellerDataOwnerId(stored, authUserId);
         _dashboardClosedHistorySignature = null;
         _financeRefreshToken++;
       });

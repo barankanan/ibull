@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'restaurant_offline/restaurant_connectivity_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -812,6 +813,11 @@ class StoreService {
     // id and refused the order. Unknown is reported as null instead.
     var lookupFailed = false;
 
+    // Bulut yakın zamanda yanıt vermediyse (internet yok, LAN açık) her sayfa
+    // yüklemesi 2 x 8 sn beklemesin: "bilinmiyor" (null) dön; çağıranlar
+    // bu cihazda hatırlanan sahip kimliğini kullanır.
+    if (RestaurantCloudGate.shouldFailFast) return null;
+
     try {
       final storeRow = await _supabase
           .from('stores')
@@ -819,8 +825,19 @@ class StoreService {
           .eq('seller_id', userId)
           .maybeSingle()
           .timeout(cloudLookupTimeout);
+      RestaurantCloudGate.noteSuccess();
       final directSellerId = storeRow?['seller_id']?.toString().trim() ?? '';
       if (directSellerId.isNotEmpty) return directSellerId;
+    } on TimeoutException catch (error, stackTrace) {
+      // Zaman aşımı: ikinci sorguyu da beklemeden vazgeç.
+      RestaurantCloudGate.noteFailure();
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'resolveStoreOwnerDirect',
+      );
+      return null;
     } catch (error, stackTrace) {
       RuntimeDiagnosticLogger.logFailure(
         'StoreService',
