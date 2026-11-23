@@ -164,7 +164,7 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
           runSpacing: 8,
           children: [
             _stat('Personel', widget.members.length),
-            _stat('Aktif', _countStatus('active')),
+            _stat('Aktif', _countStatus('active'), color: const Color(0xFF15803D)),
             _stat('Pasif', _countStatus('inactive')),
           ],
         ),
@@ -174,6 +174,7 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
           ),
           child: Wrap(
             spacing: 8,
@@ -244,14 +245,33 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
     );
   }
 
-  Widget _stat(String label, int value) {
+  Widget _stat(String label, int value, {Color color = const Color(0xFF111827)}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      constraints: const BoxConstraints(minWidth: 104),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
-      child: Text('$label: $value', style: const TextStyle(fontWeight: FontWeight.w700)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$value',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 20,
+              color: color,
+            ),
+          ),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -334,6 +354,18 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
     if (confirmed == true) await widget.onDelete(member);
   }
 
+  String _initials(String name) {
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    if (parts.isEmpty) return '?';
+    final first = parts.first.characters.first;
+    final last = parts.length > 1 ? parts.last.characters.first : '';
+    return '$first$last'.toUpperCase();
+  }
+
   Widget _card(SubAdmin member) {
     final role = staffMemberRoleLabel(
       kind: widget.kind,
@@ -345,91 +377,174 @@ class _StaffTeamPanelState extends State<StaffTeamPanel> {
         .map((row) => row['name'].toString())
         .toList(growable: false);
     final branchName = branchNames.isEmpty ? null : branchNames.first;
+    final name = member.displayName?.trim().isNotEmpty == true
+        ? member.displayName!.trim()
+        : (member.email ?? member.phone ?? 'Personel');
+    final title = member.jobTitle?.trim().isNotEmpty == true
+        ? member.jobTitle!.trim()
+        : role;
+    final active = member.status == 'active';
+    final statusColor = active ? const Color(0xFF15803D) : const Color(0xFF6B7280);
+    final canDeleteNow = widget.canManage && widget.canDelete(member) == null;
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            member.displayName?.trim().isNotEmpty == true
-                ? member.displayName!.trim()
-                : (member.email ?? member.phone ?? 'Personel'),
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '${member.jobTitle?.trim().isNotEmpty == true ? member.jobTitle!.trim() : role}'
-            ' · $role · ${branchName ?? 'Şube yok'} · ${_staffStatusLabel(member.status)}',
-            style: const TextStyle(fontSize: 12, color: Color(0xFF4B5563)),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (final permission in member.permissions.take(6))
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF3F0FF),
-                    borderRadius: BorderRadius.circular(999),
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: const Color(0xFFF3F0FF),
+                child: Text(
+                  _initials(name),
+                  style: const TextStyle(
+                    color: Color(0xFF4C1D95),
+                    fontWeight: FontWeight.w700,
                   ),
-                  child: Text(
-                    sellerPermissionShortLabel(permission),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF4C1D95),
-                      fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
                     ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$title · ${branchName ?? 'Şube yok'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  _staffStatusLabel(member.status),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: statusColor,
                   ),
                 ),
-              if (member.permissions.length > 6)
-                Text(
-                  '+${member.permissions.length - 6}',
-                  style: const TextStyle(fontSize: 11),
-                ),
+              ),
             ],
           ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          if (member.permissions.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final permission in member.permissions.take(6))
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF3F0FF),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      sellerPermissionShortLabel(permission),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF4C1D95),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                if (member.permissions.length > 6)
+                  Text(
+                    '+${member.permissions.length - 6}',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 10),
+          Row(
             children: [
-              OutlinedButton(
-                onPressed: widget.canManage ? () => _edit(member) : null,
-                child: const Text('Düzenle'),
-              ),
-              OutlinedButton(
-                onPressed: widget.canManage ? () => _edit(member) : null,
-                child: const Text('Yetkiler'),
-              ),
-              OutlinedButton(
-                onPressed: widget.canManage && member.status == 'active'
-                    ? () => widget.onDeactivate(member)
-                    : null,
-                child: const Text('Pasifleştir'),
-              ),
-              if (widget.isOwner)
-                OutlinedButton(
-                  onPressed: widget.canManage && member.status != 'active'
-                      ? () => widget.onActivate(member)
-                      : null,
-                  child: const Text('Aktifleştir'),
+              Flexible(
+                child: FilledButton.tonalIcon(
+                  onPressed: widget.canManage ? () => _edit(member) : null,
+                  icon: const Icon(Icons.tune_rounded, size: 18),
+                  label: const Text(
+                    'Yetkileri düzenle',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              if (widget.isOwner && widget.onSetPassword != null)
-                OutlinedButton(
-                  onPressed: widget.canManage ? () => _setPassword(member) : null,
-                  child: const Text('Şifre belirle'),
-                ),
-              OutlinedButton(
-                onPressed: widget.canManage && widget.canDelete(member) == null
-                    ? () => _confirmDelete(member)
-                    : null,
-                child: const Text('Sil'),
+              ),
+              const Spacer(),
+              PopupMenuButton<String>(
+                tooltip: 'Diğer işlemler',
+                enabled: widget.canManage,
+                icon: const Icon(Icons.more_horiz_rounded),
+                onSelected: (action) {
+                  switch (action) {
+                    case 'deactivate':
+                      widget.onDeactivate(member);
+                    case 'activate':
+                      widget.onActivate(member);
+                    case 'password':
+                      _setPassword(member);
+                    case 'delete':
+                      _confirmDelete(member);
+                  }
+                },
+                itemBuilder: (_) => <PopupMenuEntry<String>>[
+                  PopupMenuItem(
+                    value: 'deactivate',
+                    enabled: active,
+                    child: const Text('Pasifleştir'),
+                  ),
+                  if (widget.isOwner)
+                    PopupMenuItem(
+                      value: 'activate',
+                      enabled: !active,
+                      child: const Text('Aktifleştir'),
+                    ),
+                  if (widget.isOwner && widget.onSetPassword != null)
+                    const PopupMenuItem(
+                      value: 'password',
+                      child: Text('Şifre belirle'),
+                    ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    enabled: canDeleteNow,
+                    child: const Text(
+                      'Sil',
+                      style: TextStyle(color: Color(0xFFB91C1C)),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
