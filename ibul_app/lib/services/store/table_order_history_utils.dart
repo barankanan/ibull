@@ -304,7 +304,14 @@ class TableOrderHistoryUtils {
   /// Short label for compact cards, e.g. "3 ürün · Lahmacun, Ayran".
   static String productSummary(Map<dynamic, dynamic> row) {
     final items = displayItems(row);
-    if (items.isEmpty) return 'Ürün yok';
+    // Kalem verisi yoksa "Ürün yok" demek, gerçekte olmayan bir sonuç üretir:
+    // kapanış anında kalemler snapshot'a alınmamış olabilir. Sipariş kimliği
+    // biliniyorsa bunu açıkça "kayıtta yok" olarak ayır.
+    if (items.isEmpty) {
+      return archivedOrderIds(row).isNotEmpty
+          ? 'Ürün bilgisi kayıtta yok'
+          : 'Ürün yok';
+    }
     final unitCount = orderItemCount(row);
     final names = items
         .map((item) => item['name']?.toString().trim() ?? '')
@@ -314,6 +321,74 @@ class TableOrderHistoryUtils {
     if (names.isEmpty) return '$unitCount ürün';
     if (names.length == 1) return '$unitCount ürün · ${names.first}';
     return '$unitCount ürün · ${names.join(', ')}';
+  }
+
+  /// Satır toplamı: `line_total` > 0 ise o, değilse `price * quantity`.
+  static double itemsTotal(List<Map<String, dynamic>> items) {
+    var sum = 0.0;
+    for (final item in items) {
+      final qty = _toInt(item['quantity']);
+      final q = qty > 0 ? qty : 1;
+      final lineTotal = _toDouble(item['line_total']);
+      sum += lineTotal > 0
+          ? lineTotal
+          : _toDouble(item['price'] ?? item['unit_price']) * q;
+    }
+    return sum;
+  }
+
+  static const String integrityItemsMissing = 'items_missing';
+  static const String integrityTotalDerived = 'total_derived_from_lines';
+
+  /// Geçmiş satırının veri bütünlüğü: `null` = güvenilir.
+  /// - [integrityItemsMissing]: kalem yok ve tutar kanıtlanamıyor.
+  /// - [integrityTotalDerived]: başlık toplamı 0, tutar kalem birim
+  ///   fiyatlarından hesaplandı (kayıtlı toplam değil).
+  static String? historyIntegrity(Map<dynamic, dynamic> row) {
+    final items = displayItems(row);
+    final grand = _toDouble(row['grand_total']);
+    if (items.isEmpty) {
+      return grand > 0 ? null : integrityItemsMissing;
+    }
+    if (grand <= 0.009 && itemsTotal(items) > 0.009) {
+      return integrityTotalDerived;
+    }
+    return null;
+  }
+
+  /// Gösterilecek toplam; kayıtlı toplam 0 iken kalemlerden türetilebiliyorsa
+  /// onu verir. Kalem de yoksa 0 döner ama [historyIntegrity] bunu işaretler.
+  static double effectiveTotal(Map<dynamic, dynamic> row) {
+    final grand = _toDouble(row['grand_total']);
+    if (grand > 0.009) return grand;
+    return itemsTotal(displayItems(row));
+  }
+
+  /// `order_items` satırlarını (salt-okunur kaynak) geçmiş satırına ekler.
+  /// Mevcut bir snapshot kalemi varsa dokunmaz.
+  static Map<String, dynamic> attachLiveLines(
+    Map<String, dynamic> row,
+    List<Map<String, dynamic>> lines,
+  ) {
+    if (lines.isEmpty || displayItems(row).isNotEmpty) return row;
+    final items = lines
+        .map(
+          (line) => <String, dynamic>{
+            'name': line['product_name']?.toString() ?? 'Ürün',
+            'quantity': _toInt(line['quantity']) > 0
+                ? _toInt(line['quantity'])
+                : 1,
+            'price': _toDouble(line['unit_price']),
+            if (_toDouble(line['line_total']) > 0)
+              'line_total': _toDouble(line['line_total'])
+            else if (_toDouble(line['total_price']) > 0)
+              'line_total': _toDouble(line['total_price']),
+            if ((line['item_note']?.toString() ?? '').trim().isNotEmpty)
+              'notes': line['item_note'].toString().trim(),
+          },
+        )
+        .toList(growable: false);
+    return <String, dynamic>{...row, 'items': items, 'items_source': 'order_items_live'};
   }
 
   static String closeStatusLabel(Map<dynamic, dynamic> row) {

@@ -2267,6 +2267,45 @@ class StoreTableService {
 
 
   /// Returns paginated historical (closed) orders for a seller.
+  /// Kapanış snapshot'ında kalemi olmayan satırlar için `order_items`
+  /// kaynağını salt-okunur okur. Okunamazsa satır değişmez; ekran bunu
+  /// `historyIntegrity` ile "veri eksik" diye gösterir, 0 TL diye gizlemez.
+  Future<List<Map<String, dynamic>>> _fillMissingHistoryLines(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final needing = <String, int>{};
+    for (var i = 0; i < rows.length; i++) {
+      if (TableOrderHistoryUtils.displayItems(rows[i]).isNotEmpty) continue;
+      final id = rows[i]['original_order_id']?.toString().trim() ?? '';
+      if (id.isNotEmpty) needing[id] = i;
+    }
+    if (needing.isEmpty) return rows;
+    try {
+      final lines = await _supabase
+          .from('order_items')
+          .select('order_id,product_name,quantity,unit_price,line_total,total_price,item_note')
+          .inFilter('order_id', needing.keys.toList(growable: false))
+          .timeout(tableOrderTimeout);
+      final byOrder = <String, List<Map<String, dynamic>>>{};
+      for (final line in List<Map<String, dynamic>>.from(lines as List)) {
+        byOrder
+            .putIfAbsent(line['order_id']?.toString() ?? '', () => [])
+            .add(line);
+      }
+      final out = List<Map<String, dynamic>>.of(rows);
+      needing.forEach((orderId, index) {
+        out[index] = TableOrderHistoryUtils.attachLiveLines(
+          rows[index],
+          byOrder[orderId] ?? const <Map<String, dynamic>>[],
+        );
+      });
+      return out;
+    } catch (error) {
+      debugPrint('[StoreTableService] history lines unavailable: $error');
+      return rows;
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getTableOrderHistory({
     required String sellerId,
     int? tableNumber,
@@ -2332,7 +2371,7 @@ class StoreTableService {
       if (list.length > limit) {
         list = list.sublist(0, limit);
       }
-      return list;
+      return _fillMissingHistoryLines(list);
     } on PostgrestException catch (error) {
       // table_order_history may not exist on older DBs — return empty list
       final msg = error.message.toLowerCase();

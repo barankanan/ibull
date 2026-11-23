@@ -394,12 +394,30 @@ class GarsonClosedTableCard extends StatelessWidget {
   final VoidCallback? onPrintKitchen;
   final VoidCallback? onDelete;
 
+  /// Tutar etiketi: kanıtlanamayan tutar "0,00 TL" diye gösterilmez.
+  String _totalLabel() {
+    switch (record.integrityNote) {
+      case TableOrderHistoryUtils.integrityItemsMissing:
+        return 'Tutar doğrulanamadı';
+      case TableOrderHistoryUtils.integrityTotalDerived:
+        return '${formatMoney(record.grandTotal)} (kalemlerden)';
+      default:
+        return formatMoney(record.grandTotal);
+    }
+  }
+
+  String _waiterLabel() {
+    final name = record.waiterName?.trim() ?? '';
+    return name.isEmpty ? 'Garson kayıtta yok' : 'Garson: $name';
+  }
+
   @override
   Widget build(BuildContext context) {
     final map = record.toMap();
     final tableTitle = TableOrderHistoryUtils.tableLabel(map);
     final area = record.tableAreaName ?? TableOrderHistoryUtils.areaName(map);
-    final summary = TableOrderHistoryUtils.productSummary(map);
+    final summary =
+        '${TableOrderHistoryUtils.productSummary(map)} · ${_waiterLabel()}';
     final statusLabel = TableOrderHistoryUtils.closeStatusLabel(map);
     final openedAt = record.openedAt ?? record.createdAt;
     final closedAt = record.closedAt;
@@ -517,7 +535,7 @@ class GarsonClosedTableCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      formatMoney(record.grandTotal),
+                      _totalLabel(),
                       style: TextStyle(
                         fontSize: isGrid ? 14 : 13,
                         fontWeight: FontWeight.w900,
@@ -634,7 +652,7 @@ class GarsonClosedTableCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    formatMoney(record.grandTotal),
+                    _totalLabel(),
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w900,

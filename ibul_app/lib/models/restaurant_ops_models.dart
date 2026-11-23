@@ -232,7 +232,11 @@ class TableOrderHistoryRecord {
     this.tableAreaName,
     this.displayTableLabel,
     this.archivedOrders = const <Map<String, dynamic>>[],
+    this.integrityNote,
   });
+
+  /// `TableOrderHistoryUtils.historyIntegrity` sonucu; null = güvenilir.
+  final String? integrityNote;
 
   final String id;
   final String originalOrderId;
@@ -308,7 +312,13 @@ class TableOrderHistoryRecord {
       items: items,
       status: map['status']?.toString() ?? 'closed',
       revision: _parseIntS(map['revision'], fallback: 1),
-      grandTotal: _parseDoubleS(map['grand_total']),
+      grandTotal: TableOrderHistoryUtils.effectiveTotal(<String, dynamic>{
+        ...map,
+        'items': items,
+      }),
+      integrityNote: TableOrderHistoryUtils.historyIntegrity(
+        <String, dynamic>{...map, 'items': items},
+      ),
       closedAt:
           DateTime.tryParse(map['closed_at']?.toString() ?? '')?.toLocal() ??
               DateTime.now(),
@@ -369,10 +379,6 @@ class TableOrderHistoryRecord {
     return int.tryParse(v?.toString() ?? '') ?? fallback;
   }
 
-  static double _parseDoubleS(dynamic v) {
-    if (v is num) return v.toDouble();
-    return double.tryParse(v?.toString() ?? '') ?? 0.0;
-  }
 }
 
 /// Waiter performance snapshot from the DB view / RPC.
