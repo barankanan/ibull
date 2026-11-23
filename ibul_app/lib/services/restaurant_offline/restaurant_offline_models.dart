@@ -54,7 +54,14 @@ class RestaurantLocalOrderRecord {
     required this.updatedAt,
     this.remoteOrderId,
     this.syncError,
+    this.heldForCenter = false,
   });
+
+  /// True on a phone while the order center has not confirmed this order
+  /// ("Bu cihazda kayıtlı — mutfağa henüz iletilmedi"). Only orders marked
+  /// here are handed to the center again on their own; older device copies,
+  /// which carry no mark, are never sent by themselves.
+  final bool heldForCenter;
 
   final String localOrderId;
   final String restaurantId;
@@ -92,6 +99,7 @@ class RestaurantLocalOrderRecord {
     'updated_at': updatedAt.toIso8601String(),
     if (remoteOrderId != null) 'remote_order_id': remoteOrderId,
     if (syncError != null) 'sync_error': syncError,
+    if (heldForCenter) 'held_for_center': true,
   };
 
   factory RestaurantLocalOrderRecord.fromJson(Map<String, dynamic> json) {
@@ -118,10 +126,12 @@ class RestaurantLocalOrderRecord {
           DateTime.now(),
       remoteOrderId: json['remote_order_id']?.toString(),
       syncError: json['sync_error']?.toString(),
+      heldForCenter: json['held_for_center'] == true,
     );
   }
 
   RestaurantLocalOrderRecord copyWith({
+    bool? heldForCenter,
     RestaurantLocalOrderSyncStatus? syncStatus,
     String? printStatus,
     String? remoteOrderId,
@@ -148,6 +158,7 @@ class RestaurantLocalOrderRecord {
       updatedAt: updatedAt ?? this.updatedAt,
       remoteOrderId: remoteOrderId ?? this.remoteOrderId,
       syncError: syncError ?? this.syncError,
+      heldForCenter: heldForCenter ?? this.heldForCenter,
     );
   }
 }

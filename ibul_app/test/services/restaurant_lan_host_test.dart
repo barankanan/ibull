@@ -784,6 +784,130 @@ void main() {
       expect(await t.orders.list(rid), hasLength(30));
     });
 
+    test('app closed while the ticket prints: after the restart the order '
+        'is still there, its ticket is uncertain, it syncs once and nothing '
+        'is printed again', () async {
+      const rid = 'own-restart';
+      final dir = await Directory.systemTemp.createTemp('ibul-own-restart');
+      addTearDown(() => dir.delete(recursive: true));
+      final t = await open(
+        rid,
+        orders: RestaurantLocalOrderQueueService(journalDirectory: dir),
+      );
+      final pending = await t.router.dispatchOfflineOrder(
+        restaurantId: rid,
+        tableNumber: 9,
+        items: items,
+        localOrderId: 'waiter-restart-1',
+      );
+      expect(pending.raw['print_status'], 'pending');
+      final onDisk =
+          jsonDecode(File('${dir.path}/orders_$rid.json').readAsStringSync())
+              as Map<String, dynamic>;
+      expect(
+        (onDisk['orders'] as List).single['print_status'],
+        'pending',
+        reason: 'the in-flight state is on disk, not only in memory',
+      );
+
+      // The process dies: the print call never returns and the in-memory
+      // mark is gone. A new center starts on the same journal folder.
+      await RestaurantLanHostRegistry.current?.stop();
+      localTicketsInFlight.clear();
+      final reopened = RestaurantLocalOrderQueueService(journalDirectory: dir);
+      final host = _host(material, restaurantId: rid, orders: reopened);
+      await _listen(host, material);
+      addTearDown(host.stop);
+
+      final row = await reopened.getByLocalId(
+        restaurantId: rid,
+        localOrderId: 'waiter-restart-1',
+      );
+      expect(row, isNotNull);
+      expect(row!.printStatus, 'uncertain');
+      expect(row.syncStatus, RestaurantLocalOrderSyncStatus.pendingSync);
+      expect(row.total, 40);
+      final again =
+          jsonDecode(File('${dir.path}/orders_$rid.json').readAsStringSync())
+              as Map<String, dynamic>;
+      expect((again['orders'] as List).single['print_status'], 'uncertain');
+
+      // It is sent to the cloud (once, by its own key) as "uncertain": the
+      // cloud holds the ticket for the operator and prints nothing.
+      expect(
+        selectOrdersForSync(<RestaurantLocalOrderRecord>[
+          row,
+        ], now: DateTime.now()).single.localOrderId,
+        'waiter-restart-1',
+      );
+      expect(
+        planLanOrderSync(
+          listeningHost: true,
+          printStatus: row.printStatus,
+        ).evidence,
+        'uncertain',
+      );
+
+      // The waiter sends the same order again after the restart: no second
+      // record and no second print call.
+      final printer = _GatedPrintService();
+      final router = RestaurantOfflineOrderRouter(
+        orderQueueService: reopened,
+        orderPrintJobService: printer,
+        localPrintAnswerBudget: const Duration(milliseconds: 60),
+      );
+      final repeat = await router.dispatchOfflineOrder(
+        restaurantId: rid,
+        tableNumber: 9,
+        items: items,
+        localOrderId: 'waiter-restart-1',
+      );
+      expect(repeat.raw['duplicate'], isTrue);
+      expect(printer.calls, 0);
+      expect(await reopened.list(rid), hasLength(1));
+    });
+
+    test('center start leaves a ticket this process is printing alone', () async {
+      const rid = 'own-inflight-start';
+      final orders = RestaurantLocalOrderQueueService();
+      RestaurantLocalOrderRecord row(String id, String print) =>
+          RestaurantLocalOrderRecord(
+            localOrderId: id,
+            restaurantId: rid,
+            tableId: '1',
+            tableName: 'Masa 1',
+            tableNumber: 1,
+            waiterId: '',
+            waiterName: '',
+            items: const <Map<String, dynamic>>[],
+            notes: '',
+            total: 0,
+            stationGroups: const <Map<String, dynamic>>[],
+            printStatus: print,
+            syncStatus: RestaurantLocalOrderSyncStatus.pendingSync,
+            createdAt: DateTime.utc(2026, 11, 23),
+            updatedAt: DateTime.utc(2026, 11, 23),
+          );
+      await orders.enqueue(order: row('printing-now', 'pending'));
+      await orders.enqueue(order: row('left-open', 'pending'));
+      await orders.enqueue(order: row('done', 'printed'));
+      await orders.enqueue(order: row('refused', 'failed'));
+      final settled = await orders.settleInterruptedTickets(
+        rid,
+        inFlight: <String>{'printing-now'},
+      );
+      expect(settled, 1);
+      final after = <String, String>{
+        for (final o in await orders.list(rid)) o.localOrderId: o.printStatus,
+      };
+      expect(after, <String, String>{
+        'printing-now': 'pending',
+        'left-open': 'uncertain',
+        'done': 'printed',
+        'refused': 'failed',
+      });
+    });
+
     test('a printer that is off leaves the order saved', () async {
       const rid = 'own-printer-off';
       final t = await open(rid, budget: const Duration(seconds: 5));
@@ -866,9 +990,11 @@ void main() {
       LanPilotContract.heldOnDeviceMessage,
     );
     expect(await orders.list(rid), hasLength(1));
+    expect((await orders.list(rid)).single.heldForCenter, isTrue);
     transport.reachable = true;
     final delivered = await send();
     expect(delivered.raw['lan_host'], isTrue);
+    expect((await orders.list(rid)).single.heldForCenter, isFalse);
     expect(transport.seen, <String>['waiter-phone-1', 'waiter-phone-1']);
     expect(await orders.list(rid), hasLength(1));
     expect(printer.calls, 0, reason: 'the phone never prints by itself');

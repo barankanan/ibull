@@ -46,6 +46,45 @@ class RestaurantLocalOrderQueueService {
     if (orders.isNotEmpty) await _persist(id, orders);
   }
 
+  /// Called when the center starts: closes the tickets a previous run left
+  /// open.
+  ///
+  /// `pending` means "the ticket is being printed". The mark that says which
+  /// tickets this process is printing ([localTicketsInFlight]) lives in
+  /// memory, so after the app was closed or crashed mid-print a `pending`
+  /// row belongs to no running print. Whether its bytes reached the printer
+  /// is unknown: it becomes `uncertain` (durably), is never printed again on
+  /// its own, and the order itself stays saved and goes to the cloud once,
+  /// held for the operator. Rows this process is printing are left alone.
+  Future<int> settleInterruptedTickets(
+    String restaurantId, {
+    Set<String>? inFlight,
+    DateTime Function()? clock,
+  }) {
+    final id = restaurantId.trim();
+    final printing = inFlight ?? localTicketsInFlight;
+    return _locked(() async {
+      final orders = await list(id);
+      var settled = 0;
+      final next = <RestaurantLocalOrderRecord>[
+        for (final order in orders)
+          if (order.printStatus.trim() == 'pending' &&
+              !printing.contains(order.localOrderId))
+            () {
+              settled++;
+              return order.copyWith(
+                printStatus: 'uncertain',
+                updatedAt: (clock ?? DateTime.now)(),
+              );
+            }()
+          else
+            order,
+      ];
+      if (settled > 0) await _persist(id, next);
+      return settled;
+    });
+  }
+
   static DateTime _newest(List<RestaurantLocalOrderRecord> orders) {
     var newest = DateTime.fromMillisecondsSinceEpoch(0);
     for (final order in orders) {

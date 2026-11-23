@@ -414,6 +414,7 @@ class RestaurantLanHost {
     }
     await _loadDevices();
     await _orders.adoptJournal(restaurantId);
+    await _orders.settleInterruptedTickets(restaurantId);
     _server = await HttpServer.bindSecure(
       selected,
       port,

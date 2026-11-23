@@ -3809,18 +3809,37 @@ class OrderPrintJobService {
     }
   }
 
-  /// Returns `true` when [error] is a network/transport-level failure (not an
-  /// HTTP-application or payload error). Jobs that fail with a connection error
-  /// are reset to `pending` so [DesktopPrintHub] can recover them via its
-  /// UPDATE realtime listener rather than being permanently marked `failed`.
-  bool _isConnectionError(Object error) {
-    final raw = error.toString().toLowerCase();
+  /// True only when [error] proves that nothing was handed to the printer:
+  /// the bridge could not be reached at all (refused connection, unknown
+  /// host). Only such a job may go back to `pending` for the hub.
+  ///
+  /// A timeout, a reset connection or any answer that says the write may
+  /// have started is NOT such a proof: the ticket may already be on paper.
+  /// Those jobs are recorded as failed and wait for an operator-confirmed
+  /// reprint; they are never queued again on their own.
+  bool _isConnectionError(Object error) =>
+      printFailureIsCertainlyNotSent(error.toString());
+
+  @visibleForTesting
+  static bool printFailureIsCertainlyNotSent(String text) {
+    final raw = text.toLowerCase();
+    const uncertain = <String>[
+      'timeout',
+      'timed out',
+      'connection reset',
+      'connection closed',
+      'broken pipe',
+      'write_may_have_started',
+      'print_outcome',
+      'uncertain',
+      'belirsiz',
+      'tcp_io_error',
+    ];
+    for (final token in uncertain) {
+      if (raw.contains(token)) return false;
+    }
     return raw.contains('connection refused') ||
-        raw.contains('connection_error') ||
-        raw.contains('connection reset') ||
-        raw.contains('socketexception') ||
-        raw.contains('failed host lookup') ||
-        raw.contains('timeout');
+        raw.contains('failed host lookup');
   }
 
   bool _shouldFailTcpKitchenAfterDirectRetry(

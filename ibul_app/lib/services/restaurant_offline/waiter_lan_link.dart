@@ -1,3 +1,4 @@
+import 'device_held_order_forwarder.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
@@ -392,6 +393,25 @@ class WaiterLanLink extends ChangeNotifier {
     if (_centerReachable == reachable) return;
     _centerReachable = reachable;
     notifyListeners();
+    if (reachable) _forwardHeldOrders();
+  }
+
+  /// The center answers again: orders this phone kept for it go over now.
+  void _forwardHeldOrders() {
+    final restaurant = _restaurantId;
+    final staff = _staffId;
+    if (restaurant.isEmpty || staff.isEmpty) return;
+    unawaited(() async {
+      try {
+        final result = await DeviceHeldOrderForwarder.forward(
+          restaurantId: restaurant,
+          staffId: staff,
+        );
+        if (result.delivered > 0 || result.conflicts > 0) notifyListeners();
+      } catch (_) {
+        // The orders stay held; the next reachable center tries again.
+      }
+    }());
   }
 
   /// Re-checks the saved center, or looks for one when nothing is paired.

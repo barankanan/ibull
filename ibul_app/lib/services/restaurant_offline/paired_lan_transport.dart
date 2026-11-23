@@ -20,9 +20,17 @@ class PairedLanTransport implements RestaurantLanOrderTransport {
   /// ('forwarded', 'uncertain', 'failed', 'not_sent'), or null when unknown.
   String? get lastPrintStatus => _lastPrintStatus;
 
+  bool _lastConflict = false;
+
+  /// True when the center refused the last order because the same send key
+  /// already exists there with different content. Sending it again cannot
+  /// succeed.
+  bool get lastConflict => _lastConflict;
+
   @override
   Future<bool> submit(RestaurantLocalOrderRecord order) async {
     _lastPrintStatus = null;
+    _lastConflict = false;
     final response = await _send('/lan/orders', <String, Object?>{
       'local_order_id': order.localOrderId,
       'restaurant_id': order.restaurantId,
@@ -40,6 +48,7 @@ class PairedLanTransport implements RestaurantLanOrderTransport {
             'Cihaz eşleşmesi yok veya iptal edildi.',
       );
     }
+    _lastConflict = status == 409 || response['conflict'] == true;
     final printStatus = response['print_status']?.toString().trim() ?? '';
     _lastPrintStatus = printStatus.isEmpty ? null : printStatus;
     return response['saved'] == true;

@@ -188,10 +188,24 @@ class RestaurantOfflineOrderRouter {
         hostSaved: saved,
       );
       if (!decision.showSuccess) {
-        await _orderQueue.enqueue(order: order);
+        // Kept under the same send key and marked as waiting for the center:
+        // it is handed over again when the center answers (see
+        // DeviceHeldOrderForwarder), or by the waiter sending it again.
+        await _orderQueue.enqueue(order: order.copyWith(heldForCenter: true));
         throw StateError(LanPilotContract.heldOnDeviceMessage);
       }
       await _orderQueue.enqueue(order: order);
+      // enqueue keeps an existing row as it is: read what is stored.
+      final kept = await _orderQueue.getByLocalId(
+        restaurantId: restaurantId,
+        localOrderId: localOrderIdValue,
+      );
+      if (kept != null && kept.heldForCenter) {
+        await _orderQueue.update(
+          restaurantId: restaurantId,
+          order: kept.copyWith(heldForCenter: false, updatedAt: DateTime.now()),
+        );
+      }
       return OrderPrintJobDispatchResult(
         orderId: localOrderIdValue,
         orderNumber: localOrderIdValue,
