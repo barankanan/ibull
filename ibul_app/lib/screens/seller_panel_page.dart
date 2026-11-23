@@ -25755,8 +25755,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 canManageDevices: _actorMaySeePrinterSettings,
                                 staffNames: <String, String>{
                                   for (final m in _subAdmins)
-                                    if ((m.displayName ?? '').trim().isNotEmpty)
+                                    if ((m.displayName ?? '').trim().isNotEmpty) ...{
                                       m.id: m.displayName!.trim(),
+                                      if (m.authUserId != null)
+                                        m.authUserId!: m.displayName!.trim(),
+                                    },
                                 },
                               ),
                             ),

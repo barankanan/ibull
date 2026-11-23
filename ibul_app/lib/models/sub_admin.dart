@@ -169,6 +169,9 @@ String sellerPermissionShortLabel(SellerPermission permission) {
 
 class SubAdmin {
   final String id;
+
+  /// Supabase Auth kullanıcı kimliği (LAN cihazları personeli bununla anar).
+  final String? authUserId;
   final String? email;
   final String? phone;
   final String? displayName;
@@ -182,6 +185,7 @@ class SubAdmin {
 
   SubAdmin({
     required this.id,
+    this.authUserId,
     this.email,
     this.phone,
     this.displayName,
@@ -214,8 +218,10 @@ class SubAdmin {
       created = DateTime.fromMillisecondsSinceEpoch(map['createdAt']);
     }
 
+    final authId = map['auth_user_id']?.toString().trim() ?? '';
     return SubAdmin(
       id: id,
+      authUserId: authId.isEmpty ? null : authId,
       email: map['email']?.toString(),
       phone: map['phone']?.toString(),
       displayName: map['display_name']?.toString(),
