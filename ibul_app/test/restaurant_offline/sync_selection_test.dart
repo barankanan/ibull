@@ -241,4 +241,38 @@ void main() {
       },
     );
   });
+
+  group('karantina sayımı', () {
+    const suspect = 'local-order-1793736854400492-1173607028';
+    test('karantinadaki kayıt bekleyen sayılmaz; yeni bekleyen ayrı sayılır '
+        've kayıtlar korunur', () async {
+      final queue = RestaurantLocalOrderQueueService();
+      await queue.enqueue(
+        order: _o(
+          suspect,
+          sync: RestaurantLocalOrderSyncStatus.syncFailed,
+          created: DateTime(2026, 11, 3),
+        ),
+      );
+      final sync = RestaurantOfflineSyncService(orderQueue: queue);
+      expect(await sync.quarantinedPendingCount('r1'), 1);
+      expect((await sync.pendingOrders('r1')).length, 1);
+
+      await queue.enqueue(
+        order: _o(
+          'yeni',
+          sync: RestaurantLocalOrderSyncStatus.pendingSync,
+          created: _now,
+        ),
+      );
+      expect(await sync.quarantinedPendingCount('r1'), 1);
+      expect((await sync.pendingOrders('r1')).length, 2);
+      // Count is read-only: nothing was deleted or rewritten.
+      final kept = await queue.getByLocalId(
+        restaurantId: 'r1',
+        localOrderId: suspect,
+      );
+      expect(kept?.syncStatus, RestaurantLocalOrderSyncStatus.syncFailed);
+    });
+  });
 }
