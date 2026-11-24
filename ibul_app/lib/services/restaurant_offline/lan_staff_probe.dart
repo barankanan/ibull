@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../staff_login_policy.dart';
 
 /// One membership row as the seller machine reads it from `store_sub_admins`.
@@ -16,6 +18,12 @@ typedef LanStaffMembershipReader = Future<LanStaffMembership?> Function(
 /// branch of this center. A network failure is [StaffProbeKind.unreachable]
 /// so the host can apply its limited offline grant instead of treating a
 /// dropped cloud link as a revocation.
+/// The probe runs before an order is saved, so with the internet cut it must
+/// not hang on a cloud call that never answers: past this budget the answer is
+/// "unreachable" and the host applies its limited offline grant (the phone's
+/// own wait for the center is only 20 s).
+const Duration lanStaffProbeBudget = Duration(seconds: 3);
+
 Future<StaffProbe> Function(String staffId) lanStaffProbe(
   LanStaffMembershipReader read, {
   String restaurantId = '',
@@ -31,7 +39,7 @@ Future<StaffProbe> Function(String staffId) lanStaffProbe(
     }
     final LanStaffMembership? row;
     try {
-      row = await read(id);
+      row = await read(id).timeout(lanStaffProbeBudget);
     } catch (error) {
       if (staffProbeErrorIsUnreachable(error)) {
         return const StaffProbe(

@@ -11,6 +11,8 @@ import 'printer_receipt_length_settings.dart';
 import '../models/station_printer_model.dart';
 import '../models/printer_profile.dart';
 import 'desktop_print_ports.dart';
+import 'restaurant_offline/restaurant_connectivity_service.dart'
+    show RestaurantCloudGate;
 
 export 'desktop_print_ports.dart' show ExpectedKitchenPrinterResolution;
 
@@ -90,6 +92,30 @@ class PrinterRepository implements PrinterRepositoryPort {
   /// [isCloudUnreachableError] tarafından bulut-erişilemez sayılır.
   static const Duration cloudReadTimeout = Duration(seconds: 4);
 
+  /// While the shared [RestaurantCloudGate] says the cloud is down, a printer
+  /// read must not wait the full [cloudReadTimeout] again: one ticket makes
+  /// ~10 sequential reads (4 s each = ~40 s with the WAN cut). It falls to the
+  /// last good copy at once; the gate lets one probe through after its backoff.
+  static const Duration cloudReadFailFast = Duration(milliseconds: 150);
+
+  static Duration get cloudReadBudget => RestaurantCloudGate.shouldFailFast
+      ? cloudReadFailFast
+      : cloudReadTimeout;
+
+  static Future<T> gatedCloudRead<T>(
+    Future<T> Function() read, {
+    Duration? timeout,
+  }) async {
+    try {
+      final value = await read().timeout(timeout ?? cloudReadBudget);
+      RestaurantCloudGate.noteSuccess();
+      return value;
+    } catch (error) {
+      if (isCloudUnreachableError(error)) RestaurantCloudGate.noteFailure();
+      rethrow;
+    }
+  }
+
   @override
   Future<List<PrinterModel>> fetchPrinters(String restaurantId) async {
     final backendPath =
@@ -99,12 +125,13 @@ class PrinterRepository implements PrinterRepositoryPort {
       'source=fetchPrinters sellerId=$restaurantId storeId=- backendPath=$backendPath',
     );
     try {
-      final rows = await _client
-          .from('printers')
-          .select()
-          .eq('restaurant_id', restaurantId)
-          .order('created_at', ascending: true)
-          .timeout(cloudReadTimeout);
+      final rows = await gatedCloudRead(
+        () => _client
+            .from('printers')
+            .select()
+            .eq('restaurant_id', restaurantId)
+            .order('created_at', ascending: true),
+      );
       final printers = List<Map<String, dynamic>>.from(
         rows as List,
       ).map(PrinterModel.fromMap).toList(growable: false);
@@ -541,11 +568,11 @@ class PrinterRepository implements PrinterRepositoryPort {
   static Future<PrinterModel?> printerByIdFrom({
     required String printerId,
     required Future<dynamic> Function() read,
-    Duration timeout = cloudReadTimeout,
+    Duration? timeout,
     void Function(Object error, StackTrace stackTrace)? onError,
   }) async {
     try {
-      final row = await read().timeout(timeout);
+      final row = await gatedCloudRead(read, timeout: timeout);
       if (row == null) return null;
       return PrinterModel.fromMap(Map<String, dynamic>.from(row as Map));
     } catch (error, stackTrace) {
@@ -823,12 +850,13 @@ class PrinterRepository implements PrinterRepositoryPort {
       'source=fetchStationPrinterMappings sellerId=$restaurantId storeId=- backendPath=$backendPath',
     );
     try {
-      final rows = await _client
-          .from('station_printers')
-          .select(selectClause)
-          .eq('stations.restaurant_id', restaurantId)
-          .order('created_at', ascending: true)
-          .timeout(cloudReadTimeout);
+      final rows = await gatedCloudRead(
+        () => _client
+            .from('station_printers')
+            .select(selectClause)
+            .eq('stations.restaurant_id', restaurantId)
+            .order('created_at', ascending: true),
+      );
       final mappings =
           List<Map<String, dynamic>>.from(
               rows as List,
@@ -986,12 +1014,13 @@ class PrinterRepository implements PrinterRepositoryPort {
 
     Object? config;
     try {
-      config = await _client
-          .from('restaurant_print_station_configs')
-          .select('kitchen_printer_id, kitchen_printer_name, role_mappings')
-          .eq('restaurant_id', normalizedRestaurantId)
-          .maybeSingle()
-          .timeout(cloudReadTimeout);
+      config = await gatedCloudRead(
+        () => _client
+            .from('restaurant_print_station_configs')
+            .select('kitchen_printer_id, kitchen_printer_name, role_mappings')
+            .eq('restaurant_id', normalizedRestaurantId)
+            .maybeSingle(),
+      );
     } catch (error) {
       final cached = await lastGoodRowsWhenUnreachable(
         stationConfigCacheKind,
