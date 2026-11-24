@@ -1,3 +1,7 @@
+-- UYGULANDI (production): 2026-11-24 akşamı işletme sahibi tarafından Supabase SQL Editor üzerinden ELLE çalıştırıldı.
+-- Salt-okunur doğrulama 2026-11-24 20:04 (+03): canlı sarmalayıcı md5 b328f59d4ab26730ea26f4c034d64a22 (2029) = bu dosyanın v2 gövdesi.
+-- supabase_migrations.schema_migrations içinde KAYDI YOKTUR (elle uygulandı). YENİDEN UYGULAMAYIN; dosya adı tarihsel olarak DRAFT kaldı.
+-- Aşağıdaki ilk satır uygulama öncesinden kalmadır.
 -- DRAFT — DO NOT APPLY without explicit operator approval naming this file.
 -- Kök neden (üretimde salt-okunur doğrulandı, 2026-11-23): create_table_order_with_print_jobs_impl
 -- sipariş başlığını subtotal_amount = 0 / total_amount = 0 sabitleriyle yazıyor ve order_items'a
@@ -11,6 +15,7 @@
 -- Yetki: sarmalayıcı zaten SECURITY DEFINER; _impl yetki/masa/istasyon/ürün kapılarını geçmeden
 -- buraya gelinmez (hata fırlatır). Para kilidi tetikleyicileri _impl'in açtığı işlem-yerel
 -- ibul.marketplace_order_rpc bayrağıyla geçilir; bayrak burada da işlem-yerel açılır.
+-- v2 (2026-11-24 denetim): para bayrağı iş bitince önceki değerine döndürülür (v1 açık bırakıyordu).
 -- ETKİ UYARISI (uygulamadan önce karar verilmeli): bugüne kadar 0 olan masa siparişi başlık
 -- toplamları bundan sonra gerçek tutarı taşır. orders.total_amount'u toplayan finans/gelir
 -- sorguları (masa tahsilatı table_payments ile ayrıca sayılıyorsa) çift sayım açısından
@@ -46,6 +51,8 @@ declare
   v_result jsonb;
   v_order_id uuid;
   v_total numeric;
+  -- Çağrı öncesi bayrak değeri: iş bitince AYNEN geri konur (aşağıya bakın).
+  v_previous_rpc text := current_setting('ibul.marketplace_order_rpc', true);
 begin
   v_result := public.create_table_order_with_print_jobs_impl(
     p_restaurant_id, p_table_number, p_items, p_waiter_id, p_waiter_name,
@@ -89,6 +96,11 @@ begin
      and coalesce(o.subtotal_amount, 0) = 0
      and coalesce(o.total_amount, 0) = 0
      and v_total > 0;
+
+  -- Bayrak işlem-yereldir ama bu sarmalayıcıyı başka bir sunucu fonksiyonu da çağırıyor
+  -- (approve_waiter_order_request). Açık bırakılırsa o işlemin KALANINDA para kilidi
+  -- tetikleyicileri devre dışı kalırdı; _impl gibi önceki değere döndürülür.
+  perform set_config('ibul.marketplace_order_rpc', coalesce(v_previous_rpc, ''), true);
 
   return v_result;
 end;

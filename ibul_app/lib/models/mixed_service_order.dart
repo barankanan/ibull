@@ -349,9 +349,20 @@ class MixedServiceOrder {
           item['unit_price'] ??
           item['unitPrice'],
     );
-    final explicitTotalPrice = parsePrice(item['total_price'] ?? item['price']);
+    // `price` is the UNIT price (server RPCs, kitchen ticket, center journal).
+    // Only a field that says it is a line total is divided by the quantity;
+    // dividing `price` showed 2 × 180 as 180 on the table card.
+    final explicitTotalPrice = parsePrice(
+      item['total_price'] ?? item['totalPrice'],
+    );
+    final plainUnitPrice = parsePrice(item['price']);
+    final explicitLineTotal = parsePrice(item['line_total']);
     final fallbackUnitPrice = explicitTotalPrice > 0
         ? (explicitTotalPrice / quantity).toDouble()
+        : plainUnitPrice > 0
+        ? plainUnitPrice
+        : explicitLineTotal > 0
+        ? (explicitLineTotal / quantity).toDouble()
         : 0.0;
     final unitPriceSnapshot =
         explicitUnitPriceSnapshot > 0 ? explicitUnitPriceSnapshot : fallbackUnitPrice;

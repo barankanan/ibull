@@ -258,7 +258,7 @@ class RestaurantOfflineSyncService {
             restaurantId: order.restaurantId,
             tableNumber: order.tableNumber,
             items: order.items,
-            waiterId: _cloudUserId(order.waiterId),
+            waiterId: lanOrderWaiterRef(order),
             waiterName: order.waiterName.isEmpty ? null : order.waiterName,
             notes: order.notes.isEmpty ? null : order.notes,
             jobType: 'new_order',
@@ -290,7 +290,7 @@ class RestaurantOfflineSyncService {
               restaurantId: order.restaurantId,
               tableNumber: order.tableNumber,
               items: order.items,
-              waiterId: _cloudUserId(order.waiterId),
+              waiterId: lanOrderWaiterRef(order),
               waiterName: order.waiterName.isEmpty ? null : order.waiterName,
               notes: order.notes.isEmpty ? null : order.notes,
               jobType: 'new_order',
@@ -525,6 +525,17 @@ class LanOrderSyncPlan {
 final _cloudUserIdPattern = RegExp(
   r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
 );
+
+/// The staff id a cloud order is sent with. The center's verified staff id (the
+/// paired device's account) wins; an order without one (older record, the
+/// owner's own order) keeps its UUID waiter. The device fingerprint is never a
+/// waiter, and a staff id that is not a UUID is dropped instead of replaced by
+/// something else. `null` lets the server use the signed-in owner, as before.
+String? lanOrderWaiterRef(RestaurantLocalOrderRecord order) {
+  final staff = order.staffId.trim();
+  if (staff.isNotEmpty) return _cloudUserId(staff);
+  return _cloudUserId(order.waiterId);
+}
 
 String? _cloudUserId(String value) {
   final text = value.trim();

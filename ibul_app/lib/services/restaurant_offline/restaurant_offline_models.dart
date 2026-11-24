@@ -55,6 +55,7 @@ class RestaurantLocalOrderRecord {
     this.remoteOrderId,
     this.syncError,
     this.heldForCenter = false,
+    this.staffId = '',
   });
 
   /// True on a phone while the order center has not confirmed this order
@@ -62,6 +63,12 @@ class RestaurantLocalOrderRecord {
   /// here are handed to the center again on their own; older device copies,
   /// which carry no mark, are never sent by themselves.
   final bool heldForCenter;
+
+  /// The staff member the center VERIFIED for this order: the account of the
+  /// paired device (cert-bound, re-checked on every request), never a field the
+  /// phone typed. `waiterId` stays the device that sent it. Empty on records
+  /// written before this field and on the owner's own orders.
+  final String staffId;
 
   final String localOrderId;
   final String restaurantId;
@@ -89,6 +96,7 @@ class RestaurantLocalOrderRecord {
     'table_number': tableNumber,
     'waiter_id': waiterId,
     'waiter_name': waiterName,
+    if (staffId.isNotEmpty) 'staff_id': staffId,
     'items': items,
     'notes': notes,
     'total': total,
@@ -111,6 +119,7 @@ class RestaurantLocalOrderRecord {
       tableNumber: (json['table_number'] as num?)?.toInt() ?? 0,
       waiterId: json['waiter_id']?.toString() ?? '',
       waiterName: json['waiter_name']?.toString() ?? '',
+      staffId: json['staff_id']?.toString() ?? '',
       items: _readMapList(json['items']),
       notes: json['notes']?.toString() ?? '',
       total: (json['total'] as num?)?.toDouble() ?? 0,
@@ -148,6 +157,7 @@ class RestaurantLocalOrderRecord {
       tableNumber: tableNumber,
       waiterId: waiterId,
       waiterName: waiterName,
+      staffId: staffId,
       items: items ?? this.items,
       notes: notes,
       total: total ?? this.total,

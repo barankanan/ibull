@@ -59,6 +59,48 @@ void main() {
     RestaurantLocalOrderQueueService.clearAllMemoryForTests();
   });
 
+  test('the saved order carries the paired staff id; a forged waiter field changes nothing', () async {
+    // Teras 8, 2026-11-24: the cloud order named the owner because the center
+    // kept only the device fingerprint. The verified, paired staff id is kept.
+    const efe = '2e2f1914-0d12-4459-846e-b17d5b1eb014';
+    const forged = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    final orders = RestaurantLocalOrderQueueService();
+    final host = _host(
+      material,
+      restaurantId: 'lan-host-staff',
+      branchId: 'branch-1',
+      orders: orders,
+      stationsOverride: const <Map<String, dynamic>>[
+        <String, dynamic>{'id': 'kasap'},
+      ],
+      tablesOverride: const <Map<String, dynamic>>[
+        <String, dynamic>{'id': '27', 'name': 'Teras 8'},
+      ],
+      productsOverride: const <Map<String, dynamic>>[
+        <String, dynamic>{'id': 'cacik', 'name': 'KATI CACIK', 'station_id': 'kasap', 'price': 180},
+      ],
+    );
+    await _listen(host, material);
+    addTearDown(host.stop);
+    final session = await _pair(host, material, waiterA.directory, efe);
+    final saved = await session.postAuthorized('/lan/orders', <String, Object?>{
+      'local_order_id': 'staff-order-1',
+      'table_number': 27,
+      'station_id': 'kasap',
+      'branch_id': 'branch-1',
+      'waiter_id': forged,
+      'waiter_name': 'efe',
+      'items': <Map<String, Object?>>[
+        <String, Object?>{'name': 'KATI CACIK', 'product_id': 'cacik', 'quantity': 2, 'price': 180},
+      ],
+    });
+    expect(saved['saved'], isTrue, reason: saved['error']?.toString());
+    final stored = (await orders.list('lan-host-staff')).single;
+    expect(stored.staffId, efe);
+    expect(stored.waiterId, isNot(forged));
+    expect(stored.total, 360);
+  });
+
   test('tls waiters save once and a closed host reports failure', () async {
     const restaurantId = 'lan-host-rest';
     var prints = 0;

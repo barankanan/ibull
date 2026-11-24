@@ -925,6 +925,8 @@ class RestaurantLanHost {
       tableNumber: int.tryParse(body['table_number']?.toString() ?? '') ?? 0,
       waiterId: deviceId,
       waiterName: body['waiter_name']?.toString() ?? '',
+      // Verified: the paired device's own account, re-checked on this request.
+      staffId: _devices[deviceId]?.staffId ?? '',
       items: priced.items,
       notes: body['notes']?.toString() ?? '',
       total: priced.total,
@@ -994,6 +996,7 @@ class RestaurantLanHost {
         tableNumber: previous.tableNumber,
         waiterId: previous.waiterId,
         waiterName: previous.waiterName,
+        staffId: previous.staffId,
         items: merged,
         notes: order.notes.isNotEmpty ? order.notes : previous.notes,
         total: merged.fold<double>(0, (sum, item) {
