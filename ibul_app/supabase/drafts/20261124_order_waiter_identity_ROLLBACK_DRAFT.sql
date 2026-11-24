@@ -26,7 +26,15 @@ declare
                       where b.id = sa.branch_id and b.store_id = sa.store_id
                         and b.status = 'active')))
     ) then p_waiter_id
-    else auth.uid()
+    -- Doğrulanamayan kimlik ASLA başkasına (işletme sahibine) çevrilmez: çağıran bu
+    -- işletmenin aktif personeliyse kendi kimliği, aksi hâlde NULL = "doğrulanmamış garson".
+    when exists (
+      select 1 from public.store_sub_admins me
+      where me.store_id = p_restaurant_id
+        and me.status = 'active'
+        and me.auth_user_id = auth.uid()
+    ) then auth.uid()
+    else null
   end
   limit 1;
 $blk$;

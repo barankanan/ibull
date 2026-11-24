@@ -77,6 +77,7 @@ class RestaurantOfflineBanner extends StatefulWidget {
 
 class _RestaurantOfflineBannerState extends State<RestaurantOfflineBanner> {
   int _pendingSyncCount = 0;
+  int _quarantinedCount = 0;
   int? _savedPrinterCount;
   DateTime? _cachedAt;
   bool _loaded = false;
@@ -115,6 +116,11 @@ class _RestaurantOfflineBannerState extends State<RestaurantOfflineBanner> {
       } catch (_) {}
       pending = await sync.pendingCount(widget.restaurantId);
     }
+    var quarantined = 0;
+    try {
+      quarantined = await sync.quarantinedPendingCount(widget.restaurantId);
+    } catch (_) {}
+    if (quarantined > pending) quarantined = pending;
     int? remote;
     try {
       remote = (await PrinterRepository().fetchPrinters(
@@ -125,7 +131,8 @@ class _RestaurantOfflineBannerState extends State<RestaurantOfflineBanner> {
     }
     if (!mounted) return;
     setState(() {
-      _pendingSyncCount = pending;
+      _pendingSyncCount = pending - quarantined;
+      _quarantinedCount = quarantined;
       _cachedAt = cache?.cachedAt;
       _savedPrinterCount = resolveSavedPrinterCount(
         remoteCount: remote,
@@ -156,7 +163,9 @@ class _RestaurantOfflineBannerState extends State<RestaurantOfflineBanner> {
           savedPrinters: _savedPrinterCount,
         );
         if (hasInternet && supabaseOk && mode == RestaurantConnectivityMode.online) {
-          if (_pendingSyncCount <= 0 && printerNotice == null) {
+          if (_pendingSyncCount <= 0 &&
+              _quarantinedCount <= 0 &&
+              printerNotice == null) {
             return const SizedBox.shrink();
           }
         }
@@ -167,7 +176,9 @@ class _RestaurantOfflineBannerState extends State<RestaurantOfflineBanner> {
 
         switch (mode) {
           case RestaurantConnectivityMode.online:
-            if (_pendingSyncCount <= 0 && printerNotice == null) {
+            if (_pendingSyncCount <= 0 &&
+              _quarantinedCount <= 0 &&
+              printerNotice == null) {
               return const SizedBox.shrink();
             }
             if (_pendingSyncCount > 0) {
@@ -177,7 +188,7 @@ class _RestaurantOfflineBannerState extends State<RestaurantOfflineBanner> {
               if (authNotice != null) lines.add(authNotice);
               background = const Color(0xFF2563EB);
             } else {
-              // Only the printer notice is left to say.
+              // Only the printer or quarantine notice is left to say.
               background = const Color(0xFFD97706);
             }
             foreground = Colors.white;
@@ -222,6 +233,11 @@ class _RestaurantOfflineBannerState extends State<RestaurantOfflineBanner> {
         if (_pendingSyncCount > 0 &&
             mode != RestaurantConnectivityMode.online) {
           lines.add('$_pendingSyncCount yerel sipariş senkron bekliyor.');
+        }
+        if (_quarantinedCount > 0) {
+          lines.add(
+            '$_quarantinedCount eski sipariş karantinada; otomatik gönderilmez.',
+          );
         }
         if (printerNotice != null) lines.add(printerNotice);
         if (_cachedAt != null &&

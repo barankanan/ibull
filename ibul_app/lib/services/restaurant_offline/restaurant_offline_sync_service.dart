@@ -132,6 +132,14 @@ class RestaurantOfflineSyncService {
   Future<int> pendingCount(String restaurantId) =>
       _orderQueue.pendingSyncCount(restaurantId);
 
+  /// Pending orders that are held in quarantine. They are never sent
+  /// automatically, so the "not synced yet" warning must not count them as
+  /// orders that are about to sync.
+  Future<int> quarantinedPendingCount(String restaurantId) async =>
+      (await _orderQueue.pendingSyncOrders(restaurantId))
+          .where((o) => quarantinedLocalOrderIds.contains(o.localOrderId))
+          .length;
+
   Future<List<RestaurantLocalOrderRecord>> pendingOrders(String restaurantId) =>
       _orderQueue.pendingSyncOrders(restaurantId);
 

@@ -14,9 +14,11 @@
 --   * boş ya da çağıranın kendisi (eski davranış), veya
 --   * BU işletmenin AKTİF personeli (store_sub_admins.status = 'active', auth_user_id = p_waiter_id),
 --     'manageOrders' yetkisi var, şubesi (varsa) aktif ve masanın şubesiyle aynı.
--- Aksi hâlde sipariş REDDEDİLMEZ; garson çağıranın kendisine düşer (bugünkü sonuç). Böylece
--- senkron sırasında pasife alınmış bir personelin eski siparişi kaybolmaz, ama başkasının
--- kimliği de yazılamaz. Sipariş kalemi, toplam, baskı, kimlik/oturum kuralları DEĞİŞMEZ.
+-- Aksi hâlde sipariş REDDEDİLMEZ (senkron sırasında pasife alınmış personelin eski siparişi
+-- kaybolmasın) ama yanlış garson da YAZILMAZ: orders.waiter_id = NULL ("doğrulanmamış garson",
+-- kolon zaten NULL kabul eder). Çağıran bu işletmenin aktif personeliyse başkasını adlandıramaz;
+-- kendi kimliği yazılır. İşletme sahibinin kendi siparişi (boş/kendisi) geçerlidir.
+-- Sipariş kalemi, toplam, baskı, kimlik/oturum kuralları DEĞİŞMEZ.
 -- Gövde: canlı `_impl` (md5 b521ede6…, 18518) içinde tek `where` satırı değişir; beklenen kalıp
 -- tam bir kez bulunmazsa hiçbir şey yazılmaz. Geçmiş siparişler DEĞİŞTİRİLMEZ (Teras 8 dahil).
 -- Geri alma: 20261124_order_waiter_identity_ROLLBACK_DRAFT.sql
@@ -47,7 +49,15 @@ declare
                       where b.id = sa.branch_id and b.store_id = sa.store_id
                         and b.status = 'active')))
     ) then p_waiter_id
-    else auth.uid()
+    -- Doğrulanamayan kimlik ASLA başkasına (işletme sahibine) çevrilmez: çağıran bu
+    -- işletmenin aktif personeliyse kendi kimliği, aksi hâlde NULL = "doğrulanmamış garson".
+    when exists (
+      select 1 from public.store_sub_admins me
+      where me.store_id = p_restaurant_id
+        and me.status = 'active'
+        and me.auth_user_id = auth.uid()
+    ) then auth.uid()
+    else null
   end
   limit 1;
 $blk$;

@@ -122,6 +122,7 @@ import '../utils/garson_area_sections.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_primitives.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_overview_widgets.dart';
+import '../features/seller/panel/helpers/adisyon_payments_loader.dart';
 import '../features/seller/panel/helpers/seller_panel_lifecycle_guards.dart';
 import '../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
 import '../features/seller/panel/printer_center/printer_receipt_routing.dart';
@@ -16817,46 +16818,34 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       (sum, item) => sum + MixedServiceOrder.itemLineTotal(item),
     );
     final sellerId = _resolveGarsonSellerId();
-    final payments = ValueNotifier<({double paid, bool readable, bool loading})>(
-      (paid: 0, readable: false, loading: sellerId.isNotEmpty),
+    final payments = ValueNotifier<AdisyonPaymentsState>(
+      sellerId.isNotEmpty ? adisyonPaymentsLoading : adisyonPaymentsUnreadable,
     );
-    if (sellerId.isNotEmpty) {
-      unawaited(() async {
-        try {
-          final earliest = orders
-              .map(
-                (order) =>
-                    DateTime.tryParse(order['created_at']?.toString() ?? ''),
-              )
-              .whereType<DateTime>()
-              .fold<DateTime?>(null, (earliest, current) {
-                if (earliest == null || current.isBefore(earliest)) {
-                  return current;
-                }
-                return earliest;
-              });
-          final rows = await _storeService.getTablePayments(
-            sellerId: sellerId,
-            tableNumber: tableNumber,
-          );
-          var paid = 0.0;
-          for (final row in rows) {
-            final payment = TablePayment.fromMap(row);
-            if (earliest != null &&
-                payment.createdAt.isBefore(
-                  earliest.subtract(const Duration(minutes: 1)),
-                )) {
-              continue;
-            }
-            paid += payment.amount;
-          }
-          payments.value = (paid: paid, readable: true, loading: false);
-        } catch (error) {
-          debugPrint('[GARSON_BILL_PAYMENTS] table=$tableNumber error=$error');
-          payments.value = (paid: 0, readable: false, loading: false);
-        }
-      }());
+    DateTime? earliestOrderAt;
+    for (final order in orders) {
+      final at = DateTime.tryParse(order['created_at']?.toString() ?? '');
+      if (at != null &&
+          (earliestOrderAt == null || at.isBefore(earliestOrderAt))) {
+        earliestOrderAt = at;
+      }
     }
+    var paymentsDisposed = false;
+    Future<void> reloadPayments() async {
+      if (sellerId.isEmpty) return;
+      payments.value = adisyonPaymentsLoading;
+      final next = await loadAdisyonPayments(
+        fetch: () => _storeService.getTablePayments(
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+        ),
+        earliestOrderAt: earliestOrderAt,
+        onError: (error) =>
+            debugPrint('[GARSON_BILL_PAYMENTS] table=$tableNumber error=$error'),
+      );
+      if (!paymentsDisposed) payments.value = next;
+    }
+
+    unawaited(reloadPayments());
     if (!mounted) {
       payments.dispose();
       return;
@@ -16985,9 +16974,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     ),
                     const SizedBox(height: 8),
                     Text('Toplam: ${_garsonFormatMoney(billTotal())}'),
-                    ValueListenableBuilder<
-                      ({double paid, bool readable, bool loading})
-                    >(
+                    ValueListenableBuilder<AdisyonPaymentsState>(
                       valueListenable: payments,
                       builder: (context, state, _) {
                         final remaining = billTotal() - state.paid;
@@ -17009,6 +16996,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
+                            if (!state.loading && !state.readable)
+                              TextButton.icon(
+                                onPressed: () => unawaited(reloadPayments()),
+                                icon: const Icon(Icons.refresh, size: 16),
+                                label: const Text('Ödemeleri tekrar oku'),
+                              ),
                           ],
                         );
                       },
@@ -17039,6 +17032,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         );
       },
     );
+    paymentsDisposed = true;
     payments.dispose();
   }
 
