@@ -11,3 +11,11 @@ Ayrıntılı kanıt: `docs/RESTAURANT_PILOT_PROGRESS.md`. Tamamlanan işler bura
 - **Ortam notu:** Yeni çalışma ağaçlarında `ibul_app/lib/core/config/generated_runtime_config.g.dart` (gitignore'lu, anahtar içerir) yoktur ve testler derlenmez. Yerel çözüm: `generated_runtime_config_stub.dart` dosyasını `.g.dart` adıyla kopyala (anahtarsız; Git'e girmez). Anahtarı `strings` ile çıkarma.
 - **BLOCKED / onay gerektiren:** garson kimliği üretim migration'ı; fiziksel iPhone/WAN/yazıcı testleri.
 - **Yarın ilk görev:** diğer oturumun stage1f derlemesi bittikten sonra Mac Release gerçek ekran doğrulaması; `e0f4976` için WAN-kesik gerçek ölçümün (kullanıcı evdeyken) belgelenmesi.
+
+## 2026-11-25 00:04 — ikinci otonom oturum (kod değişikliği yok)
+
+- **Yapılan:** kural dosyası uygulandı; madde 1'deki fast-forward ile hedef/günlük belgeleri alındı (6bc6f06).
+- **Doğrulama (PASS):** adisyon_payments_loader + garson_quantity_line_total + lan_offline_delay_budget = 24/24 (HEAD e0f4976).
+- **Neden kod yok:** Aşama 1'de kalan işlerin tümü kullanıcı/fiziksel cihaz gerektiriyor; disk boş alanı 1,7 GB (<10 GB) → derleme yok; çalışan stage1d uygulaması dokunulmadan bırakıldı. Tek güvenli işi seçecek kanıtlı bir hata bulunamadı.
+- **BLOCKED:** garson kimliği migration onayı; iPhone/WAN/Ethernet yazıcı testleri; disk temizliği (CLEANUP onayı).
+- **Sıradaki:** disk açılınca Mac Release gerçek ekran doğrulaması; öncelik 3 için order_service.dart unit_price temizleme (satır ~3791-3828) denetimi.
