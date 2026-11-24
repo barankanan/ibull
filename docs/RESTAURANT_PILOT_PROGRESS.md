@@ -1328,3 +1328,9 @@ Kullanıcı telefonda Sistem → Yerel operasyon → "Garson cihazı" ekranını
 - **Düzeltme (istemci):** `RestaurantLocalOrderRecord.staffId` (merkezin doğruladığı eşli cihaz hesabı), `lanOrderWaiterRef` bulut RPC'sine bu kimliği verir; telefondan gelen `waiter_id` yok sayılır. Eski kayıtlar uyumlu. Testler: `lan_order_staff_identity_test.dart`, `restaurant_lan_host_test.dart`.
 - **Sunucu taslağı (UYGULANMADI, ayrı onay bekliyor):** `ibul_app/supabase/drafts/20261124_order_waiter_identity_DRAFT.sql` + `_ROLLBACK_DRAFT.sql`; izole kanıt `supabase/tests/run_isolated_order_waiter_identity.sh`. Geçmiş kayıtlar (Teras 8 dahil) değiştirilmez.
 - **Adet/fiyat:** `price` birim fiyattır, adede bölünmez (`garson_quantity_line_total_test.dart`, 14 test).
+
+### Aşama 1c — yeni Mac Release gerçek ekran doğrulaması (2026-11-24)
+
+- Derleme: `~/IBUL_isolated_build/flutter-build-stage1c` (commit fd1364f), `com.ibul.sellerdesktop`, codesign geçerli; ilk deneme yerel-varlık önbelleği yüzünden düştü, `.dart_tool/hooks_runner/objective_c` ve `.dart_tool/flutter_build` silinmeden `~/IBUL_isolated_build/*_aside` altına alındı, ikinci derleme başarılı. Yalnız yeni klasörün `Intermediates.noindex` ara dosyaları silindi; boş alan 6,7 GB.
+- Geçiş: günlük + baskı kaydı `ibul-backups/20261124-pre-stage1c` altına yedeklendi; günlük SHA geçişten sonra aynı; LAN merkezi 192.168.10.68:18772 ve köprü 127.0.0.1:3001 ayakta; yazıcı hazır.
+- Gerçek ekran, Teras 8: 1 sipariş, 2 × KATI CACIK, kart toplamı ₺360,00; adisyon ₺360,00 (birim ₺180,00). Kalan bakiye: "Ödemeler okunuyor…" — DOĞRULANMADI. Hiçbir sipariş/fiş/kapatma yapılmadı.
