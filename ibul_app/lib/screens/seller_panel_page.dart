@@ -16830,8 +16830,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       }
     }
     var paymentsDisposed = false;
+    var paymentsReadSeq = 0;
     Future<void> reloadPayments() async {
       if (sellerId.isEmpty) return;
+      // Only the latest read may publish; an older, slower read must not
+      // overwrite a newer result (or a retry) with stale data.
+      final seq = ++paymentsReadSeq;
       payments.value = adisyonPaymentsLoading;
       final next = await loadAdisyonPayments(
         fetch: () => _storeService.getTablePayments(
@@ -16842,7 +16846,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         onError: (error) =>
             debugPrint('[GARSON_BILL_PAYMENTS] table=$tableNumber error=$error'),
       );
-      if (!paymentsDisposed) payments.value = next;
+      if (!paymentsDisposed && seq == paymentsReadSeq) payments.value = next;
     }
 
     unawaited(reloadPayments());
