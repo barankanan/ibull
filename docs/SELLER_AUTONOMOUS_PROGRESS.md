@@ -19,3 +19,12 @@ Ayrıntılı kanıt: `docs/RESTAURANT_PILOT_PROGRESS.md`. Tamamlanan işler bura
 - **Neden kod yok:** Aşama 1'de kalan işlerin tümü kullanıcı/fiziksel cihaz gerektiriyor; disk boş alanı 1,7 GB (<10 GB) → derleme yok; çalışan stage1d uygulaması dokunulmadan bırakıldı. Tek güvenli işi seçecek kanıtlı bir hata bulunamadı.
 - **BLOCKED:** garson kimliği migration onayı; iPhone/WAN/Ethernet yazıcı testleri; disk temizliği (CLEANUP onayı).
 - **Sıradaki:** disk açılınca Mac Release gerçek ekran doğrulaması; öncelik 3 için order_service.dart unit_price temizleme (satır ~3791-3828) denetimi.
+
+## 2026-11-25 (gündüz) — interaktif oturum, P0-00 denetimi (kod değişikliği yok)
+
+- **Durum:** HEAD 90b76bb (dal claude/ibul-restaurant-completion-e60b65). Ana klasörde 248 commit'siz dosya var, dokunulmadı. Disk %97, 381 MB boş → derleme yok.
+- **Doğrulama (PASS):** adisyon_payments_loader + garson_quantity_line_total + lan_offline_delay_budget + printer_readiness (12/12, tek durum kaynağı) + adisyon_line_edit = 43/43.
+- **Denetim:** `order_service.dart` `_normalizeExternalCargoProductLines` (satır 3791-3828) e-ticaret kargo yolu; birim fiyat adede bölünmüyor, restoran akışıyla ilgisi yok → hata yok, kod değişmedi.
+- **P0-01..P0-07:** kod tarafı önceki oturumlarda PASS/NOT VERIFIED; kalanlar fiziksel iPhone/WAN/Ethernet yazıcı ve üretim migration onayı (BLOCKED, bkz. SELLER_WEEKLY_GOALS.md).
+- **Aşama 2 (P1+) kilitli:** kullanıcı onayı yok, başlanmadı.
+- **Sıradaki:** disk ≥10 GB olunca Mac Release gerçek ekran doğrulaması; CLEANUP onayı (docs/CLEANUP_CANDIDATES.md henüz yok).
