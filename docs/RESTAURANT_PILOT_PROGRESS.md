@@ -1379,7 +1379,7 @@ Taban: `fc884ca` (dal `claude/printer-status-lan-center-ae6266`; `claude/ibul-re
 
 ### Testler (gerçek çalıştırma, 2026-11-25)
 - Yeni: `printer_status_single_authority_test.dart` (15), `desktop_print_hub_readiness_publish_test.dart` (5), `restaurant_center_auto_start_test.dart` (+12), `restaurant_center_control_test.dart` (+2). Hepsi PASS.
-- Yazıcı/LAN/merkez ile ilgili tüm Dart testleri (`test/printer_persistence` + `test/services` içinde lan/print/bridge/center/waiter/offline/held/kitchen + bu modüllere dokunan diğer testler): 582 PASS, 1 atlandı, 10 FAIL. 10 FAIL = `lan_bridge_sync_test` 2 (`IBUL_POSTGREST` ister), `lan_private_listen_test` 1, `mobile_order_print_service_test` 7; aynı dosyalar bu turun değişiklikleri geri alınmış kaynakta da aynı sayıda kalıyor (aşağıdaki commit notuna bakın).
+- Yazıcı/LAN/merkez ile ilgili tüm Dart testleri (`test/printer_persistence` + `test/services` içinde lan/print/bridge/center/waiter/offline/held/kitchen + bu modüllere dokunan diğer testler): 582 PASS, 1 atlandı, 10 FAIL. 10 FAIL = `lan_bridge_sync_test` 2 (`IBUL_POSTGREST` ister), `lan_private_listen_test` 1, `mobile_order_print_service_test` 7; aynı üç dosya `fc884ca` kaynağıyla (bu turun `lib` değişiklikleri geçici olarak geri alınarak) çalıştırıldı: yine 10 FAIL / 17 PASS → bu turdan gelen yeni başarısızlık 0.
 - `dart analyze` (değişen lib + test dosyaları, `lib/main_seller.dart`): yeni sorun yok.
 - Köprü (Python `unittest`, `~/IBUL_isolated_build/bridge-venv`): 220 test, 19 başarısız = P15'te kayıtlı aynı 19; Python koduna dokunulmadı.
 - Tam `flutter test` ve derleme ÇALIŞTIRILMADI (disk 8–9 GB boş).
@@ -1390,3 +1390,6 @@ Taban: `fc884ca` (dal `claude/printer-status-lan-center-ae6266`; `claude/ibul-re
 - Fiziksel baskı, gerçek iPhone eşleşmesi/yeniden bağlanması, Mac IP değişimi, WAN kesme: BLOCKED (onay ve fiziksel cihaz gerekir).
 - USB / sistem kuyruğu yazıcıda hub'ın yoklayacağı adres yok: rozet "Yazıcı doğrulanmadı" kalır (yanlış "hazır" göstermez); ayrı görev.
 - Açılış başlatması başarısız olursa nedeni yalnız günlükte (`lastLaunch` arayüzde gösterilmiyor); oturum içinde yeniden denenmez, operatör Başlat'a basar.
+
+### Commit
+- `342bc59` (dal `claude/printer-status-lan-center-ae6266`, taban `fc884ca`). Push/merge YOK; canlı dala birleştirme kullanıcı kararı.
