@@ -1393,3 +1393,10 @@ Taban: `fc884ca` (dal `claude/printer-status-lan-center-ae6266`; `claude/ibul-re
 
 ### Commit
 - `342bc59` (dal `claude/printer-status-lan-center-ae6266`, taban `fc884ca`). Push/merge YOK; canlı dala birleştirme kullanıcı kararı.
+
+### İzole macOS Release derlemesi (2026-11-25 20:31–, kullanıcı onayıyla; kurulmadı, açılmadı)
+- Kaynak: `ff97b29` (düzeltme `342bc59`), çalışma ağacı temiz. Komut: `flutter build macos --target lib/main_seller.dart --release` (dart-define yok; yapılandırma e60b65 ağacındaki doğrulanmış `generated_runtime_config.g.dart` kopyası, içerik günlüğe yazılmadı). Köprü: e60b65'teki 23 Kasım paketli `IbulPrintBridge` (Python kodu bu turda değişmedi).
+- Paket: `~/IBUL_isolated_build/flutter-build-printerlan-342bc59/macos/Build/Products/Release/IbulSellerDesktop.app` (201 MB; klasör 6,6 GB). Derleme sonrası boş disk 9,8 GiB.
+- PASS: `CFBundleIdentifier = com.ibul.sellerdesktop`; `codesign --verify --deep --strict` geçerli (Apple Development, takım B4849QMKTU); gömülü köprü `com.ibul.sellerdesktop.printbridge` imzalı; ikilide yeni koda ait metinler (`print service revive`, `choice not remembered`) ve production Supabase ana makinesi mevcut.
+- Dokunulmadı: diğer `flutter-build*` klasörleri, çalışan uygulama (derleme sırasında çalışan İBUL Satıcı/köprü süreci yoktu), port 3001.
+- NOT VERIFIED: uygulama hiç AÇILMADI — oturum, açılışta otomatik başlama, Durdur sonrası kapalı açılış, rozet/kart/Garson metin eşitliği, köprü canlandırma, baskı, iPhone. Noter onayı yok.
