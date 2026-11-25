@@ -1420,3 +1420,14 @@ Turda bulunan ve düzeltilen iki hata:
 - Garson ekranı açılınca birkaç saniye rozet "Yazıcı doğrulanmadı", Garson "Yazıcıya ulaşılamıyor" diyordu (rozet yalnız hub'ın kendi turunda yenileniyordu) → `PhysicalPrintGate.changes` (`a5409ea`); yeniden derlemede rozet doğrudan "Yazıcıya ulaşılamıyor" ile geldi.
 
 NOT VERIFIED (bu turda görülemedi): yazıcı AÇIKKEN "Yazıcı Hazır" eşitliği ve gerçek fiş (yazıcı ağda değildi); köprü canlandırıldıktan sonra eski iş sınırının köprüde durduğu; iPhone eşleşmesi/yeniden bağlanması; Mac IP değişimi; WAN kesintisi; Garson rozetinin hub yayımını anında izlemesi (kendi 30 sn turunda günceller). Tur sonunda uygulama kapatıldı; tercih açık bırakıldı (tur öncesiyle aynı).
+
+### Gerçek ekran turu 2 — yazıcı AÇIK (2026-11-25 21:00–21:02; aynı izole paket, kaynak `a5409ea`)
+İlk denemede yazıcı ağda yoktu (192.168.10.100 yanıtsız, /24'te 9100 açık cihaz yok): uygulama açılmadı, fiş gönderilmedi. Kullanıcı yazıcıyı bağladıktan sonra bağımsız `nc` 192.168.10.100:9100 başarılı.
+
+| Adım | Gözlem | Durum |
+|---|---|---|
+| Açılış (hiç tıklama yok) | köprü + LAN kendiliğinden | PASS |
+| "Hazır" eşitliği | Sağ alt rozet "Yazıcı Hazır" (yeşil); Yazıcı Merkezi kartı "Yazıcı hazır — Bağlantı başarılı, baskı henüz doğrulanmadı"; özet "1 / 1 bağlı, Ulaşılamayan: Yok"; Yazıcılar satırı "Kayıtlı · bağlı · baskıya hazır"; Garson rozeti "Yazıcı servisi açık" (yeşil) | PASS (Garson rozeti servis durumunu, diğerleri yazıcı durumunu söyler; çelişki yok, metin aynı değil) |
+| Tek test fişi (kullanıcı onaylı) | Yazıcılar → Test → hedef `aa` tcp:192.168.10.100:9100 → Test Gönder (tek tık). Köprü günlüğü 80 → 81: `ibul-test-receipt`, `completed`, `success=True`, 50297 bayt; 20 sn sonra da 81 (tekrar yok) | PASS (gönderim); kâğıt çıktısı kullanıcı teyidi bekliyor |
+
+Notlar: (1) İlk Test tıklaması yanlış düğmeye geldi ve "Yazıcı Ekle" ekranı açıldı; hiçbir şey eklenmeden kapatıldı. (2) Test penceresi "Yazıcı zaten kayıtlı, mevcut kayıt güncellendi" dedi: bu pencere her testte mevcut yazıcı kaydını yeniden yazıyor (bu turdan önceki davranış). (3) Tur sonunda uygulama kapatıldı, portlar boş, tercih açık.
