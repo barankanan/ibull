@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show ValueNotifier;
+
 /// Bridge `/health` and the physical printer are different facts.
 class PrinterLinkStatus {
   const PrinterLinkStatus({
@@ -58,6 +60,22 @@ PrinterCanonicalStatus describeCanonicalPrinterStatus({
   final queueNote = pendingJobs > 0 || quarantinedJobs > 0
       ? ' Bekleyen $pendingJobs, karantina $quarantinedJobs.'
       : '';
+  if (!bridgeUp && serviceEnabled != false) {
+    // A bridge that does not answer is a connection fault. It is never shown
+    // as "servis kapalı" or "durum bilinmiyor": the operator did not switch
+    // anything off.
+    return PrinterCanonicalStatus(
+      bridgeUp: false,
+      printerReachable: printerReachable,
+      serviceEnabled: serviceEnabled,
+      stationConsumerEnabled: stationConsumerEnabled,
+      pendingJobs: pendingJobs,
+      quarantinedJobs: quarantinedJobs,
+      label: 'Yazıcı köprüsüne ulaşılamıyor',
+      detail:
+          'Bu cihazdaki yazıcı köprüsü yanıt vermiyor. Fiziksel baskı yapılamaz; siparişler kuyrukta korunur.$stationNote$queueNote',
+    );
+  }
   if (serviceEnabled != true) {
     final unknown = serviceEnabled == null;
     return PrinterCanonicalStatus(
@@ -245,6 +263,26 @@ class PhysicalPrintGate {
   static DateTime? suppressJobsCreatedBefore;
   static PrinterCanonicalStatus? published;
 
+  /// The answer about the SAVED printers (the ones tickets are routed to),
+  /// measured by the print hub for every screen. While it is fresh it is the
+  /// only source of "is the printer reachable": a screen that probed some
+  /// other address (the last one the bridge wrote to) cannot overrule it.
+  static bool? savedPrintersReachable;
+  static DateTime? savedPrintersCheckedAt;
+  static const Duration savedPrintersVerdictTtl = Duration(minutes: 3);
+
+  static void noteSavedPrinters(bool? reachable, {DateTime? now}) {
+    savedPrintersReachable = reachable;
+    savedPrintersCheckedAt = reachable == null ? null : (now ?? DateTime.now());
+  }
+
+  static bool? freshSavedPrintersVerdict({DateTime? now}) {
+    final at = savedPrintersCheckedAt;
+    if (savedPrintersReachable == null || at == null) return null;
+    final age = (now ?? DateTime.now()).difference(at);
+    return age > savedPrintersVerdictTtl ? null : savedPrintersReachable;
+  }
+
   static void observe(bool? value, {DateTime? now}) {
     final clock = now ?? DateTime.now();
     if (value == true && allowed == false) {
@@ -282,18 +320,32 @@ class PhysicalPrintGate {
     bool probedPrinter = false,
   }) {
     final previous = published;
-    published = describeCanonicalPrinterStatus(
+    final saved = freshSavedPrintersVerdict();
+    final next = describeCanonicalPrinterStatus(
       bridgeUp: bridgeUp,
-      printerReachable: probedPrinter
-          ? printerReachable
-          : (printerReachable ?? previous?.printerReachable),
+      printerReachable: saved ??
+          (probedPrinter
+              ? printerReachable
+              : (printerReachable ?? previous?.printerReachable)),
       serviceEnabled: serviceEnabled,
       stationConsumerEnabled:
           stationConsumerEnabled ?? previous?.stationConsumerEnabled,
       pendingJobs: pendingJobs,
       quarantinedJobs: quarantinedJobs,
     );
+    published = next;
+    if (previous == null ||
+        previous.label != next.label ||
+        previous.printerReachable != next.printerReachable ||
+        previous.bridgeUp != next.bridgeUp ||
+        previous.serviceEnabled != next.serviceEnabled) {
+      changes.value += 1;
+    }
   }
+
+  /// Ticks when the published answer changes, whoever published it, so every
+  /// indicator redraws together instead of at its own next poll.
+  static final ValueNotifier<int> changes = ValueNotifier<int>(0);
 
   static bool get allowsSend => allowed == true;
 
@@ -313,6 +365,63 @@ class PhysicalPrintGate {
     observedAt = null;
     suppressJobsCreatedBefore = null;
     published = null;
+    savedPrintersReachable = null;
+    savedPrintersCheckedAt = null;
+  }
+}
+
+/// One saved network printer a ticket can be routed to.
+typedef SavedPrinterTarget = ({String host, int port, bool hasRole});
+
+/// The addresses the readiness answer is about: saved network printers that
+/// carry a kitchen/receipt role. When no saved printer has a role yet, every
+/// saved network printer is asked. USB / system-queue printers have no
+/// address to ask, so they are not part of this answer.
+List<({String host, int port})> savedPrinterProbeTargets(
+  Iterable<SavedPrinterTarget> printers,
+) {
+  final valid = printers
+      .where((p) => p.host.trim().isNotEmpty && p.port > 0)
+      .toList(growable: false);
+  final routed = valid.where((p) => p.hasRole).toList(growable: false);
+  final seen = <String>{};
+  return <({String host, int port})>[
+    for (final p in routed.isEmpty ? valid : routed)
+      if (seen.add('${p.host.trim()}:${p.port}'))
+        (host: p.host.trim(), port: p.port),
+  ];
+}
+
+/// Opens and closes a connection to every target; nothing is printed.
+/// Null: there is nothing to ask. False: at least one printer a ticket would
+/// go to does not answer (asked twice, a first "no" on a quiet network is
+/// not trusted). True: all of them answer.
+Future<bool?> probeSavedPrinters(
+  List<({String host, int port})> targets,
+  Future<bool> Function(String host, int port) probe, {
+  Duration retryDelay = const Duration(seconds: 1),
+}) async {
+  if (targets.isEmpty) return null;
+  for (final target in targets) {
+    var ok = await _askPrinter(probe, target.host, target.port);
+    if (!ok) {
+      await Future<void>.delayed(retryDelay);
+      ok = await _askPrinter(probe, target.host, target.port);
+    }
+    if (!ok) return false;
+  }
+  return true;
+}
+
+Future<bool> _askPrinter(
+  Future<bool> Function(String host, int port) probe,
+  String host,
+  int port,
+) async {
+  try {
+    return await probe(host, port);
+  } catch (_) {
+    return false;
   }
 }
 

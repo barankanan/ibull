@@ -288,9 +288,30 @@ class RestaurantCenterControl {
   /// refuses new LAN orders with "not saved", lets the order being written
   /// finish, and closes. No other path can start the print service again
   /// until the next "Başlat". Saved orders and waiting print jobs stay.
-  static Future<void> stop() async {
+  ///
+  /// [byOperator] is false when the app is only closing: this computer stays
+  /// the restaurant's center and the operator's choice is not forgotten.
+  static Future<void> stop({bool byOperator = true}) async {
     PrintServiceStartGate.revoke();
-    await SellerLanCenter.stop();
+    await SellerLanCenter.stop(byOperator: byOperator);
+  }
+
+  /// The print service stopped answering although nobody chose "Durdur":
+  /// bring it back with the same limits this session's "Başlat" set, so jobs
+  /// from before that start still do not print. Never runs after "Durdur".
+  static Future<bool> reviveBridge() async {
+    if (!startedThisSession) return false;
+    final since = PrintServiceStartGate.startedAt;
+    if (since == null) return false;
+    if (!await _bridgeUp()) return false;
+    // "Durdur" may have been pressed while the service was coming up.
+    if (!startedThisSession) return false;
+    try {
+      await prepareBridge(since);
+    } catch (error) {
+      debugPrint('[RestaurantCenter] revived bridge not prepared: $error');
+    }
+    return true;
   }
 
   /// Closes the print service itself. Called after printing was switched off

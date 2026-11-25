@@ -8,6 +8,17 @@ Color printerServiceStatusColor(bool? isAvailable) {
       : const Color(0xFF6B7280);
 }
 
+/// The colour of the Garson badge follows its text. A service that is open
+/// with a saved printer that does not answer is a fault (red), not a green
+/// "available": the badge used to read "Yazıcıya ulaşılamıyor" in green.
+bool? printerBadgeAvailability({
+  required bool? serviceAvailable,
+  required bool? printerReachable,
+}) {
+  if (serviceAvailable == true && printerReachable == false) return false;
+  return serviceAvailable;
+}
+
 String printerServiceTimeAgoShort(DateTime past, {DateTime? now}) {
   final diff = (now ?? DateTime.now()).difference(past);
   if (diff.inSeconds < 60) return 'şimdi';

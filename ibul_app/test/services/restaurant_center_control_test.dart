@@ -510,5 +510,49 @@ void main() {
       await RestaurantCenterControl.holdOwedOldJobs('rest-1');
       expect(written, <bool>[false]);
     });
+
+    test('a print service that died is brought back with the same old-job '
+        'limit, never after Durdur', () async {
+      var starts = 0;
+      final prepared = <DateTime>[];
+      RestaurantCenterControl.startBridge = () async {
+        starts += 1;
+        return true;
+      };
+      RestaurantCenterControl.prepareBridge = (since) async =>
+          prepared.add(since);
+
+      // Never started: nothing to revive.
+      expect(await RestaurantCenterControl.reviveBridge(), isFalse);
+      expect(starts, 0);
+
+      final startedAt = DateTime.utc(2026, 11, 25, 9);
+      PrintServiceStartGate.grant(startedAt);
+      expect(await RestaurantCenterControl.reviveBridge(), isTrue);
+      expect(starts, 1);
+      // Jobs from before this session's Başlat stay held after the revive.
+      expect(prepared, <DateTime>[startedAt]);
+      expect(PrintServiceStartGate.startedAt, startedAt);
+
+      PrintServiceStartGate.revoke(); // Durdur
+      expect(await RestaurantCenterControl.reviveBridge(), isFalse);
+      expect(starts, 1);
+    });
+
+    test('closing the app is not Durdur: this computer stays the center',
+        () async {
+      await start();
+      expect(listening(), isTrue);
+      expect(await SellerLanCenter.isOwned('rest-1'), isTrue);
+
+      await RestaurantCenterControl.stop(byOperator: false); // app exit
+      expect(listening(), isFalse);
+      expect(PrintServiceStartGate.open, isFalse);
+      expect(await SellerLanCenter.isOwned('rest-1'), isTrue);
+
+      await start();
+      await RestaurantCenterControl.stop(); // the operator's Durdur
+      expect(await SellerLanCenter.isOwned('rest-1'), isFalse);
+    });
   });
 }

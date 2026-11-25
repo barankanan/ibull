@@ -3,7 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart'
-    show ChangeNotifier, debugPrint, debugPrintStack, kDebugMode;
+    show
+        ChangeNotifier,
+        debugPrint,
+        debugPrintStack,
+        kDebugMode,
+        visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -20,11 +25,13 @@ import 'local_print_service.dart';
 import 'printer_event_log_service.dart';
 import 'printer_link_status.dart';
 import 'printer_readiness.dart';
+import 'printer_tcp_probe.dart';
 import 'print_service_start_gate.dart';
 import 'print_station_service.dart';
 import 'print_job_repository.dart';
 import 'print_job_payload_identity.dart';
 import 'printer_repository.dart';
+import 'restaurant_offline/restaurant_center_auto_start.dart';
 import 'restaurant_printer_dispatch_resolver.dart';
 import 'bridge_print_dispatch_verification.dart';
 
@@ -125,7 +132,11 @@ class FailedPrintJob {
 ///   await hub.stop();                // on logout
 ///   ```
 class DesktopPrintHub extends ChangeNotifier {
-  DesktopPrintHub();
+  DesktopPrintHub() {
+    // Another screen may publish the printer answer (the Garson page asks
+    // right when it opens): the chip follows at once, not 30 seconds later.
+    PhysicalPrintGate.changes.addListener(notifyListeners);
+  }
 
   final DesktopPrintOrchestrator _printOrchestrator =
       DesktopPrintOrchestrator();
@@ -181,6 +192,15 @@ class DesktopPrintHub extends ChangeNotifier {
     var changed = false;
     try {
       final printers = await _printerRepository.fetchPrinters(restaurant);
+      _savedPrinterTargets = savedPrinterProbeTargets(<SavedPrinterTarget>[
+        for (final p in printers)
+          if (p.isEthernetConnection)
+            (
+              host: p.ipAddress?.trim() ?? '',
+              port: p.port ?? PrinterModel.ethernetDefaultPort,
+              hasRole: p.assignedRoles.isNotEmpty,
+            ),
+      ]);
       if (_registeredPrinterCount != printers.length) {
         _registeredPrinterCount = printers.length;
         changed = true;
@@ -201,6 +221,49 @@ class DesktopPrintHub extends ChangeNotifier {
       }
     } catch (_) {}
     if (changed) notifyListeners();
+  }
+
+  /// Saved network printers tickets are routed to (see
+  /// [savedPrinterProbeTargets]).
+  List<({String host, int port})> _savedPrinterTargets =
+      const <({String host, int port})>[];
+  String _probedTargetsKey = '';
+  DateTime? _savedPrintersProbedAt;
+  bool _probingSavedPrinters = false;
+
+  /// Slow on purpose: a receipt printer serves one connection at a time and
+  /// real tickets come first.
+  static const Duration _savedPrinterProbeInterval = Duration(seconds: 60);
+
+  @visibleForTesting
+  Future<bool> Function(String host, int port) printerProbe =
+      (host, port) => probePrinterTcp(host: host, port: port);
+
+  /// Asks the saved printers whether they answer and records the one answer
+  /// every screen reads. It used to be asked only by the Garson page, and
+  /// about the last address the bridge had written to: after a restart, or
+  /// with another page open, the chip stayed on "Yazıcı doğrulanmadı" while
+  /// the printer center showed the same printer as connected.
+  Future<void> _refreshSavedPrinterReachability({bool force = false}) async {
+    if (_probingSavedPrinters) return;
+    final targets = _savedPrinterTargets;
+    final key = targets.map((t) => '${t.host}:${t.port}').join(',');
+    final last = _savedPrintersProbedAt;
+    final due =
+        force ||
+        key != _probedTargetsKey ||
+        last == null ||
+        DateTime.now().difference(last) >= _savedPrinterProbeInterval;
+    if (!due) return;
+    _probingSavedPrinters = true;
+    try {
+      final verdict = await probeSavedPrinters(targets, printerProbe);
+      _probedTargetsKey = key;
+      _savedPrintersProbedAt = DateTime.now();
+      PhysicalPrintGate.noteSavedPrinters(verdict);
+    } finally {
+      _probingSavedPrinters = false;
+    }
   }
 
   ListenerStatus _listenerStatus = ListenerStatus.stopped;
@@ -487,6 +550,7 @@ class DesktopPrintHub extends ChangeNotifier {
 
   @override
   void dispose() {
+    PhysicalPrintGate.changes.removeListener(notifyListeners);
     _disposed = true;
     _healthTimer?.cancel();
     _pendingSweepTimer?.cancel();
@@ -517,9 +581,14 @@ class DesktopPrintHub extends ChangeNotifier {
     if (_bridgeStatus == BridgeStatus.unknown) {
       _setBridgeStatus(BridgeStatus.checking);
     }
+    final shownBefore = readiness.chipLabel;
+    Map<String, dynamic>? health;
     final svc = LocalPrintService(timeout: _healthTimeout);
     try {
       final status = await svc.checkAvailability(timeout: _healthTimeout);
+      if (status.isAvailable && status.details is Map) {
+        health = Map<String, dynamic>.from(status.details! as Map);
+      }
       _setBridgeStatus(
         status.isAvailable ? BridgeStatus.online : BridgeStatus.offline,
       );
@@ -543,6 +612,52 @@ class DesktopPrintHub extends ChangeNotifier {
       svc.dispose();
     }
     await refreshReadinessInputs();
+    await publishReadiness(
+      online: _bridgeStatus == BridgeStatus.online,
+      health: health,
+      shownBefore: shownBefore,
+    );
+  }
+
+  @visibleForTesting
+  set savedPrinterTargetsForTest(List<({String host, int port})> targets) =>
+      _savedPrinterTargets = targets;
+
+  /// One published answer for every screen, measured here because the hub
+  /// lives as long as the app does. A bridge that does not answer says
+  /// nothing about the printers, so they are not asked then.
+  @visibleForTesting
+  Future<void> publishReadiness({
+    required bool online,
+    Map<String, dynamic>? health,
+    String? shownBefore,
+  }) async {
+    final before = shownBefore ?? readiness.chipLabel;
+    void publish() => PhysicalPrintGate.publish(
+      bridgeUp: online,
+      serviceEnabled: online ? PhysicalPrintGate.allowed : null,
+      stationConsumerEnabled: printStationConsumerEnabledFromHealth(health),
+      pendingJobs: pendingJobsFromHealth(health),
+    );
+    // The bridge and the permission are published at once; the printers are
+    // asked afterwards so a slow printer does not hold the answer back.
+    publish();
+    if (online) {
+      RestaurantCenterAutoStart.notePrintServiceAnswers();
+      await _refreshSavedPrinterReachability();
+      publish();
+    } else if (_started && _bridgeStatus == BridgeStatus.offline) {
+      // Nobody pressed "Durdur" (the hub only runs while the center is
+      // started), so a service that is gone stopped unexpectedly.
+      unawaited(
+        RestaurantCenterAutoStart.printServiceStoppedAnswering().then((ok) {
+          if (ok && _started) unawaited(checkBridge());
+        }),
+      );
+    }
+    // The permission and the printer answer live outside the hub; without
+    // this the chip kept its old text until some unrelated hub change.
+    if (readiness.chipLabel != before) notifyListeners();
   }
 
   /// Try to auto-start the local print bridge.

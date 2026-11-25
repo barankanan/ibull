@@ -240,7 +240,10 @@ class _SellerSessionGateState extends State<_SellerSessionGate> {
     try {
       _offlineLifecycle.stop();
       final wasStarted = RestaurantCenterControl.startedThisSession;
-      await RestaurantCenterControl.stop().timeout(const Duration(seconds: 8));
+      // Closing the app is not the operator's "Durdur": this computer stays
+      // the center and the choice for the next launch is kept.
+      await RestaurantCenterControl.stop(byOperator: false)
+          .timeout(const Duration(seconds: 8));
       if (wasStarted) {
         // The next launch must find the print service closed too.
         await RestaurantCenterControl.closePrintServiceSafely()
