@@ -1349,3 +1349,44 @@ Kullanıcı telefonda Sistem → Yerel operasyon → "Garson cihazı" ekranını
 - **Regresyon (tam, 90 sn sınırı):** 49 başarısız = taban 49 (isimler `~/IBUL_isolated_build/results/stage1d_failed_names.txt`); `lib` farkı 4 satır.
 - **Gerçek ekran:** karantina uyarısı doğru ("1 eski sipariş karantinada; otomatik gönderilemez."), yazıcı servisi açık. Teras 8 siparişi (`4d68a2ef`, 360 TL) bulutta `closed` (kullanıcı kapattı); adisyon ödeme yükleyici gerçek ekranda DOĞRULANMADI (birim testi 6/6).
 - **BLOCKED:** garson kimliği sunucu migration'ı (taslak, onay bekliyor). Aşama 2 kapsamı (fiyat değiştirme, ürün silme, "Fiyatı Güncelle") değişmedi.
+
+## 2026-11-25 Yazıcı ve LAN güvenilirliği — durum tutarsızlığı, kalıcı Başlat/Durdur, köprü canlandırma (production'a YAZILMADI, fiziksel baskı YOK)
+
+Taban: `fc884ca` (dal `claude/printer-status-lan-center-ae6266`; `claude/ibul-restaurant-completion-e60b65` üzerinden ayrıldı, o dala ve ana klasöre dokunulmadı). Supabase şeması, RLS, Edge Function, TLS/sertifika, sipariş/ödeme/masa kodu DEĞİŞMEDİ. Derleme yapılmadı; gerçek uygulama, gerçek yazıcı, gerçek iPhone kullanılmadı.
+
+### Kök nedenler (kod okumasıyla doğrulandı)
+| # | Belirti | Kök neden | Düzeltme |
+|---|---|---|---|
+| 1 | Sağ alt rozet "Yazıcı doğrulanmadı", Yazıcı Merkezi "bağlı / çalışıyor", fiş basılıyor | Ortak durum (`PhysicalPrintGate.published.printerReachable`) tek yerde yayımlanıyordu: `seller_panel_page._applyLocalPrintStatus`, yalnız Garson modülü açıkken 30 sn'de bir, ve KAYITLI yazıcıyı değil köprünün `/health` yanıtındaki "son basılan adresi" (`last_kitchen_tcp`) yokluyordu. Yeniden başlatmadan sonra o adres boştur → `null` → "doğrulanmadı". Yazıcı Merkezi ise kendi `PrinterReachabilityMonitor`'ı ile kayıtlı yazıcıyı yokluyordu. Rozet yalnız göstergedir, baskıyı engellemez; bu yüzden fiş çıkıyordu | Hub (`DesktopPrintHub.checkBridge`) kayıtlı, rol atanmış ağ yazıcılarını yoklar ve tek hükmü yayımlar; Garson rozeti ve Yazıcı Merkezi kartı aynı hükmü okur |
+| 2 | Rozet metni bayat kalıyor | İzin ve yazıcı hükmü hub dışında (statik) duruyor, değişince hub dinleyicilerine haber verilmiyordu | `checkBridge` sonunda rozet metni değiştiyse `notifyListeners` |
+| 3 | Yazıcı Merkezi "Açık ve yazıcı servisi çalışıyor. Yeni siparişler otomatik yazdırılır." | `_printReadiness` yazıcı erişilebilirliğine hiç bakmıyordu | Yazıcı yanıt vermiyorsa "Açık, yazıcıya ulaşılamıyor", yoklanmadıysa "Açık, yazıcı doğrulanmadı" |
+| 4 | Servisi açıyorum, uygulamayı kapatıp açınca kapalı | Başlat/Durdur hiçbir kalıcı tercih yazmıyordu; ayrı ve varsayılan kapalı "otomatik başlat" anahtarı gerekiyordu. O anahtar açıkken Durdur da tercihi silmiyordu (kapattıktan sonraki açılışta kendiliğinden açılıyordu) | Operatörün Başlat'ı tercihi açar, Durdur'u kapatır (`rememberOperatorChoice`) |
+| 5 | Uygulama kapanışı Durdur gibi davranıyordu | `_onExitRequested` → `RestaurantCenterControl.stop()` → `SellerLanCenter.stop()` varsayılan `byOperator: true` → merkez sahipliği siliniyordu (belge `byOperator:false` diyordu, kod öyle değildi) | `stop(byOperator: false)` |
+| 6 | Açılış başlatması bazen hiç çalışmıyor | `openAtLaunch` ilk çağrının sonucunu (null dahil) süreç boyunca saklıyordu; işletmeyi henüz bilmeyen ilk çağıran tek hakkı tüketiyordu | null sonuç saklanmaz |
+| 7 | Köprü beklenmedik kapanınca oturum boyunca kapalı kalıyor | Köprüyü yeniden başlatan gözcü yoktu | `printServiceStoppedAnswering` → `reviveBridge` (geri çekilmeli, en çok 5) |
+
+### İncelendi, değişiklik gerekmedi (mevcut testlerle korunuyor)
+- Mac IP değişimi: `SellerLanCenter.followNetworkOnce` + sertifika aynı anahtarla yeniden imzalanır; telefon anahtar pinini (`_keyPin`) her başarılı yoklamada öğrenir ve yeni sertifikayı yalnız aynı anahtar + aynı makine kimliği kanıtlanırsa kabul eder (`waiter_lan_link_test.dart`, `lan_server_key_pin_test.dart`, `lan_rebind_decision_test.dart`). Pin hiç öğrenilmeden sertifikası yenilenen eski eşleşme yeniden eşleştirme ister: güvenlik gereği, gevşetilmedi.
+- Eşleşmiş cihazlar ve sunucu anahtarları yeniden başlatmada korunur (`SecureLanEnrollmentStore`, `lanMaterialDirectory`).
+- Aynı sipariş yeniden gelirse: aynı `local_order_id` + aynı içerik → 200 `duplicate:true`, baskı yok; farklı içerik → 409 (`restaurant_lan_host_test.dart`, `local_print_bridge/tests/test_lan_http_idempotency.py`).
+- `PhysicalPrintGate.allowed != false` (`order_print_job_service.dart`): izin BİLİNMİYORKEN iş duraklatılmaz, bilinçli sözleşme (`kitchen_print_dedup.dart:300`); değiştirilmedi.
+
+### Bağımsız QA (ayrı ajan, kod yazmadı) ve sonrasında düzeltilenler
+- QA hükmü: A–D iddiaları birim düzeyinde PASS, uçtan uca NOT VERIFIED; sipariş/ödeme/masa/RLS/TLS koduna dokunulmadığı doğrulandı; yeni paralel servis/kuyruk yok.
+- QA P1 "hub yayımı testsiz" → `test/services/desktop_print_hub_readiness_publish_test.dart` (hub'ın yayım adımı sahte yazıcıyla).
+- QA P2 "köprü kapalıyken Garson rozeti 'Yazıcı servisi durumu bilinmiyor' diyor" → `describeCanonicalPrinterStatus` köprü yanıt vermiyorsa (ve operatör kapatmadıysa) "Yazıcı köprüsüne ulaşılamıyor" der; bağlantı hatası "servis kapalı" ile karışmaz.
+- QA P2 "yoklama yayımı geciktiriyor" → önce köprü/izin yayımlanır, sonra yazıcı yoklanır.
+
+### Testler (gerçek çalıştırma, 2026-11-25)
+- Yeni: `printer_status_single_authority_test.dart` (15), `desktop_print_hub_readiness_publish_test.dart` (5), `restaurant_center_auto_start_test.dart` (+12), `restaurant_center_control_test.dart` (+2). Hepsi PASS.
+- Yazıcı/LAN/merkez ile ilgili tüm Dart testleri (`test/printer_persistence` + `test/services` içinde lan/print/bridge/center/waiter/offline/held/kitchen + bu modüllere dokunan diğer testler): 582 PASS, 1 atlandı, 10 FAIL. 10 FAIL = `lan_bridge_sync_test` 2 (`IBUL_POSTGREST` ister), `lan_private_listen_test` 1, `mobile_order_print_service_test` 7; aynı dosyalar bu turun değişiklikleri geri alınmış kaynakta da aynı sayıda kalıyor (aşağıdaki commit notuna bakın).
+- `dart analyze` (değişen lib + test dosyaları, `lib/main_seller.dart`): yeni sorun yok.
+- Köprü (Python `unittest`, `~/IBUL_isolated_build/bridge-venv`): 220 test, 19 başarısız = P15'te kayıtlı aynı 19; Python koduna dokunulmadı.
+- Tam `flutter test` ve derleme ÇALIŞTIRILMADI (disk 8–9 GB boş).
+
+### NOT VERIFIED / BLOCKED
+- Gerçek uygulamada (Release) açılışta otomatik başlama, Durdur sonrası kapalı açılış, rozet/kart/Garson metin eşitliği: yeni derleme gerekir → NOT VERIFIED.
+- Köprü sürecinin gerçekten ölmesi ve canlandırılması (gerçek paketli köprü, port çakışması): NOT VERIFIED.
+- Fiziksel baskı, gerçek iPhone eşleşmesi/yeniden bağlanması, Mac IP değişimi, WAN kesme: BLOCKED (onay ve fiziksel cihaz gerekir).
+- USB / sistem kuyruğu yazıcıda hub'ın yoklayacağı adres yok: rozet "Yazıcı doğrulanmadı" kalır (yanlış "hazır" göstermez); ayrı görev.
+- Açılış başlatması başarısız olursa nedeni yalnız günlükte (`lastLaunch` arayüzde gösterilmiyor); oturum içinde yeniden denenmez, operatör Başlat'a basar.

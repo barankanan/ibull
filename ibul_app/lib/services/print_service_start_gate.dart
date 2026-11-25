@@ -2,10 +2,12 @@ import 'package:flutter/foundation.dart';
 
 /// Whether this run of the app may start the print service.
 ///
-/// It lives in memory only, so every launch begins closed for a restaurant:
-/// nothing remembered from an earlier session opens it. It opens when the
-/// operator presses "Başlat" in Sistem > Yazıcı Merkezi (after the business
-/// and the account were checked) and closes again on "Durdur".
+/// It lives in memory only, so every launch begins closed for a restaurant.
+/// It opens when the operator presses "Başlat" in Sistem > Yazıcı Merkezi
+/// (after the business and the account were checked) and closes again on
+/// "Durdur". The operator's last choice is remembered on this computer by
+/// `RestaurantCenterAutoStart`; a launch after "Başlat" runs that same
+/// checked start once, a launch after "Durdur" stays closed.
 ///
 /// Businesses that are known not to be restaurants are not held back; their
 /// other printing works as before.

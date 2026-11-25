@@ -83,6 +83,24 @@ class RestaurantCenterAutoStart {
     }
   }
 
+  /// The operator's own "Başlat" / "Durdur" is the choice for the next
+  /// launches: started stays started until the operator stops it, and a
+  /// stopped center does not come back by itself. Closing the app, a start
+  /// that failed and a print service that died are not operator choices and
+  /// never reach this.
+  static Future<bool> rememberOperatorChoice(
+    String restaurantId, {
+    required bool started,
+  }) async {
+    try {
+      await setEnabled(restaurantId, started);
+      return true;
+    } catch (error) {
+      debugPrint('[RestaurantCenter] choice not remembered: $error');
+      return false;
+    }
+  }
+
   // ---- seams (the real services by default) ----
 
   @visibleForTesting
@@ -293,7 +311,18 @@ class RestaurantCenterAutoStart {
   /// Returns null when nothing was attempted, so the caller keeps the
   /// behaviour it always had (every launch begins closed).
   static Future<RestaurantCenterOpen?> openAtLaunch(String restaurantId) {
-    return _launch ??= _openAtLaunch(restaurantId.trim());
+    final running = _launch;
+    if (running != null) return running;
+    final run = _openAtLaunch(restaurantId.trim());
+    _launch = run;
+    // "Nothing attempted" is not this run's launch start: the first caller
+    // can come before the restaurant is known (another id, a business not
+    // resolved yet). It must not use up the one start for the caller that
+    // does know. An attempted start, good or bad, stays the answer.
+    return run.then((result) {
+      if (result == null && identical(_launch, run)) _launch = null;
+      return result;
+    });
   }
 
   static Future<RestaurantCenterOpen?> _openAtLaunch(String id) async {
@@ -326,8 +355,79 @@ class RestaurantCenterAutoStart {
     return result;
   }
 
+  // ---- a print service that died ----
+
+  static int _reviveAttempts = 0;
+  static DateTime? _lastReviveAt;
+  static Future<bool>? _reviving;
+
+  /// How many times in a row the service is brought back before the operator
+  /// is left to press "Başlat": a service that keeps dying is not restarted
+  /// forever.
+  static const int maxReviveAttempts = 5;
+
+  @visibleForTesting
+  static Future<bool> Function() reviveBridge =
+      RestaurantCenterControl.reviveBridge;
+
+  @visibleForTesting
+  static DateTime Function() clock = DateTime.now;
+
+  static Duration _reviveWait(int attempts) =>
+      Duration(seconds: 30 * (1 << (attempts > 4 ? 4 : attempts)));
+
+  /// The print service answered again; the next failure starts from zero.
+  static void notePrintServiceAnswers() {
+    _reviveAttempts = 0;
+    _lastReviveAt = null;
+  }
+
+  /// Called when the print service does not answer. Between "Başlat" and
+  /// "Durdur" on the restaurant's center computer that is an unexpected stop
+  /// and the service is started again (30 s, 1, 2, 4, 8 minutes apart, then
+  /// no more). After "Durdur", or on any other device, nothing is started.
+  static Future<bool> printServiceStoppedAnswering() {
+    final running = _reviving;
+    if (running != null) return running;
+    if (!hostsCenter() ||
+        !PrintServiceStartGate.restaurantRules ||
+        !RestaurantCenterControl.startedThisSession ||
+        _opening != null ||
+        _reviveAttempts >= maxReviveAttempts) {
+      return Future<bool>.value(false);
+    }
+    final last = _lastReviveAt;
+    if (last != null && clock().difference(last) < _reviveWait(_reviveAttempts - 1)) {
+      return Future<bool>.value(false);
+    }
+    _reviveAttempts += 1;
+    _lastReviveAt = clock();
+    final run = () async {
+      try {
+        final ok = await reviveBridge();
+        debugPrint(
+          '[RestaurantCenter] print service revive '
+          'attempt=$_reviveAttempts ok=$ok',
+        );
+        return ok;
+      } catch (error) {
+        debugPrint('[RestaurantCenter] print service revive failed: $error');
+        return false;
+      }
+    }();
+    _reviving = run;
+    return run.whenComplete(() {
+      if (identical(_reviving, run)) _reviving = null;
+    });
+  }
+
   @visibleForTesting
   static void resetForTests() {
+    _reviveAttempts = 0;
+    _lastReviveAt = null;
+    _reviving = null;
+    reviveBridge = RestaurantCenterControl.reviveBridge;
+    clock = DateTime.now;
     _opening = null;
     _launch = null;
     lastLaunch.value = null;

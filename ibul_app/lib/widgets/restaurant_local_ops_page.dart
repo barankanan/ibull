@@ -11,6 +11,7 @@ import 'package:ibul_app/services/restaurant_offline/restaurant_local_print_queu
 import 'package:ibul_app/services/restaurant_offline/restaurant_offline_models.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_offline_sync_service.dart' show quarantinedLocalOrderIds;
 import 'package:ibul_app/services/restaurant_offline/lan_staff_probe.dart';
+import 'package:ibul_app/services/restaurant_offline/restaurant_center_auto_start.dart';
 import 'package:ibul_app/services/restaurant_offline/restaurant_center_control.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -105,6 +106,12 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
       readMembership: _readMembership,
     );
     final result = started.center;
+    if (started.access.allowed && started.bridgeOk) {
+      await RestaurantCenterAutoStart.rememberOperatorChoice(
+        widget.restaurantId,
+        started: true,
+      );
+    }
     if (!mounted) return;
     setState(() {
       _centerBusy = false;
@@ -120,6 +127,10 @@ class _RestaurantLocalOpsPageState extends State<RestaurantLocalOpsPage> {
     // Same as Durdur in Yazıcı Merkezi: printing closes with the center,
     // after the ticket in progress.
     await RestaurantCenterControl.closePrintServiceSafely();
+    await RestaurantCenterAutoStart.rememberOperatorChoice(
+      widget.restaurantId,
+      started: false,
+    );
     if (!mounted) return;
     setState(() {
       _centerBusy = false;

@@ -225,6 +225,7 @@ class _KitchenPrintManagementPageState
     if (_hostsRestaurantCenter) {
       _reachability.start(() => _allPrintersCache);
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _followPrintHub());
     _logPrinterSettings(
       'Init',
       'screen=KitchenPrintManagementPage openedTab=printers sellerId=${widget.restaurantId} '
@@ -232,8 +233,27 @@ class _KitchenPrintManagementPageState
     );
   }
 
+  DesktopPrintHub? _watchedHub;
+
+  /// The readiness card shows the answer the hub publishes for every screen;
+  /// it follows the hub instead of waiting for the next manual refresh.
+  void _followPrintHub() {
+    if (!mounted || _watchedHub != null) return;
+    try {
+      _watchedHub = Provider.of<DesktopPrintHub>(context, listen: false)
+        ..addListener(_onPrintHubChanged);
+    } catch (_) {
+      // No hub on this device (tests, handhelds): nothing to follow.
+    }
+  }
+
+  void _onPrintHubChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _watchedHub?.removeListener(_onPrintHubChanged);
     _reachability.dispose();
     super.dispose();
   }
@@ -1356,6 +1376,21 @@ class _KitchenPrintManagementPageState
       }
       if (_hostsRestaurantCenter && !enabled) {
         await RestaurantCenterControl.closePrintServiceSafely();
+      }
+      if (_hostsRestaurantCenter) {
+        // Başlat stays Başlat until the operator presses Durdur: the choice
+        // is kept on this computer and the next launch follows it.
+        final remembered =
+            await RestaurantCenterAutoStart.rememberOperatorChoice(
+              widget.restaurantId,
+              started: enabled,
+            );
+        if (remembered && mounted) {
+          setState(() {
+            _autoStartEnabled = enabled;
+            _autoStartLoaded = true;
+          });
+        }
       }
       await _loadPrintStationState();
       if (!mounted) return;
@@ -2759,9 +2794,29 @@ class _KitchenPrintManagementPageState
           tone: PrinterCenterTone.warning,
         );
       }
+      // "Servis çalışıyor" is not "yazıcı hazır": the saved printer's own
+      // answer (the one the status chip shows) decides the last step.
+      final reachable = PhysicalPrintGate.published?.printerReachable;
+      if (reachable == false) {
+        return (
+          short: 'Açık, yazıcıya ulaşılamıyor',
+          long:
+              'Yazıcı servisi açık, ancak kayıtlı yazıcı yanıt vermiyor. Yazıcının açık ve ağa bağlı olduğunu kontrol edin; fişler yazıcı dönene kadar basılamaz.',
+          tone: PrinterCenterTone.error,
+        );
+      }
+      if (reachable == null) {
+        return (
+          short: 'Açık, yazıcı doğrulanmadı',
+          long:
+              'Yazıcı servisi açık. Kayıtlı yazıcının bağlantısı henüz doğrulanmadı.',
+          tone: PrinterCenterTone.warning,
+        );
+      }
       return (
         short: 'Baskıya hazır',
-        long: 'Açık ve yazıcı servisi çalışıyor. Yeni siparişler otomatik yazdırılır.',
+        long:
+            'Yazıcı servisi açık ve kayıtlı yazıcı yanıt veriyor. Yeni siparişler otomatik yazdırılır.',
         tone: PrinterCenterTone.success,
       );
     }
@@ -2799,6 +2854,19 @@ class _KitchenPrintManagementPageState
       final started = await _startRestaurantCenter();
       message = started.message;
       ok = started.access.allowed && started.bridgeOk;
+      if (ok) {
+        final remembered =
+            await RestaurantCenterAutoStart.rememberOperatorChoice(
+              widget.restaurantId,
+              started: true,
+            );
+        if (remembered && mounted) {
+          setState(() {
+            _autoStartEnabled = true;
+            _autoStartLoaded = true;
+          });
+        }
+      }
     } else {
       final result = await BridgeManager.ensureReady();
       message = result.message;
@@ -3172,9 +3240,9 @@ class _KitchenPrintManagementPageState
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
               ),
               subtitle: const Text(
-                'Açıkken uygulama her açılışta kayıtlı yazıcılarla hazır gelir. '
-                'Önceden bekleyen fişler kendiliğinden basılmaz. '
-                'Durdur o oturum için her zaman geçerlidir.',
+                'Yazıcı Servisini açtığınızda açılır, kapattığınızda kapanır: '
+                'siz kapatana kadar uygulama her açılışta hazır gelir. '
+                'Önceden bekleyen fişler kendiliğinden basılmaz.',
                 style: TextStyle(fontSize: 12),
               ),
             ),

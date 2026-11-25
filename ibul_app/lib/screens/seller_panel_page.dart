@@ -13625,14 +13625,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       pendingJobs: pendingJobsFromHealth(healthBody),
       probedPrinter: printerReachable != null,
     );
-    final canonical = describeCanonicalPrinterStatus(
-      bridgeUp: status.isAvailable,
-      printerReachable: printerReachable,
-      serviceEnabled: serviceEnabled,
-      stationConsumerEnabled: printStationConsumerEnabledFromHealth(
-        healthBody,
-      ),
-    );
+    // The Garson badge reads the answer that was just published, the same
+    // one the bottom-right chip and the printer center show. It used to
+    // describe its own probe, so two screens could disagree about one printer.
+    final canonical = PhysicalPrintGate.published!;
+    _localPrinterReachable = canonical.printerReachable;
     final nextLabel = canonical.label;
     final nextMessage = status.reason == 'ok'
         ? canonical.detail
