@@ -65,7 +65,7 @@ void main() {
     await hub.publishReadiness(online: true, shownBefore: 'Yazıcı Hazır');
     expect(PhysicalPrintGate.published!.printerReachable, isFalse);
     expect(PhysicalPrintGate.published!.label, 'Yazıcıya ulaşılamıyor');
-    expect(notified, 1);
+    expect(notified, greaterThanOrEqualTo(1));
   });
 
   test('the printer is asked at a slow pace, not on every health check',
@@ -100,5 +100,30 @@ void main() {
       serviceEnabled: false,
     );
     expect(status.label, 'Yazıcı servisi kapalı');
+  });
+
+  test('the chip redraws at once when another screen publishes the answer '
+      '(real screen 2026-11-25: Garson said "ulaşılamıyor", the chip still '
+      '"doğrulanmadı" until its next poll)', () {
+    PhysicalPrintGate.observe(true);
+    PhysicalPrintGate.publish(bridgeUp: true, serviceEnabled: true);
+    var notified = 0;
+    hub.addListener(() => notified += 1);
+    // The Garson page's own check.
+    PhysicalPrintGate.publish(
+      bridgeUp: true,
+      serviceEnabled: true,
+      printerReachable: false,
+      probedPrinter: true,
+    );
+    expect(notified, 1);
+    // The same answer again is not a change.
+    PhysicalPrintGate.publish(
+      bridgeUp: true,
+      serviceEnabled: true,
+      printerReachable: false,
+      probedPrinter: true,
+    );
+    expect(notified, 1);
   });
 }

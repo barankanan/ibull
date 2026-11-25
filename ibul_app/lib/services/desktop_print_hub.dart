@@ -132,7 +132,11 @@ class FailedPrintJob {
 ///   await hub.stop();                // on logout
 ///   ```
 class DesktopPrintHub extends ChangeNotifier {
-  DesktopPrintHub();
+  DesktopPrintHub() {
+    // Another screen may publish the printer answer (the Garson page asks
+    // right when it opens): the chip follows at once, not 30 seconds later.
+    PhysicalPrintGate.changes.addListener(notifyListeners);
+  }
 
   final DesktopPrintOrchestrator _printOrchestrator =
       DesktopPrintOrchestrator();
@@ -546,6 +550,7 @@ class DesktopPrintHub extends ChangeNotifier {
 
   @override
   void dispose() {
+    PhysicalPrintGate.changes.removeListener(notifyListeners);
     _disposed = true;
     _healthTimer?.cancel();
     _pendingSweepTimer?.cancel();

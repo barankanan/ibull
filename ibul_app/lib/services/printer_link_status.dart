@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show ValueNotifier;
+
 /// Bridge `/health` and the physical printer are different facts.
 class PrinterLinkStatus {
   const PrinterLinkStatus({
@@ -319,7 +321,7 @@ class PhysicalPrintGate {
   }) {
     final previous = published;
     final saved = freshSavedPrintersVerdict();
-    published = describeCanonicalPrinterStatus(
+    final next = describeCanonicalPrinterStatus(
       bridgeUp: bridgeUp,
       printerReachable: saved ??
           (probedPrinter
@@ -331,7 +333,19 @@ class PhysicalPrintGate {
       pendingJobs: pendingJobs,
       quarantinedJobs: quarantinedJobs,
     );
+    published = next;
+    if (previous == null ||
+        previous.label != next.label ||
+        previous.printerReachable != next.printerReachable ||
+        previous.bridgeUp != next.bridgeUp ||
+        previous.serviceEnabled != next.serviceEnabled) {
+      changes.value += 1;
+    }
   }
+
+  /// Ticks when the published answer changes, whoever published it, so every
+  /// indicator redraws together instead of at its own next poll.
+  static final ValueNotifier<int> changes = ValueNotifier<int>(0);
 
   static bool get allowsSend => allowed == true;
 
