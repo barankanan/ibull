@@ -13787,7 +13787,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
   PrinterServiceSnapshot _printerServiceSnapshot() {
     return PrinterServiceSnapshot(
-      isAvailable: _isLocalPrintAvailable,
+      isAvailable: printerBadgeAvailability(
+        serviceAvailable: _isLocalPrintAvailable,
+        printerReachable: _localPrinterReachable,
+      ),
       label: _localPrintStatusLabel,
       message: _localPrintStatusMessage,
       lastSuccessAgo: _lastLocalPrintSuccessAt != null

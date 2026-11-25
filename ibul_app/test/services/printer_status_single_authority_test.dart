@@ -1,4 +1,6 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ibul_app/features/seller/panel/printer_center/printer_service_status.dart';
 import 'package:ibul_app/services/printer_link_status.dart';
 import 'package:ibul_app/services/printer_readiness.dart';
 
@@ -178,6 +180,43 @@ void main() {
       expect(
         PhysicalPrintGate.published!.detail,
         contains('fişin çıktığını kanıtlamaz'),
+      );
+    });
+  });
+
+  group('Garson badge colour follows its text', () {
+    const green = Color(0xFF16A34A);
+    const red = Color(0xFFDC2626);
+
+    test('service open, saved printer not answering is red (real screen '
+        '2026-11-25: the text said "Yazıcıya ulaşılamıyor" in green)', () {
+      final shown = printerBadgeAvailability(
+        serviceAvailable: true,
+        printerReachable: false,
+      );
+      expect(printerServiceStatusColor(shown), red);
+    });
+
+    test('service open and printer answering is green', () {
+      final shown = printerBadgeAvailability(
+        serviceAvailable: true,
+        printerReachable: true,
+      );
+      expect(printerServiceStatusColor(shown), green);
+    });
+
+    test('service off stays red whatever the printer says', () {
+      final shown = printerBadgeAvailability(
+        serviceAvailable: false,
+        printerReachable: true,
+      );
+      expect(printerServiceStatusColor(shown), red);
+    });
+
+    test('a printer that was not asked does not turn an open service red', () {
+      expect(
+        printerBadgeAvailability(serviceAvailable: true, printerReachable: null),
+        isTrue,
       );
     });
   });
