@@ -1400,3 +1400,23 @@ Taban: `fc884ca` (dal `claude/printer-status-lan-center-ae6266`; `claude/ibul-re
 - PASS: `CFBundleIdentifier = com.ibul.sellerdesktop`; `codesign --verify --deep --strict` geçerli (Apple Development, takım B4849QMKTU); gömülü köprü `com.ibul.sellerdesktop.printbridge` imzalı; ikilide yeni koda ait metinler (`print service revive`, `choice not remembered`) ve production Supabase ana makinesi mevcut.
 - Dokunulmadı: diğer `flutter-build*` klasörleri, çalışan uygulama (derleme sırasında çalışan İBUL Satıcı/köprü süreci yoktu), port 3001.
 - NOT VERIFIED: uygulama hiç AÇILMADI — oturum, açılışta otomatik başlama, Durdur sonrası kapalı açılış, rozet/kart/Garson metin eşitliği, köprü canlandırma, baskı, iPhone. Noter onayı yok.
+
+### Gerçek ekran turu — izole Release paketi (2026-11-25 20:45–21:00; production hesabı, sipariş/baskı/masa işlemi YOK)
+Paket: `~/IBUL_isolated_build/flutter-build-printerlan-342bc59/.../IbulSellerDesktop.app` (son kaynak `a5409ea`). Tur öncesi tercih dosyası yedeği: `~/Library/Application Support/ibul-backups/20261125-pre-printerlan/`. Kayıtlı yazıcı `aa` (192.168.10.100:9100) tur boyunca ağda YOKTU (bağımsız `nc` ve `ping`: yanıt yok), Mac adresi 192.168.10.68.
+
+| Adım | Gözlem | Durum |
+|---|---|---|
+| Açılış (tercih açık, hiç tıklama yok) | 9 sn'de tek köprü 127.0.0.1:3001, 12 sn'de LAN 192.168.10.68:18772 | PASS |
+| Durum eşitliği (yazıcı kapalıyken) | Sağ alt rozet, Yazıcı Merkezi kartı ve Garson rozeti: üçü de "Yazıcıya ulaşılamıyor"; Yazıcı Servisi kartı "Yazıcı servisi açık, ancak kayıtlı yazıcı yanıt vermiyor…"; özet "0 / 1 bağlı, Ulaşılamayan: aa" — bağımsız `nc` ile aynı | PASS |
+| Durdur | 3001 ve 18772 kapandı, köprü süreci yok, tercih anahtarı silindi, iki anahtar da kapalı, şerit "Yazıcı merkezi kapalı" | PASS |
+| Durdur → çık → aç | 40 sn izlendi: köprü yok, LAN yok, ekranda Kapalı | PASS |
+| Başlat | 5 sn'de köprü + LAN, tercih kendiliğinden yazıldı, otomatik başlat anahtarı kendiliğinden açıldı | PASS |
+| Başlat → çık → aç | Çıkışta süreçler/portlar kapandı, tercih ve merkez sahipliği durdu; açılışta 10 sn'de köprü + LAN (iki ayrı açılışta) | PASS |
+| Köprü sürecini `kill -9` | 30 sn'de tek yeni köprü, `/health` ok, baskı izni açık, LAN kesilmedi | PASS |
+| Baskı | Köprü baskı günlüğü tur öncesi 80 satır, sonrası 80 satır | PASS (hiç baskı gönderilmedi) |
+
+Turda bulunan ve düzeltilen iki hata:
+- Garson rozeti "Yazıcıya ulaşılamıyor" metnini YEŞİL gösteriyordu (renk yalnız köprü + izne bakıyordu) → `printerBadgeAvailability` (`b4bee22`); yeniden derlemede kırmızı görüldü.
+- Garson ekranı açılınca birkaç saniye rozet "Yazıcı doğrulanmadı", Garson "Yazıcıya ulaşılamıyor" diyordu (rozet yalnız hub'ın kendi turunda yenileniyordu) → `PhysicalPrintGate.changes` (`a5409ea`); yeniden derlemede rozet doğrudan "Yazıcıya ulaşılamıyor" ile geldi.
+
+NOT VERIFIED (bu turda görülemedi): yazıcı AÇIKKEN "Yazıcı Hazır" eşitliği ve gerçek fiş (yazıcı ağda değildi); köprü canlandırıldıktan sonra eski iş sınırının köprüde durduğu; iPhone eşleşmesi/yeniden bağlanması; Mac IP değişimi; WAN kesintisi; Garson rozetinin hub yayımını anında izlemesi (kendi 30 sn turunda günceller). Tur sonunda uygulama kapatıldı; tercih açık bırakıldı (tur öncesiyle aynı).
